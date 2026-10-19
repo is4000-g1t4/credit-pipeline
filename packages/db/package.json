@@ -1,0 +1,31 @@
+{
+	"name": "@credit/db",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts",
+		"./auth": "./src/auth.ts",
+		"./applications": "./src/applications.ts",
+		"./loans": "./src/loans.ts",
+		"./portfolio": "./src/portfolio.ts",
+		"./shared": "./src/shared.ts"
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit",
+		"build": "tsc --noEmit",
+		"test": "vitest run",
+		"db:generate": "drizzle-kit generate --config=drizzle.config.auth.ts && drizzle-kit generate --config=drizzle.config.applications.ts && drizzle-kit generate --config=drizzle.config.loans.ts && drizzle-kit generate --config=drizzle.config.portfolio.ts"
+	},
+	"dependencies": {
+		"dotenv": "catalog:",
+		"drizzle-orm": "catalog:",
+		"postgres": "catalog:"
+	},
+	"devDependencies": {
+		"@types/node": "catalog:",
+		"drizzle-kit": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
+	}
+}

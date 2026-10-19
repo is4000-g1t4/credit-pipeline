@@ -1,0 +1,59 @@
+{
+	"$schema": "./node_modules/oxlint/configuration_schema.json",
+	"plugins": ["typescript", "react", "jsx-a11y", "import", "unicorn", "node", "promise"],
+	"categories": {
+		"correctness": "error",
+		"suspicious": "warn",
+		"perf": "warn"
+	},
+	"rules": {
+		"eqeqeq": "error",
+		"no-var": "error",
+		"prefer-const": "warn",
+		"no-debugger": "error",
+		"no-duplicate-imports": "warn",
+		"no-unused-vars": "warn",
+		"typescript/no-explicit-any": "warn",
+		"react/jsx-key": "error",
+		"react-hooks/rules-of-hooks": "error",
+		"react-hooks/exhaustive-deps": "warn",
+		"jsx-a11y/alt-text": "error",
+		"promise/prefer-await-to-then": "warn",
+		"unicorn/prefer-node-protocol": "warn",
+		"react/react-in-jsx-scope": "off",
+		"no-await-in-loop": "off",
+		"unicorn/no-array-sort": "off",
+		"unicorn/prefer-set-has": "off"
+	},
+	"overrides": [
+		{
+			"files": ["scripts/**/*.ts", "e2e/**/*.ts"],
+			"rules": {
+				"no-console": "off"
+			}
+		},
+		{
+			"files": ["**/*.test.ts", "**/*.spec.ts", "e2e/**/*.ts", "scripts/**/*.ts"],
+			"rules": {
+				"typescript/no-explicit-any": "off"
+			}
+		},
+		{
+			"files": ["apps/web/src/routes/__root.tsx"],
+			"rules": {
+				"import/no-unassigned-import": "off"
+			}
+		}
+	],
+	"ignorePatterns": [
+		"node_modules/**",
+		"**/node_modules/**",
+		"**/dist/**",
+		"apps/web/.output/**",
+		"apps/web/src/routeTree.gen.ts",
+		"packages/db/drizzle/**",
+		"e2e/test-results/**",
+		"e2e/logs/**",
+		"e2e/.e2e-pids.json"
+	]
+}

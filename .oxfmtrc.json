@@ -1,0 +1,14 @@
+{
+	"useTabs": true,
+	"singleQuote": false,
+	"semi": true,
+	"printWidth": 100,
+	"endOfLine": "lf",
+	"insertFinalNewline": true,
+	"ignorePatterns": [
+		"packages/db/drizzle/**",
+		"apps/web/src/routeTree.gen.ts",
+		"e2e/test-results/**",
+		"e2e/logs/**"
+	]
+}

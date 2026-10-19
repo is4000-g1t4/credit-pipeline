@@ -1,0 +1,268 @@
+# Microservices overlay (P1b): runs the gateway + four Bun services + the
+# Node worker in containers, on top of the base infra (postgres/kafka/
+# temporal) in docker-compose.yml. The default compose workflow is unchanged
+# (all services here carry the `microservices` profile).
+#
+# Exact command (run from the workspace root):
+#   docker compose -f docker-compose.yml -f compose.services.yml --profile microservices up -d --wait
+# Tear down only the overlay (infra keeps running):
+#   docker compose -f docker-compose.yml -f compose.services.yml --profile microservices down
+#
+# How it works:
+# - `deps` is a one-shot installer (node:26-slim): the repo is bind-mounted
+#   at /app and Linux-native node_modules are installed into the named
+#   `svc-node-modules` volume at /app/node_modules (the host's Windows
+#   node_modules are shadowed, never used). Every other service mounts the
+#   same two volumes and waits for `deps` to complete successfully.
+# - Bun services run `bun src/server.ts` with cwd /app; each server.ts loads
+#   /app/.env by path, but the explicit `environment:` below wins (dotenv
+#   never overrides real env), so container networking is wired here.
+#   Image is oven/bun:1.4.3 — the newest numeric tag on Docker Hub
+#   (1.4.4 exists only as a local canary; 1.4.3 === latest as of 2026-10-19).
+# - Secrets (SESSION_SECRET/INTERNAL_SECRET) interpolate from the root .env
+#   (compose loads it automatically) — they are never committed.
+# - The web app stays local (`pnpm --filter @credit/web dev` on :3000,
+#   proxying /api → 127.0.0.1:3001): Vite dev belongs on the host.
+#
+# First run takes several minutes (`deps` installs the full workspace, then
+# each Bun service compiles on first boot). If the sandbox has no Docker
+# daemon or no network for pulls, skip `up` — `config` validation below is
+# the offline gate:
+#   docker compose -f docker-compose.yml -f compose.services.yml --profile microservices config
+
+x-svc-base: &svc-base
+  volumes:
+    - .:/app
+    - svc-node-modules:/app/node_modules
+  restart: unless-stopped
+  profiles: ["microservices"]
+
+services:
+  deps:
+    <<: *svc-base
+    image: node:26-slim
+    working_dir: /app
+    # One-shot: must complete before any service starts (see depends_on).
+    # Node 25+ unships corepack, so pnpm comes from npm (pinned to the
+    # workspace's packageManager version).
+    command:
+      [
+        "sh",
+        "-c",
+        "npm install -g pnpm@12.11.2 --no-audit --no-fund && pnpm install --frozen-lockfile",
+      ]
+    restart: "no"
+
+  applications:
+    <<: *svc-base
+    image: oven/bun:1.4.3
+    working_dir: /app
+    command: ["bun", "apps/applications/src/server.ts"]
+    ports: ["4001:4001"]
+    environment:
+      APPLICATIONS_DATABASE_URL: postgres://credit:credit@postgres:5432/credit_applications
+      TEMPORAL_ADDRESS: temporal:7233
+      INTERNAL_SECRET: ${INTERNAL_SECRET}
+      PORT: "4001"
+      HOST: 0.0.0.0
+    depends_on:
+      deps:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "const r = await fetch('http://127.0.0.1:4001/health'); if (!r.ok) throw new Error(String(r.status)); const j = await r.json(); if (j.status !== 'ok') throw new Error(j.status);",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  review:
+    <<: *svc-base
+    image: oven/bun:1.4.3
+    working_dir: /app
+    command: ["bun", "apps/review/src/server.ts"]
+    ports: ["4002:4002"]
+    environment:
+      APPLICATIONS_URL: http://applications:4001
+      LOANS_URL: http://loans:4003
+      TEMPORAL_ADDRESS: temporal:7233
+      INTERNAL_SECRET: ${INTERNAL_SECRET}
+      PORT: "4002"
+      HOST: 0.0.0.0
+    depends_on:
+      deps:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "const r = await fetch('http://127.0.0.1:4002/health'); if (!r.ok) throw new Error(String(r.status)); const j = await r.json(); if (j.status !== 'ok') throw new Error(j.status);",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  loans:
+    <<: *svc-base
+    image: oven/bun:1.4.3
+    working_dir: /app
+    command: ["bun", "apps/loans/src/server.ts"]
+    ports: ["4003:4003"]
+    environment:
+      LOANS_DATABASE_URL: postgres://credit:credit@postgres:5432/credit_loans
+      TEMPORAL_ADDRESS: temporal:7233
+      INTERNAL_SECRET: ${INTERNAL_SECRET}
+      DEMO_MODE: ${DEMO_MODE:-true}
+      PORT: "4003"
+      HOST: 0.0.0.0
+    depends_on:
+      deps:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "const r = await fetch('http://127.0.0.1:4003/health'); if (!r.ok) throw new Error(String(r.status)); const j = await r.json(); if (j.status !== 'ok') throw new Error(j.status);",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  portfolio:
+    <<: *svc-base
+    image: oven/bun:1.4.3
+    working_dir: /app
+    command: ["bun", "apps/portfolio/src/server.ts"]
+    ports: ["4004:4004"]
+    environment:
+      PORTFOLIO_DATABASE_URL: postgres://credit:credit@postgres:5432/credit_portfolio
+      APPLICATIONS_URL: http://applications:4001
+      LOANS_URL: http://loans:4003
+      KAFKA_BROKERS: kafka:29092
+      INTERNAL_SECRET: ${INTERNAL_SECRET}
+      PORT: "4004"
+      HOST: 0.0.0.0
+    depends_on:
+      deps:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "const r = await fetch('http://127.0.0.1:4004/health'); if (!r.ok) throw new Error(String(r.status)); const j = await r.json(); if (j.status !== 'ok') throw new Error(j.status);",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  gateway:
+    <<: *svc-base
+    image: oven/bun:1.4.3
+    working_dir: /app
+    command: ["bun", "apps/gateway/src/server.ts"]
+    ports: ["3001:3001"]
+    environment:
+      AUTH_DATABASE_URL: postgres://credit:credit@postgres:5432/credit_auth
+      TEMPORAL_ADDRESS: temporal:7233
+      KAFKA_BROKERS: kafka:29092
+      SESSION_SECRET: ${SESSION_SECRET}
+      INTERNAL_SECRET: ${INTERNAL_SECRET}
+      DEMO_MODE: ${DEMO_MODE:-true}
+      NODE_ENV: development
+      WEB_ORIGIN: http://localhost:3000
+      API_PORT: "3001"
+      API_HOST: 0.0.0.0
+      APPLICATIONS_URL: http://applications:4001
+      REVIEW_URL: http://review:4002
+      LOANS_URL: http://loans:4003
+      PORTFOLIO_URL: http://portfolio:4004
+    depends_on:
+      deps:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+      applications:
+        condition: service_healthy
+      review:
+        condition: service_healthy
+      loans:
+        condition: service_healthy
+      portfolio:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "const r = await fetch('http://127.0.0.1:3001/api/health'); if (!r.ok) throw new Error(String(r.status)); const j = await r.json(); if (j.status !== 'ok') throw new Error(j.status);",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
+
+  worker:
+    <<: *svc-base
+    image: node:26-slim
+    working_dir: /app
+    # tsx resolves from the deps-populated /app/node_modules. No port, no
+    # healthcheck — the restart policy owns liveness.
+    command: ["node", "--import", "tsx", "apps/worker/src/index.ts"]
+    environment:
+      APPLICATIONS_DATABASE_URL: postgres://credit:credit@postgres:5432/credit_applications
+      LOANS_DATABASE_URL: postgres://credit:credit@postgres:5432/credit_loans
+      TEMPORAL_ADDRESS: temporal:7233
+      KAFKA_BROKERS: kafka:29092
+    depends_on:
+      deps:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+
+volumes:
+  svc-node-modules:

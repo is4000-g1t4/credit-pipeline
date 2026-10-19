@@ -1,0 +1,33 @@
+{
+	"name": "@credit/worker",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "tsx src/index.ts",
+		"typecheck": "tsc --noEmit",
+		"build": "tsc --noEmit",
+		"test": "vitest run",
+		"test:integration": "vitest run --config vitest.integration.config.ts"
+	},
+	"dependencies": {
+		"@credit/core": "workspace:*",
+		"@credit/db": "workspace:*",
+		"@credit/service-kit": "workspace:*",
+		"@t3-oss/env-core": "catalog:",
+		"@temporalio/activity": "catalog:",
+		"@temporalio/client": "catalog:",
+		"@temporalio/worker": "catalog:",
+		"@temporalio/workflow": "catalog:",
+		"dotenv": "catalog:",
+		"drizzle-orm": "catalog:",
+		"kafkajs": "catalog:",
+		"zod": "catalog:"
+	},
+	"devDependencies": {
+		"@temporalio/testing": "catalog:",
+		"@types/node": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
+	}
+}

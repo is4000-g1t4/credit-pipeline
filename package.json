@@ -1,21 +1,42 @@
 {
-  "name": "project",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "devEngines": {
-    "packageManager": {
-      "name": "pnpm",
-      "version": "12.15.0",
-      "onFail": "download"
-    }
-  },
-  "packageManager": "pnpm@12.15.0",
-  "type": "module"
+	"name": "credit-pipeline",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "pnpm --filter @credit/gateway --filter @credit/applications --filter @credit/review --filter @credit/loans --filter @credit/portfolio --filter @credit/worker --filter @credit/web --parallel dev",
+		"dev:services": "pnpm --filter @credit/gateway --filter @credit/applications --filter @credit/review --filter @credit/loans --filter @credit/portfolio --parallel dev",
+		"typecheck": "pnpm -r --if-present typecheck && tsc --noEmit -p scripts/tsconfig.json && tsc --noEmit -p e2e/tsconfig.json",
+		"lint": "oxlint",
+		"format": "oxfmt .",
+		"format:check": "oxfmt --check .",
+		"test": "pnpm -r --if-present test",
+		"test:integration": "pnpm -r --if-present test:integration",
+		"test:e2e": "playwright test -c e2e/playwright.config.ts",
+		"db:wait": "bun scripts/db-wait.ts",
+		"db:init": "bun scripts/db-init.ts",
+		"kafka:init": "bun scripts/kafka-init.ts",
+		"db:generate": "pnpm --filter @credit/db db:generate",
+		"db:migrate": "bun packages/db/src/migrate.ts",
+		"db:seed": "bun packages/db/src/seed.ts",
+		"setup": "pnpm db:wait && pnpm db:init && pnpm kafka:init && pnpm db:migrate && pnpm db:seed",
+		"demo:monitor": "bun scripts/demo-monitor.ts",
+		"demo:check": "bun scripts/demo-check.ts",
+		"build": "pnpm -r --if-present build"
+	},
+	"devDependencies": {
+		"@playwright/test": "catalog:",
+		"@types/node": "catalog:",
+		"dotenv": "catalog:",
+		"kafkajs": "catalog:",
+		"oxfmt": "catalog:",
+		"oxlint": "catalog:",
+		"postgres": "catalog:",
+		"tsx": "catalog:",
+		"typescript": "catalog:"
+	},
+	"engines": {
+		"node": ">=22"
+	},
+	"packageManager": "pnpm@12.11.2"
 }
