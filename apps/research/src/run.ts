@@ -33,7 +33,10 @@ import {
 	CONTEXT_VALIDATOR_VERSION,
 	validateContextOutput,
 } from "./context-validator.js";
+import type { CaseFacts } from "@credit/core";
 import type { ResearchEnv } from "./env.js";
+import { runPolicyStage, type PolicyExecResult } from "./policy-exec.js";
+import type { PolicyRunner } from "./policy-stage.js";
 import {
 	claimContextStage,
 	claimRun,
@@ -100,6 +103,8 @@ export interface ExecDeps {
 	contextRunner?: ContextAgentRunner;
 	/** Test seam: fresh consent probe; default reads research-context over HMAC. */
 	fetchContextConsent?: (applicationId: string) => Promise<boolean>;
+	/** T03/T04 case policy review; absent fails the policy stage only. */
+	policyRunner?: PolicyRunner;
 }
 
 /**
@@ -200,6 +205,16 @@ export async function executeRun(deps: ExecDeps, runId: string, token: string): 
 	let repairOut = 0;
 	let repairCalls = 0;
 	let contextResult: StageResult = ZERO_STAGE;
+	let policyResult: PolicyExecResult = {
+		status: "not_applicable",
+		inputTokens: 0,
+		outputTokens: 0,
+		costUsd: 0,
+		brief: null,
+		validation: null,
+		usage: null,
+		attempted: false,
+	};
 	// Counting pass-throughs: validateAndBuild keeps its own error mapping
 	// and budget totals; these only observe, never alter behavior.
 	const countingJudge: SupportJudge = async (claim, quote, opts) => {
@@ -328,18 +343,62 @@ export async function executeRun(deps: ExecDeps, runId: string, token: string): 
 			}
 			contextResult = { ...ZERO_STAGE, status: "failed", attempted: true };
 		}
+		// POLICY stage: independent of the external outcome, after context.
+		// It extends the lease before the synchronous call; a policy failure
+		// is visible but never rewrites external/context results.
+		try {
+			policyResult = await runPolicyStage(
+				{
+					db,
+					env,
+					logger: deps.logger,
+					policyRunner: deps.policyRunner,
+					fetchConsent:
+						deps.fetchContextConsent ?? ((id: string) => fetchContextConsentOverHttp(env, id)),
+				},
+				{
+					runId,
+					runToken: token,
+					applicationId: run.applicationId,
+					applicantUserId: run.applicantUserId,
+					requestedBy: run.requestedBy,
+					requestedByRole: run.requestedByRole,
+					caseFacts: run.caseFacts as unknown as CaseFacts,
+					asOfDate: asOf,
+					documentFindings: run.contextDocumentFindings,
+				},
+			);
+		} catch (err) {
+			if (err instanceof StaleRunError) return;
+			deps.logger.error(
+				{ runId, err: err instanceof Error ? err.message : String(err) },
+				"policy stage errored unexpectedly",
+			);
+			policyResult = {
+				status: "failed",
+				inputTokens: 0,
+				outputTokens: 0,
+				costUsd: 0,
+				brief: null,
+				validation: null,
+				usage: null,
+				attempted: true,
+			};
+		}
 		if (external.ok) {
 			const usage = {
-				inputTokens: external.usage.inputTokens + contextResult.inputTokens,
-				outputTokens: external.usage.outputTokens + contextResult.outputTokens,
+				inputTokens:
+					external.usage.inputTokens + contextResult.inputTokens + policyResult.inputTokens,
+				outputTokens:
+					external.usage.outputTokens + contextResult.outputTokens + policyResult.outputTokens,
 				toolCalls: external.usage.toolCalls + contextResult.toolCalls,
 				searches: external.usage.searches,
 				extracts: external.usage.extracts,
 				judgeCalls: external.usage.judgeCalls,
 				repairCalls: external.usage.repairCalls,
-				// Single ledger: external + context spend in costUsd, with
-				// the context detail in `context_usage`.
-				costUsd: external.usage.costUsd + contextResult.costUsd,
+				// Single ledger: external + context + policy spend. Stage
+				// detail stays in context_usage/policy_usage.
+				costUsd: external.usage.costUsd + contextResult.costUsd + policyResult.costUsd,
 				durationMs: Date.now() - startedAt,
 			};
 			await finalizeRunSuccess(db, runId, token, { usage, observability: obs.status });
@@ -368,6 +427,7 @@ export async function executeRun(deps: ExecDeps, runId: string, token: string): 
 						durationMs: Date.now() - startedAt,
 					},
 					contextResult,
+					policyResult,
 				),
 			).catch((finalizeErr: unknown) => {
 				deps.logger.error(
@@ -396,14 +456,14 @@ export async function executeRun(deps: ExecDeps, runId: string, token: string): 
 		const measured = projectCostUsd(inputTokens, outputTokens);
 		const costUsd = inputTokens + outputTokens === 0 ? env.maxCostUsd : measured;
 		await finalizeFailure(db, runId, token, code, message, deps.observability.status, {
-			inputTokens: inputTokens + contextResult.inputTokens,
-			outputTokens: outputTokens + contextResult.outputTokens,
+			inputTokens: inputTokens + contextResult.inputTokens + policyResult.inputTokens,
+			outputTokens: outputTokens + contextResult.outputTokens + policyResult.outputTokens,
 			toolCalls: agentTools + judgeCalls + contextResult.toolCalls,
 			searches: agentSearches,
 			extracts: agentExtracts,
 			judgeCalls,
 			repairCalls,
-			costUsd: costUsd + contextResult.costUsd,
+			costUsd: costUsd + contextResult.costUsd + policyResult.costUsd,
 			durationMs: Date.now() - startedAt,
 		}).catch((finalizeErr: unknown) => {
 			deps.logger.error(
@@ -472,15 +532,16 @@ function mergeFailureUsage(
 	env: ResearchEnv,
 	base: FailureUsageBase,
 	context: StageResult,
+	policy: PolicyExecResult,
 ): Record<string, unknown> {
 	const measured = projectCostUsd(base.inputTokens, base.outputTokens);
 	const externalCost = base.inputTokens + base.outputTokens === 0 ? env.maxCostUsd : measured;
 	return {
 		...base,
-		inputTokens: base.inputTokens + context.inputTokens,
-		outputTokens: base.outputTokens + context.outputTokens,
+		inputTokens: base.inputTokens + context.inputTokens + policy.inputTokens,
+		outputTokens: base.outputTokens + context.outputTokens + policy.outputTokens,
 		toolCalls: base.toolCalls + context.toolCalls,
-		costUsd: externalCost + context.costUsd,
+		costUsd: externalCost + context.costUsd + policy.costUsd,
 	};
 }
 

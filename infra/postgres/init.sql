@@ -12,6 +12,8 @@ SELECT 'CREATE DATABASE credit_portfolio'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'credit_portfolio')\gexec
 SELECT 'CREATE DATABASE credit_research'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'credit_research')\gexec
+SELECT 'CREATE DATABASE credit_policy'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'credit_policy')\gexec
 SELECT 'CREATE DATABASE temporal'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'temporal')\gexec
 SELECT 'CREATE DATABASE temporal_visibility'

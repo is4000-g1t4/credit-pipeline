@@ -56,6 +56,7 @@ import {
 import type { Observability } from "./observability.js";
 import { executeContextRetry, executeRun, fetchContextConsentOverHttp } from "./run.js";
 import type { LanguageRepair } from "./repair.js";
+import type { PolicyRunner } from "./policy-stage.js";
 import type { SupportJudge } from "./support.js";
 import { sha256Hex } from "./validator.js";
 
@@ -102,6 +103,8 @@ export interface ResearchRouteDeps {
 	contextRunner: ContextAgentRunner;
 	/** Test seam: fresh context-consent probe; default reads research-context over HMAC. */
 	fetchContextConsent?: (applicationId: string) => Promise<boolean>;
+	/** T03/T04 automatic case policy review; absent fails the policy stage only. */
+	policyRunner?: PolicyRunner;
 }
 
 const requireOfficer = createMiddleware<{ Variables: ServiceVariables }>(async (c, next) => {
@@ -202,6 +205,7 @@ export function researchRoutes(deps: ResearchRouteDeps): ServiceApp {
 							observability,
 							contextRunner,
 							fetchContextConsent: deps.fetchContextConsent,
+							policyRunner: deps.policyRunner,
 						},
 						runId,
 						token,
@@ -239,7 +243,7 @@ export function researchRoutes(deps: ResearchRouteDeps): ServiceApp {
 		// after withdrawal, even before the purge lands. Runs with no
 		// stored brief skip the probe (nothing to hide, no audit noise).
 		let includeContext = true;
-		if (run.contextBrief !== null) {
+		if (run.contextBrief !== null || run.policyBrief !== null) {
 			const probe =
 				deps.fetchContextConsent ?? ((id: string) => fetchContextConsentOverHttp(env, id));
 			try {
@@ -254,22 +258,27 @@ export function researchRoutes(deps: ResearchRouteDeps): ServiceApp {
 					actorId: c.var.user.id,
 					actorRole: c.var.user.role,
 					action: "context.denied",
-					metadata: { code: "consent_withdrawn" },
+					metadata: { code: "consent_withdrawn", policy: run.policyBrief !== null },
 				});
-			} else if (run.contextBrief !== null) {
-				// The response carries stored context (brief/signals): mark
-				// the officer read. Withdrawn consent takes the branch above.
+			} else if (run.contextBrief !== null || run.policyBrief !== null) {
+				// The response carries stored context/policy: mark the officer
+				// read. Withdrawn consent takes the branch above.
 				await auditResearch(db, {
 					applicationId,
 					runId: run.id,
 					actorId: c.var.user.id,
 					actorRole: c.var.user.role,
 					action: "context.read",
-					metadata: { route: "latest" },
+					metadata: { route: "latest", policy: run.policyBrief !== null },
 				});
 			}
 		}
-		return c.json(await aggregateRun(db, run, c.var.user.id, { includeContext }));
+		return c.json(
+			await aggregateRun(db, run, c.var.user.id, {
+				includeContext,
+				includePolicy: includeContext,
+			}),
+		);
 	});
 
 	app.post(
@@ -1037,7 +1046,7 @@ async function aggregateRun(
 	db: Db,
 	run: RunRow,
 	officerId: string,
-	opts: { includeContext?: boolean } = {},
+	opts: { includeContext?: boolean; includePolicy?: boolean } = {},
 ): Promise<{
 	run: Record<string, unknown>;
 	brief: unknown;
@@ -1056,6 +1065,17 @@ async function aggregateRun(
 		startedAt: string | null;
 		finishedAt: string | null;
 		signals: Array<ReturnType<typeof toContextSignalDto>>;
+	};
+	policy: {
+		status: string;
+		errorCode: string | null;
+		model: string | null;
+		promptVersion: string | null;
+		brief: unknown;
+		validation: unknown;
+		usage: unknown;
+		startedAt: string | null;
+		finishedAt: string | null;
 	};
 	viewedAt: string | null;
 }> {
@@ -1119,6 +1139,7 @@ async function aggregateRun(
 	// audits context.denied): status/version stay visible as metadata, but
 	// no brief, usage, or signal content leaves the service.
 	const includeContext = opts.includeContext ?? true;
+	const includePolicy = opts.includePolicy ?? true;
 	return {
 		run: summarizeRun(run),
 		brief: run.brief,
@@ -1160,6 +1181,17 @@ async function aggregateRun(
 			signals: includeContext
 				? signalRows.map((s) => toContextSignalDto(s, latestSignalReview.get(s.id)))
 				: [],
+		},
+		policy: {
+			status: run.policyStatus,
+			errorCode: run.policyErrorCode,
+			model: run.policyModel,
+			promptVersion: run.policyPromptVersion,
+			brief: includePolicy ? run.policyBrief : null,
+			validation: includePolicy ? run.policyValidation : null,
+			usage: includePolicy ? run.policyUsage : null,
+			startedAt: iso(run.policyStartedAt),
+			finishedAt: iso(run.policyFinishedAt),
 		},
 		viewedAt: viewRows[0] ? viewRows[0].viewedAt.toISOString() : null,
 	};

@@ -19,6 +19,7 @@ const DATABASES = [
 	"credit_loans",
 	"credit_portfolio",
 	"credit_research",
+	"credit_policy",
 	"temporal",
 	"temporal_visibility",
 ];

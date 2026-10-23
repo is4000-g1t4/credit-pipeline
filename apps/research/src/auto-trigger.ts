@@ -33,6 +33,7 @@ import {
 import type { Observability } from "./observability.js";
 import { executeRun, type ExecDeps } from "./run.js";
 import type { LanguageRepair } from "./repair.js";
+import type { PolicyRunner } from "./policy-stage.js";
 import type { SupportJudge } from "./support.js";
 
 export const AUTO_TRIGGER_GROUP_ID = "credit-research-auto";
@@ -49,6 +50,8 @@ export interface AutoTriggerDeps {
 	observability: Observability;
 	/** Optional: absent fails the context stage closed (never the external brief). */
 	contextRunner?: ContextAgentRunner;
+	/** T03/T04 automatic case policy review; absent fails the policy stage only. */
+	policyRunner?: PolicyRunner;
 	/** Test seam: fake applications context; default fetches over HMAC. */
 	fetchResearchContext?: (applicationId: string) => Promise<ResearchContextResult>;
 	/** Test seam: fresh context-consent probe; default reads research-context over HMAC. */
@@ -150,7 +153,8 @@ const UTC_DAY_START = sql`date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZO
  * Daily run/cost guards, all UTC-calendar-day scoped and auto-only
  * (`trigger='auto'` — officer runs never consume the automation budget).
  * In-flight (queued/running) auto runs reserve
- * `AGENT_MAX_COST_USD + CONTEXT_AGENT_MAX_COST_USD` each against the cost
+ * `AGENT_MAX_COST_USD + CONTEXT_AGENT_MAX_COST_USD + POLICY_CASE_MAX_COST_USD`
+ * each against the cost
  * budget, as does a claimed retry stage on a terminal run (terminal +
  * context running with a live stage token) — regardless of the run's
  * `created_at`, so a prior-day run retried today still reserves. Retry spend
@@ -189,13 +193,22 @@ export async function checkAutoCaps(
 	const retryCost = (await db.execute(
 		sql`SELECT coalesce(sum(CASE WHEN context_usage->>'costUsd' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (context_usage->>'costUsd')::double precision ELSE 0 END), 0)::float8 AS total FROM agent_runs WHERE trigger = 'auto' AND context_started_at >= ${UTC_DAY_START} AND created_at < ${UTC_DAY_START}`,
 	)) as unknown as Array<{ total: number }>;
+	// Policy spend on prior-day runs is not in the merged usage ledger
+	// (keyed by created_at); count policy_usage by policy_started_at.
+	const policyRetryCost = (await db.execute(
+		sql`SELECT coalesce(sum(CASE WHEN policy_usage->>'costUsd' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (policy_usage->>'costUsd')::double precision ELSE 0 END), 0)::float8 AS total FROM agent_runs WHERE trigger = 'auto' AND policy_started_at >= ${UTC_DAY_START} AND created_at < ${UTC_DAY_START}`,
+	)) as unknown as Array<{ total: number }>;
 	const inFlight = (await db.execute(
-		sql`SELECT count(*)::int AS n FROM agent_runs WHERE trigger = 'auto' AND ((created_at >= ${UTC_DAY_START} AND status IN ('queued', 'running')) OR (context_status = 'running' AND context_stage_token IS NOT NULL))`,
+		sql`SELECT count(*)::int AS n FROM agent_runs WHERE trigger = 'auto' AND ((created_at >= ${UTC_DAY_START} AND status IN ('queued', 'running')) OR (context_status = 'running' AND context_stage_token IS NOT NULL) OR (policy_status = 'running' AND policy_timeout_at IS NOT NULL))`,
 	)) as unknown as Array<{ n: number }>;
 	const spent =
 		(cost[0]?.total ?? 0) +
 		(retryCost[0]?.total ?? 0) +
-		(inFlight[0]?.n ?? 0) * (env.maxCostUsd + env.contextMaxCostUsd);
+		(policyRetryCost[0]?.total ?? 0) +
+		(inFlight[0]?.n ?? 0) *
+			(env.maxCostUsd +
+				env.contextMaxCostUsd +
+				(env.policyAssistEnabled ? env.policyCaseMaxCostUsd : 0));
 	if (spent >= env.autoTriggerDailyCostBudgetUsd) {
 		return { ok: false, reason: "daily_cost_budget" };
 	}
@@ -448,6 +461,7 @@ export async function handleReviewRequested(
 						observability: deps.observability,
 						contextRunner: deps.contextRunner,
 						fetchContextConsent: deps.fetchContextConsent,
+						policyRunner: deps.policyRunner,
 					},
 					runId,
 					token,

@@ -21,3 +21,8 @@ __pycache__/
 *.pyc
 .env.*
 !.env.example
+
+# Eval artifacts are local-only; keep harness scripts and the Markdown summary.
+apps/policy/eval/queries.json
+apps/policy/eval/results/*.json
+apps/research/eval/results/*.json

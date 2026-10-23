@@ -8,6 +8,7 @@
 // errors). It reports the accepted selection upward — the decision
 // sends only the selection, never a browser-built bundle.
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import {
 	ApiError,
@@ -21,14 +22,17 @@ import {
 	reviewContextSignal,
 	reviewResearchFinding,
 	viewResearch,
+	type PolicyReviewItem,
 	type ResearchAggregate,
 	type ResearchAuditEntry,
 	type ResearchContext,
 	type ResearchContextSignal,
 	type ResearchEvidenceItem,
 	type ResearchFindingItem,
+	type ResearchPolicy,
 	type ResearchSelection,
 } from "../lib/api";
+import { CitedSegments } from "./PolicyCitations";
 import { EmptyState, ErrorBox, Skeleton } from "./ui";
 
 function shortId(id: string): string {
@@ -621,6 +625,165 @@ function ContextSection({
 	);
 }
 
+/** Sanitized follow-up: item ref + lead segment only (server-composed
+ * policy text, no case facts or identifiers). Truncated for the URL. */
+function followUpQuestion(item: PolicyReviewItem, summary?: string): string {
+	const lead = item.explanationSegments[0]?.text ?? summary ?? "";
+	return `${item.ref}: ${lead}`.slice(0, 300);
+}
+
+// --- Policy review (case-scoped advisory brief). Renders `latest.policy`
+// after internal context: cited items with inline citation buttons opening
+// the shared section drawer, plus an "Ask follow-up" link carrying a
+// sanitized question to /officer/policies. Advisory only — no decision,
+// chase, score, or status change. ---
+function PolicyReviewSection({
+	applicationId,
+	policy,
+}: {
+	applicationId: string;
+	policy?: ResearchPolicy | null;
+}) {
+	const queryClient = useQueryClient();
+
+	// Poll latest while the stage is active — same version-proof pattern as
+	// the context section above.
+	useEffect(() => {
+		if (policy?.status !== "running") return;
+		const timer = setInterval(() => {
+			void queryClient.invalidateQueries({ queryKey: ["research", applicationId] });
+		}, 2000);
+		return () => clearInterval(timer);
+	}, [policy?.status, queryClient, applicationId]);
+
+	let body: React.ReactNode;
+	switch (policy?.status) {
+		case "succeeded": {
+			const items = policy.brief?.items ?? [];
+			const limitations = policy.brief?.limitations ?? [];
+			body = (
+				<div className="space-y-3">
+					{policy.brief?.summary ? (
+						<p className="text-sm text-gray-800">{policy.brief.summary}</p>
+					) : (
+						items.length === 0 && (
+							<p className="text-sm text-gray-600">No summary — nothing supported was found.</p>
+						)
+					)}
+					{items.length === 0 ? (
+						<p className="text-sm text-gray-600">
+							No policy items met the citation bar — this is not an all-clear.
+						</p>
+					) : (
+						<ul className="space-y-3">
+							{items.map((item) => (
+								<li key={item.ref} className="rounded border border-gray-200 bg-white p-3">
+									<p className="text-sm font-medium text-gray-900">
+										<span className="font-mono text-xs">{item.ref}</span>{" "}
+										<span className="rounded bg-blue-100 px-1.5 py-0.5 text-xs font-medium text-blue-800">
+											{item.confidence} confidence
+										</span>
+									</p>
+									<div className="mt-1">
+										<CitedSegments segments={item.explanationSegments} citations={item.citations} />
+									</div>
+									<Link
+										to="/officer/policies"
+										search={{ question: followUpQuestion(item, policy.brief?.summary) }}
+										className="mt-1 inline-block text-sm text-blue-700 hover:underline"
+									>
+										Ask follow-up
+									</Link>
+								</li>
+							))}
+						</ul>
+					)}
+					{limitations.length > 0 && (
+						<div>
+							<h4 className="text-sm font-semibold">Limitations</h4>
+							<ul className="mt-1 list-disc pl-5 text-sm text-gray-700">
+								{limitations.map((l) => (
+									<li key={l}>{l}</li>
+								))}
+							</ul>
+						</div>
+					)}
+				</div>
+			);
+			break;
+		}
+		case "failed":
+			body = (
+				<ErrorBox
+					message={`Policy review ${policy.errorCode ? `failed (${policy.errorCode})` : "failed"}. The case remains fully decidable without it.`}
+				/>
+			);
+			break;
+		case "running":
+			body = (
+				<output className="block text-sm text-gray-600" aria-live="polite">
+					Policy review is running… This section updates automatically.
+				</output>
+			);
+			break;
+		case "no_match":
+			body = (
+				<p className="text-sm text-gray-600">
+					No matching policy section found for this case — this is not an all-clear.
+				</p>
+			);
+			break;
+		case "needs_policy_owner":
+			body = (
+				<p className="text-sm text-gray-600">
+					Policy review needs a policy owner to answer — escalate through the usual review route.
+				</p>
+			);
+			break;
+		case "budget_exceeded":
+			body = (
+				<p className="text-sm text-gray-600">
+					Policy review hit its budget — the case remains fully decidable without it.
+				</p>
+			);
+			break;
+		case "skipped":
+			body = (
+				<p className="text-sm text-gray-600">
+					Policy review was skipped — AI research consent was not given or the stage is disabled.
+				</p>
+			);
+			break;
+		case "not_applicable":
+			body = <p className="text-sm text-gray-600">Policy review did not apply to this case.</p>;
+			break;
+		default:
+			body = (
+				<p className="text-sm text-gray-600">
+					Policy review did not run for this case. This is not an all-clear.
+				</p>
+			);
+	}
+
+	return (
+		<section
+			aria-label="Policy review"
+			className="rounded-lg border border-gray-200 bg-gray-50 p-4 sm:p-5"
+		>
+			<h3 className="text-base font-semibold">
+				Policy review{" "}
+				<span className="rounded bg-gray-200 px-1.5 py-0.5 align-middle text-xs font-medium text-gray-700">
+					Advisory only
+				</span>
+			</h3>
+			<p className="mt-0.5 text-xs text-gray-500">
+				Advisory only — cited credit-policy sections for context. It never decides the case.
+			</p>
+			<div className="mt-3">{body}</div>
+		</section>
+	);
+}
+
 export function ResearchPanel({
 	applicationId,
 	caseStatus,
@@ -948,6 +1111,7 @@ export function ResearchPanel({
 						context={data?.context}
 						canRetry={runAllowed}
 					/>
+					<PolicyReviewSection applicationId={applicationId} policy={data?.policy} />
 				</div>
 			) : (
 				<div className="mt-3 space-y-4">
@@ -1010,6 +1174,7 @@ export function ResearchPanel({
 						context={data?.context}
 						canRetry={runAllowed}
 					/>
+					<PolicyReviewSection applicationId={applicationId} policy={data?.policy} />
 
 					<p className="text-xs text-gray-500">
 						What was searched: {data?.usage?.searches ?? 0} queries · {data?.usage?.extracts ?? 0}{" "}

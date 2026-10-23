@@ -74,6 +74,7 @@ describe("auth", () => {
 			loginLimiter: createRateLimiter(30, 60_000),
 			loginEmailLimiter: createRateLimiter(10, 60_000),
 			submitLimiter: createRateLimiter(1000, 60_000),
+			policyLimiter: createRateLimiter(1000, 60_000),
 		});
 		const attempt = (email: string, ip: string, password = "wrong") =>
 			tight.request("/api/auth/login", {

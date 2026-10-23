@@ -11,6 +11,8 @@
 //   /api/review*        → review service (officer only)
 //   /api/loans* + /api/demo* → loans service (demo officer-only + DEMO_MODE)
 //   /api/dashboard*     → portfolio service (officer only)
+//   /api/policy*        → policy service (officer only, per-actor limit,
+//                         policy upstream timeout)
 import { randomUUID } from "node:crypto";
 import { errorBody, HttpError, MAX_UPLOAD_BYTES, signInternalHeaders } from "@credit/service-kit";
 import { Hono } from "hono";
@@ -300,6 +302,24 @@ export function createApp(deps: GatewayDeps): Hono<{ Variables: Variables }> {
 	app.all("/api/dashboard/*", officer, async (c) => {
 		const path = new URL(c.req.url).pathname;
 		return proxyTo(c, deps, c.var.user, { baseUrl: deps.env.portfolioUrl, path });
+	});
+
+	// Policy console (officer only): every /api/policy/* path proxies
+	// unchanged to the policy service with the long ask timeout. No
+	// per-route logic — auth, the per-actor limit, and the timeout only.
+	app.all("/api/policy/*", officer, async (c) => {
+		const me = c.var.user;
+		if (!deps.policyLimiter.check(me.id)) {
+			throw new HttpError(429, "RATE_LIMITED", "too many policy requests");
+		}
+		const path = new URL(c.req.url).pathname;
+		return proxyTo(
+			c,
+			deps,
+			me,
+			{ baseUrl: deps.env.policyUrl, path },
+			deps.env.policyUpstreamTimeoutMs,
+		);
 	});
 
 	app.notFound((c) => c.json(errorBody("NOT_FOUND", "not found"), 404));

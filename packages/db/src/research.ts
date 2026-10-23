@@ -73,6 +73,17 @@ export const contextSignalStatus = pgEnum("context_signal_status", [
 	"needs_chase",
 	"insufficient_data",
 ]);
+// T03/T04 automatic case policy review (same run row, isolated stage).
+export const policyStageStatus = pgEnum("policy_status", [
+	"not_applicable",
+	"running",
+	"succeeded",
+	"no_match",
+	"needs_policy_owner",
+	"budget_exceeded",
+	"failed",
+	"skipped",
+]);
 // T00 case-level authorization: which staff may see sensitive research for
 // one application. Officers self-claim `assigned_officer` on first run;
 // `service` grants/revokes the specialist roles. `user_id` is a plain uuid
@@ -135,6 +146,20 @@ export const agentRuns = pgTable(
 		contextModel: text("context_model"),
 		contextStageToken: uuid("context_stage_token"),
 		contextStageVersion: integer("context_stage_version").notNull().default(1),
+		// T03/T04 automatic policy stage. Policy failure never changes the
+		// external/context outcome; the brief is consent-gated at read time.
+		policyStatus: policyStageStatus("policy_status").notNull().default("not_applicable"),
+		policyBrief: jsonb("policy_brief"),
+		policyValidation: jsonb("policy_validation"),
+		policyUsage: jsonb("policy_usage"),
+		policyErrorCode: text("policy_error_code"),
+		policyModel: text("policy_model"),
+		policyPromptVersion: text("policy_prompt_version"),
+		policyStartedAt: ts("policy_started_at"),
+		policyFinishedAt: ts("policy_finished_at"),
+		policyTimeoutAt: ts("policy_timeout_at"),
+		policyHeartbeatAt: ts("policy_heartbeat_at"),
+		contextDocumentFindings: jsonb("context_document_findings"),
 	},
 	(t) => [
 		uniqueIndex("agent_runs_active_application_uniq")
@@ -153,6 +178,7 @@ export const agentRuns = pgTable(
 		index("agent_runs_applicant_created_idx").on(t.applicantUserId, t.createdAt),
 		// T18 context-stage reaper: expired queued/running stages by lease.
 		index("agent_runs_context_status_timeout_idx").on(t.contextStatus, t.contextTimeoutAt),
+		index("agent_runs_policy_status_timeout_idx").on(t.policyStatus, t.policyTimeoutAt),
 	],
 );
 

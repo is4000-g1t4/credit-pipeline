@@ -17,6 +17,7 @@ import { Route as ApplicationsIdRouteImport } from './routes/applications/$id'
 import { Route as LoansIndexRouteImport } from './routes/loans/index'
 import { Route as LoansIdRouteImport } from './routes/loans/$id'
 import { Route as OfficerIndexRouteImport } from './routes/officer/index'
+import { Route as OfficerPoliciesRouteImport } from './routes/officer/policies'
 import { Route as OfficerReviewIndexRouteImport } from './routes/officer/review/index'
 import { Route as OfficerReviewIdRouteImport } from './routes/officer/review/$id'
 
@@ -60,6 +61,11 @@ const OfficerIndexRoute = OfficerIndexRouteImport.update({
   path: '/officer/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const OfficerPoliciesRoute = OfficerPoliciesRouteImport.update({
+  id: '/officer/policies',
+  path: '/officer/policies',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const OfficerReviewIndexRoute = OfficerReviewIndexRouteImport.update({
   id: '/officer/review/',
   path: '/officer/review/',
@@ -77,6 +83,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/applications/$id': typeof ApplicationsIdRoute
   '/loans/$id': typeof LoansIdRoute
+  '/officer/policies': typeof OfficerPoliciesRoute
   '/applications/': typeof ApplicationsIndexRoute
   '/loans/': typeof LoansIndexRoute
   '/officer/': typeof OfficerIndexRoute
@@ -89,6 +96,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/applications/$id': typeof ApplicationsIdRoute
   '/loans/$id': typeof LoansIdRoute
+  '/officer/policies': typeof OfficerPoliciesRoute
   '/applications': typeof ApplicationsIndexRoute
   '/loans': typeof LoansIndexRoute
   '/officer': typeof OfficerIndexRoute
@@ -102,6 +110,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/applications/$id': typeof ApplicationsIdRoute
   '/loans/$id': typeof LoansIdRoute
+  '/officer/policies': typeof OfficerPoliciesRoute
   '/applications/': typeof ApplicationsIndexRoute
   '/loans/': typeof LoansIndexRoute
   '/officer/': typeof OfficerIndexRoute
@@ -116,6 +125,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/applications/$id'
     | '/loans/$id'
+    | '/officer/policies'
     | '/applications/'
     | '/loans/'
     | '/officer/'
@@ -128,6 +138,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/applications/$id'
     | '/loans/$id'
+    | '/officer/policies'
     | '/applications'
     | '/loans'
     | '/officer'
@@ -140,6 +151,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/applications/$id'
     | '/loans/$id'
+    | '/officer/policies'
     | '/applications/'
     | '/loans/'
     | '/officer/'
@@ -153,6 +165,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   ApplicationsIdRoute: typeof ApplicationsIdRoute
   LoansIdRoute: typeof LoansIdRoute
+  OfficerPoliciesRoute: typeof OfficerPoliciesRoute
   ApplicationsIndexRoute: typeof ApplicationsIndexRoute
   LoansIndexRoute: typeof LoansIndexRoute
   OfficerIndexRoute: typeof OfficerIndexRoute
@@ -218,6 +231,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OfficerIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/officer/policies': {
+      id: '/officer/policies'
+      path: '/officer/policies'
+      fullPath: '/officer/policies'
+      preLoaderRoute: typeof OfficerPoliciesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/officer/review/': {
       id: '/officer/review/'
       path: '/officer/review'
@@ -241,6 +261,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   ApplicationsIdRoute: ApplicationsIdRoute,
   LoansIdRoute: LoansIdRoute,
+  OfficerPoliciesRoute: OfficerPoliciesRoute,
   ApplicationsIndexRoute: ApplicationsIndexRoute,
   LoansIndexRoute: LoansIndexRoute,
   OfficerIndexRoute: OfficerIndexRoute,

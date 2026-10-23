@@ -4,7 +4,7 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"dev": "pnpm --filter @credit/gateway --filter @credit/applications --filter @credit/review --filter @credit/loans --filter @credit/portfolio --filter @credit/worker --filter @credit/research --filter @credit/web --parallel dev",
+		"dev": "pnpm --filter @credit/gateway --filter @credit/applications --filter @credit/review --filter @credit/loans --filter @credit/portfolio --filter @credit/worker --filter @credit/research --filter @credit/policy --filter @credit/web --parallel dev",
 		"dev:services": "pnpm --filter @credit/gateway --filter @credit/applications --filter @credit/review --filter @credit/loans --filter @credit/portfolio --parallel dev",
 		"typecheck": "pnpm -r --if-present typecheck && tsc --noEmit -p scripts/tsconfig.json && tsc --noEmit -p e2e/tsconfig.json",
 		"lint": "oxlint",

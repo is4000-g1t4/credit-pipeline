@@ -15,7 +15,8 @@ import { createRealRunner, OPENROUTER_BASE_URL } from "./agent.js";
 import { createRealContextRunner } from "./context-agent.js";
 import { createApp } from "./app.js";
 import { loadEnv } from "./env.js";
-import { reapContextStages, reapStaleRuns } from "./lifecycle.js";
+import { createHttpPolicyRunner } from "./policy-stage.js";
+import { reapContextStages, reapPolicyStages, reapStaleRuns } from "./lifecycle.js";
 import { getObservability } from "./observability.js";
 import OpenAI from "openai";
 import { createTavilyClient } from "./tavily.js";
@@ -36,7 +37,8 @@ const runner = createRealRunner({ env, tavily, openai });
 const judge = createLlmSupportJudge(openai, env.agentModel, { observability });
 const repair = createLlmLanguageRepair(openai, env.agentModel, { observability });
 const contextRunner = createRealContextRunner({ env, openai });
-const app = createApp({ db, sql, env, logger, runner, judge, repair, contextRunner });
+const policyRunner = createHttpPolicyRunner(env);
+const app = createApp({ db, sql, env, logger, runner, judge, repair, contextRunner, policyRunner });
 
 const MAX_BODY_BYTES = 1_000_000;
 
@@ -85,7 +87,7 @@ server.listen(env.port, env.host, () => {
 // Crash recovery on boot + periodic sweep; SKIP LOCKED, never touches live runs.
 // Recovery runs BEFORE the reaper: a crash-left queued run starts instead
 // of being failed first (see bootRecovery).
-const execDeps = { db, env, logger, runner, judge, repair, observability, contextRunner };
+const execDeps = { db, env, logger, runner, judge, repair, observability, contextRunner, policyRunner };
 try {
 	const { recovered, reaped } = await bootRecovery(execDeps);
 	if (recovered.length > 0)
@@ -98,6 +100,13 @@ try {
 	} catch (err: unknown) {
 		logger.error({ err }, "context stage reaper failed");
 	}
+	try {
+		const reapedPolicy = await reapPolicyStages(db);
+		if (reapedPolicy.length > 0)
+			logger.info({ count: reapedPolicy.length }, "reaped stale policy stages on boot");
+	} catch (err: unknown) {
+		logger.error({ err }, "policy stage reaper failed");
+	}
 } catch (err: unknown) {
 	logger.error({ err }, "boot recovery failed");
 }
@@ -105,10 +114,11 @@ const reaper = setInterval(() => {
 	void (async () => {
 		try {
 			await reapStaleRuns(db);
-			// Context-stage reaper runs on both running and terminal T11
-			// runs; it clears expired stage tokens and never touches a
+			// Context/policy stage reapers run on both running and terminal
+			// T11 runs; they clear expired stage state and never touch a
 			// persisted external brief.
 			await reapContextStages(db);
+			await reapPolicyStages(db);
 		} catch (err: unknown) {
 			logger.error({ err }, "reaper failed");
 		}

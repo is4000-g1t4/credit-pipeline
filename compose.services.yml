@@ -254,6 +254,9 @@ services:
       REVIEW_URL: http://review:4002
       LOANS_URL: http://loans:4003
       PORTFOLIO_URL: http://portfolio:4004
+      POLICY_URL: http://policy:4006
+      POLICY_UPSTREAM_TIMEOUT_MS: ${POLICY_UPSTREAM_TIMEOUT_MS:-60000}
+      POLICY_ASK_RATE_PER_MIN: ${POLICY_ASK_RATE_PER_MIN:-10}
     depends_on:
       deps:
         condition: service_completed_successfully
@@ -270,6 +273,8 @@ services:
       loans:
         condition: service_healthy
       portfolio:
+        condition: service_healthy
+      policy:
         condition: service_healthy
     healthcheck:
       test:
@@ -306,6 +311,60 @@ services:
       temporal:
         condition: service_started
 
+  policy:
+    <<: *svc-base
+    image: oven/bun:1.4.3
+    working_dir: /app
+    command: ["bun", "apps/policy/src/server.ts"]
+    ports: ["4006:4006"]
+    environment:
+      POLICY_DATABASE_URL: postgres://credit:credit@postgres:5432/credit_policy
+      INTERNAL_SECRET: ${INTERNAL_SECRET}
+      POLICY_INTERNAL_SECRET: ${POLICY_INTERNAL_SECRET:-dev-policy-internal-secret}
+      POLICY_CASE_TOKEN_SECRET: ${POLICY_CASE_TOKEN_SECRET:-dev-policy-case-token-secret}
+      POLICY_CASE_TOKEN_TTL_SECONDS: ${POLICY_CASE_TOKEN_TTL_SECONDS:-120}
+      POLICY_CITATION_SECRET: ${POLICY_CITATION_SECRET:-dev-policy-citation-secret}
+      POLICY_AUDIT_HASH_SECRET: ${POLICY_AUDIT_HASH_SECRET:-dev-policy-audit-secret}
+      POLICY_ASSIST_ENABLED: ${POLICY_ASSIST_ENABLED:-false}
+      POLICY_EMBEDDING_MODEL: ${POLICY_EMBEDDING_MODEL:-voyageai/voyage-4-large}
+      POLICY_EMBEDDING_DIMENSIONS: ${POLICY_EMBEDDING_DIMENSIONS:-1024}
+      POLICY_EMBEDDING_PROVIDERS: ${POLICY_EMBEDDING_PROVIDERS:-}
+      POLICY_ANSWERER_PROVIDER_ORDER: ${POLICY_ANSWERER_PROVIDER_ORDER:-}
+      POLICY_AGENT_MODEL: ${POLICY_AGENT_MODEL:-deepseek/deepseek-v4.1-flash-1017}
+      POLICY_AGENT_TEMPERATURE: ${POLICY_AGENT_TEMPERATURE:-0.1}
+      POLICY_AGENT_MAX_OUTPUT_TOKENS: ${POLICY_AGENT_MAX_OUTPUT_TOKENS:-6000}
+      POLICY_AGENT_TIMEOUT_MS: ${POLICY_AGENT_TIMEOUT_MS:-30000}
+      POLICY_CASE_TIMEOUT_MS: ${POLICY_CASE_TIMEOUT_MS:-45000}
+      POLICY_AGENT_MAX_COST_USD: ${POLICY_AGENT_MAX_COST_USD:-0.10}
+      POLICY_CASE_MAX_COST_USD: ${POLICY_CASE_MAX_COST_USD:-0.20}
+      POLICY_NAV_DAILY_BUDGET_USD: ${POLICY_NAV_DAILY_BUDGET_USD:-2.0}
+      POLICY_CASE_DAILY_BUDGET_USD: ${POLICY_CASE_DAILY_BUDGET_USD:-2.0}
+      POLICY_ACTOR_DAILY_BUDGET_USD: ${POLICY_ACTOR_DAILY_BUDGET_USD:-1.0}
+      POLICY_RESERVATION_TTL_SECONDS: ${POLICY_RESERVATION_TTL_SECONDS:-180}
+      POLICY_INDEX_RETENTION_HOURS: ${POLICY_INDEX_RETENTION_HOURS:-24}
+      POLICY_RETRIEVAL_TOP_K: ${POLICY_RETRIEVAL_TOP_K:-8}
+      POLICY_JURISDICTION: ${POLICY_JURISDICTION:-SG}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      PORT: "4006"
+      HOST: 0.0.0.0
+    depends_on:
+      deps:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "const r = await fetch('http://127.0.0.1:4006/health'); if (!r.ok) throw new Error(String(r.status)); const j = await r.json(); if (j.status !== 'ok') throw new Error(j.status);",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
   research:
     <<: *svc-base
     # Node 22+ is required by the Agents and Grafana SDKs — never Bun.
@@ -317,6 +376,13 @@ services:
     environment:
       RESEARCH_DATABASE_URL: postgres://credit:credit@postgres:5432/credit_research
       INTERNAL_SECRET: ${INTERNAL_SECRET}
+      POLICY_ASSIST_ENABLED: ${POLICY_ASSIST_ENABLED:-false}
+      POLICY_URL: http://policy:4006
+      POLICY_INTERNAL_SECRET: ${POLICY_INTERNAL_SECRET:-dev-policy-internal-secret}
+      POLICY_CASE_TOKEN_SECRET: ${POLICY_CASE_TOKEN_SECRET:-dev-policy-case-token-secret}
+      POLICY_CASE_TOKEN_TTL_SECONDS: ${POLICY_CASE_TOKEN_TTL_SECONDS:-120}
+      POLICY_CASE_TIMEOUT_MS: ${POLICY_CASE_TIMEOUT_MS:-45000}
+      POLICY_CASE_MAX_COST_USD: ${POLICY_CASE_MAX_COST_USD:-0.20}
       AGENTS_ENABLED: ${AGENTS_ENABLED:-false}
       AGENT_CASE_BRIEF_ENABLED: ${AGENT_CASE_BRIEF_ENABLED:-false}
       CONTEXT_ANALYST_ENABLED: ${CONTEXT_ANALYST_ENABLED:-false}
@@ -365,6 +431,8 @@ services:
       postgres:
         condition: service_healthy
       kafka:
+        condition: service_healthy
+      policy:
         condition: service_healthy
     healthcheck:
       test:

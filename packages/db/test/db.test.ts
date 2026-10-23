@@ -10,6 +10,7 @@ import * as authSchema from "../src/auth.js";
 import * as loansSchema from "../src/loans.js";
 import * as portfolioSchema from "../src/portfolio.js";
 import * as researchSchema from "../src/research.js";
+import * as policySchema from "../src/policy.js";
 import * as root from "../src/index.js";
 
 describe("password", () => {
@@ -68,6 +69,40 @@ describe("schema", () => {
 		]) {
 			expect(table).toBeDefined();
 		}
+	});
+
+	it("policy owns the corpus tables + embedding dimension constant", () => {
+		for (const table of [
+			policySchema.policyDocuments,
+			policySchema.policyRoles,
+			policySchema.policyAcl,
+			policySchema.policyAclAudit,
+			policySchema.policyVersions,
+			policySchema.policySections,
+			policySchema.policyApprovals,
+			policySchema.policyChunks,
+			policySchema.policyIndexMeta,
+			policySchema.policyQueries,
+			policySchema.policyDailySpend,
+			policySchema.policyActorSpend,
+			policySchema.policySpendReservations,
+			policySchema.policyQueryCitations,
+			policySchema.policyCaseTokenUses,
+		]) {
+			expect(table).toBeDefined();
+		}
+		expect(policySchema.POLICY_EMBEDDING_DIMENSIONS).toBe(1024);
+	});
+
+	it("policy migration adds the approved-range exclusion constraint", () => {
+		const dir = join(fileURLToPath(new URL(".", import.meta.url)), "..", "drizzle", "policy");
+		const sql = readdirSync(dir)
+			.filter((f) => f.endsWith(".sql"))
+			.map((f) => readFileSync(join(dir, f), "utf8"))
+			.join("\n");
+		expect(sql).toContain("CREATE EXTENSION IF NOT EXISTS vector");
+		expect(sql).toContain("EXCLUDE USING gist");
+		expect(sql).toContain("policy_versions_effective_no_overlap");
 	});
 
 	it("loans owns the ledger tables (denormalised) + shared outbox/audit", () => {

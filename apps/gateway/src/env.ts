@@ -28,6 +28,9 @@ const parsed = createEnv({
 		REVIEW_URL: z.string().url().default("http://127.0.0.1:4002"),
 		LOANS_URL: z.string().url().default("http://127.0.0.1:4003"),
 		PORTFOLIO_URL: z.string().url().default("http://127.0.0.1:4004"),
+		POLICY_URL: z.string().url().default("http://127.0.0.1:4006"),
+		POLICY_UPSTREAM_TIMEOUT_MS: z.coerce.number().int().positive().default(60000),
+		POLICY_ASK_RATE_PER_MIN: z.coerce.number().int().positive().default(10),
 	},
 	runtimeEnv: process.env,
 	emptyStringAsUndefined: true,
@@ -50,6 +53,9 @@ export const env = {
 	reviewUrl: parsed.REVIEW_URL,
 	loansUrl: parsed.LOANS_URL,
 	portfolioUrl: parsed.PORTFOLIO_URL,
+	policyUrl: parsed.POLICY_URL,
+	policyUpstreamTimeoutMs: parsed.POLICY_UPSTREAM_TIMEOUT_MS,
+	policyAskRatePerMin: parsed.POLICY_ASK_RATE_PER_MIN,
 };
 
 export type GatewayEnv = typeof env;

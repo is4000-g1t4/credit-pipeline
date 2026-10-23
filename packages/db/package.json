@@ -10,6 +10,7 @@
 		"./loans": "./src/loans.ts",
 		"./portfolio": "./src/portfolio.ts",
 		"./research": "./src/research.ts",
+		"./policy": "./src/policy.ts",
 		"./shared": "./src/shared.ts",
 		"./password": "./src/password.ts"
 	},
@@ -17,8 +18,9 @@
 		"typecheck": "tsc --noEmit",
 		"build": "tsc --noEmit",
 		"test": "vitest run",
-		"db:generate": "drizzle-kit generate --config=drizzle.config.auth.ts && drizzle-kit generate --config=drizzle.config.applications.ts && drizzle-kit generate --config=drizzle.config.loans.ts && drizzle-kit generate --config=drizzle.config.portfolio.ts && drizzle-kit generate --config=drizzle.config.research.ts",
-		"db:generate:research": "drizzle-kit generate --config=drizzle.config.research.ts"
+		"db:generate": "drizzle-kit generate --config=drizzle.config.auth.ts && drizzle-kit generate --config=drizzle.config.applications.ts && drizzle-kit generate --config=drizzle.config.loans.ts && drizzle-kit generate --config=drizzle.config.portfolio.ts && drizzle-kit generate --config=drizzle.config.research.ts && drizzle-kit generate --config=drizzle.config.policy.ts",
+		"db:generate:research": "drizzle-kit generate --config=drizzle.config.research.ts",
+		"db:generate:policy": "drizzle-kit generate --config=drizzle.config.policy.ts"
 	},
 	"dependencies": {
 		"dotenv": "catalog:",

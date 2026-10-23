@@ -4,7 +4,7 @@
 import { randomUUID } from "node:crypto";
 import { agentRuns, contextSignals, withTx, type Db, type Tx } from "@credit/db/research";
 import { HttpError } from "@credit/service-kit";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { ResearchEnv } from "./env.js";
 import { AGENT_VERSION, promptHash, PROMPT_VERSION } from "./prompt.js";
 import { caseFactsSchema, type CaseFacts } from "@credit/core";
@@ -65,6 +65,10 @@ export function summarizeRun(run: RunRow): Record<string, unknown> {
 		contextStageVersion: run.contextStageVersion,
 		contextErrorCode: run.contextErrorCode,
 		contextModel: run.contextModel,
+		policyStatus: run.policyStatus,
+		policyErrorCode: run.policyErrorCode,
+		policyModel: run.policyModel,
+		policyPromptVersion: run.policyPromptVersion,
 	};
 }
 
@@ -714,6 +718,204 @@ export async function claimContextRetryTx(
  * terminal runs fail closed with the token cleared. Never rewrites a
  * succeeded external brief, evidence, or findings.
  */
+export interface PolicySignalRow {
+	type: string;
+	metric: string;
+	periodStart: string;
+	periodEnd: string;
+	accountScope: string;
+	status: "review" | "needs_chase" | "insufficient_data";
+	confidence: "low" | "medium" | "high";
+}
+
+export async function loadPolicySignals(db: Db, runId: string): Promise<PolicySignalRow[]> {
+	const rows = await db
+		.select({
+			type: contextSignals.type,
+			metric: contextSignals.metric,
+			periodStart: contextSignals.periodStart,
+			periodEnd: contextSignals.periodEnd,
+			accountScope: contextSignals.accountScope,
+			status: contextSignals.status,
+			confidence: contextSignals.confidence,
+		})
+		.from(contextSignals)
+		.where(and(eq(contextSignals.runId, runId), sql`${contextSignals.supersededAt} IS NULL`))
+		.orderBy(asc(contextSignals.periodStart), asc(contextSignals.type), asc(contextSignals.metric));
+	return rows.map((row) => ({
+		type: row.type,
+		metric: row.metric,
+		periodStart: row.periodStart ?? "",
+		periodEnd: row.periodEnd ?? "",
+		accountScope: row.accountScope,
+		status: row.status,
+		confidence: row.confidence,
+	}));
+}
+
+export async function beginPolicyStage(
+	db: Db,
+	env: ResearchEnv,
+	runId: string,
+	token: string,
+	opts: { model: string; promptVersion: string; documentFindings: unknown },
+): Promise<boolean> {
+	if (!tokenMatch(runId, token)) return false;
+	const now = new Date();
+	const policyTimeoutAt = new Date(now.getTime() + env.policyCaseTimeoutMs + 30_000);
+	const rows = await db
+		.update(agentRuns)
+		.set({
+			policyStatus: "running",
+			policyStartedAt: now,
+			policyFinishedAt: null,
+			policyTimeoutAt,
+			policyHeartbeatAt: now,
+			policyErrorCode: null,
+			policyModel: opts.model,
+			policyPromptVersion: opts.promptVersion,
+			contextDocumentFindings: opts.documentFindings,
+			// Extend the run lease past the synchronous policy call; never
+			// shorten an existing context lease.
+			timeoutAt: sql`GREATEST(${agentRuns.timeoutAt}, ${policyTimeoutAt})`,
+		})
+		.where(
+			and(eq(agentRuns.id, runId), eq(agentRuns.status, "running"), eq(agentRuns.runToken, token)),
+		)
+		.returning({ id: agentRuns.id });
+	return rows.length > 0;
+}
+
+export async function heartbeatPolicyStage(db: Db, runId: string, token: string): Promise<void> {
+	if (!tokenMatch(runId, token)) return;
+	await db
+		.update(agentRuns)
+		.set({ policyHeartbeatAt: new Date() })
+		.where(
+			and(
+				eq(agentRuns.id, runId),
+				eq(agentRuns.status, "running"),
+				eq(agentRuns.runToken, token),
+				eq(agentRuns.policyStatus, "running"),
+			),
+		);
+}
+
+export async function persistPolicySuccess(
+	db: Db,
+	runId: string,
+	token: string,
+	data: {
+		status: "succeeded" | "no_match" | "needs_policy_owner" | "budget_exceeded";
+		brief: Record<string, unknown> | null;
+		validation: Record<string, unknown> | null;
+		usage: Record<string, unknown> | null;
+	},
+): Promise<boolean> {
+	if (!tokenMatch(runId, token)) return false;
+	const rows = await db
+		.update(agentRuns)
+		.set({
+			policyStatus: data.status,
+			policyBrief: data.brief,
+			policyValidation: data.validation,
+			policyUsage: data.usage,
+			policyFinishedAt: new Date(),
+			policyHeartbeatAt: new Date(),
+			policyErrorCode: data.status === "budget_exceeded" ? "budget_exceeded" : null,
+		})
+		.where(
+			and(
+				eq(agentRuns.id, runId),
+				eq(agentRuns.status, "running"),
+				eq(agentRuns.runToken, token),
+				eq(agentRuns.policyStatus, "running"),
+			),
+		)
+		.returning({ id: agentRuns.id });
+	return rows.length > 0;
+}
+
+export async function skipPolicyStage(
+	db: Db,
+	runId: string,
+	token: string,
+	code: string,
+): Promise<boolean> {
+	if (!tokenMatch(runId, token)) return false;
+	const rows = await db
+		.update(agentRuns)
+		.set({
+			policyStatus: "skipped",
+			policyErrorCode: code,
+			policyFinishedAt: new Date(),
+			policyHeartbeatAt: new Date(),
+		})
+		.where(
+			and(eq(agentRuns.id, runId), eq(agentRuns.status, "running"), eq(agentRuns.runToken, token)),
+		)
+		.returning({ id: agentRuns.id });
+	return rows.length > 0;
+}
+
+export async function persistPolicyFailure(
+	db: Db,
+	runId: string,
+	token: string,
+	status: "failed" | "skipped",
+	code: string,
+	usage?: Record<string, unknown>,
+): Promise<boolean> {
+	if (!tokenMatch(runId, token)) return false;
+	const rows = await db
+		.update(agentRuns)
+		.set({
+			policyStatus: status,
+			policyErrorCode: code,
+			...(usage !== undefined ? { policyUsage: usage } : {}),
+			policyFinishedAt: new Date(),
+			policyHeartbeatAt: new Date(),
+		})
+		.where(
+			and(
+				eq(agentRuns.id, runId),
+				eq(agentRuns.status, "running"),
+				eq(agentRuns.runToken, token),
+				eq(agentRuns.policyStatus, "running"),
+			),
+		)
+		.returning({ id: agentRuns.id });
+	return rows.length > 0;
+}
+
+/** Policy-stage reaper: a crashed/timed-out stage is failed without changing
+ * the run's external/context outcome. */
+export async function reapPolicyStages(db: Db): Promise<string[]> {
+	return withTx(db, async (tx) => {
+		const stale = (await tx.execute(sql`SELECT id FROM agent_runs
+			WHERE policy_status = 'running'
+			  AND policy_timeout_at IS NOT NULL AND policy_timeout_at < now()
+			FOR UPDATE SKIP LOCKED`)) as unknown as Array<{ id: string }>;
+		const heartbeatStale = (await tx.execute(sql`SELECT id FROM agent_runs
+			WHERE policy_status = 'running'
+			  AND policy_heartbeat_at IS NOT NULL
+			  AND policy_heartbeat_at < now() - INTERVAL '90 seconds'
+			FOR UPDATE SKIP LOCKED`)) as unknown as Array<{ id: string }>;
+		const ids = [...new Set([...stale, ...heartbeatStale].map((row) => row.id))];
+		if (ids.length === 0) return [];
+		await tx
+			.update(agentRuns)
+			.set({
+				policyStatus: "failed",
+				policyErrorCode: "timeout",
+				policyFinishedAt: new Date(),
+				policyHeartbeatAt: new Date(),
+			})
+			.where(inArray(agentRuns.id, ids));
+		return ids;
+	});
+}
+
 export async function reapContextStages(db: Db): Promise<string[]> {
 	return withTx(db, async (tx) => {
 		const stale = (await tx.execute(sql`SELECT id FROM agent_runs

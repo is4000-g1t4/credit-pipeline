@@ -15,6 +15,7 @@ import { getObservability, type Observability } from "./observability.js";
 import type { LanguageRepair } from "./repair.js";
 import { researchRoutes } from "./routes.js";
 import type { SupportJudge } from "./support.js";
+import type { PolicyRunner } from "./policy-stage.js";
 
 export interface ResearchDeps {
 	db: Db;
@@ -28,6 +29,8 @@ export interface ResearchDeps {
 	contextRunner: ContextAgentRunner;
 	/** Test seam: fresh context-consent probe; default reads research-context over HMAC. */
 	fetchContextConsent?: (applicationId: string) => Promise<boolean>;
+	/** T03/T04 automatic case policy review; absent fails the policy stage only. */
+	policyRunner?: PolicyRunner;
 }
 
 /** Test seam: pass fakes for runner/judge/repair; production wires the real ones. */
@@ -43,6 +46,7 @@ export function createApp(deps: ResearchDeps): ServiceApp {
 		observability,
 		contextRunner: deps.contextRunner,
 		fetchContextConsent: deps.fetchContextConsent,
+		policyRunner: deps.policyRunner,
 	});
 	return createService({
 		name: "research",

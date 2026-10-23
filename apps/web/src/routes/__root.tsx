@@ -30,6 +30,9 @@ function Header() {
 									<Link to="/officer/review" className="text-blue-700 hover:underline">
 										Review queue
 									</Link>
+									<Link to="/officer/policies" className="text-blue-700 hover:underline">
+										Credit policy
+									</Link>
 									<Link to="/loans" className="text-blue-700 hover:underline">
 										Loans
 									</Link>

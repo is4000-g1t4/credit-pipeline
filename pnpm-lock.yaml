@@ -452,6 +452,43 @@ importers:
         specifier: 'catalog:'
         version: 5.0.5(@opentelemetry/api@1.9.1)(@types/node@26.6.5)(vite@8.3.4(@types/node@26.6.5)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1))
 
+  apps/policy:
+    dependencies:
+      '@credit/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@credit/service-kit':
+        specifier: workspace:*
+        version: link:../../packages/service-kit
+      '@t3-oss/env-core':
+        specifier: 'catalog:'
+        version: 0.13.11(typescript@7.0.2)(zod@4.6.7)
+      dotenv:
+        specifier: 'catalog:'
+        version: 18.0.8
+      drizzle-orm:
+        specifier: 'catalog:'
+        version: 0.45.4(@opentelemetry/api@1.9.1)(knex@3.2.10(mysql2@3.20.0(@types/node@26.6.5))(pg@8.20.0)(sqlite3@5.1.7(supports-color@8.1.1))(supports-color@8.1.1)(tedious@19.2.1(supports-color@8.1.1)))(mysql2@3.20.0(@types/node@26.6.5))(pg@8.20.0)(postgres@3.4.9)(sqlite3@5.1.7(supports-color@8.1.1))
+      hono:
+        specifier: 'catalog:'
+        version: 4.13.13
+      postgres:
+        specifier: 'catalog:'
+        version: 3.4.9
+      zod:
+        specifier: 'catalog:'
+        version: 4.6.7
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.6.5
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+      vitest:
+        specifier: 'catalog:'
+        version: 5.0.5(@opentelemetry/api@1.9.1)(@types/node@26.6.5)(vite@8.3.4(@types/node@26.6.5)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1))
+
   apps/portfolio:
     dependencies:
       '@credit/core':

@@ -16,6 +16,7 @@ const app = createApp({
 	loginLimiter: createRateLimiter(30, 60_000),
 	loginEmailLimiter: createRateLimiter(10, 60_000),
 	submitLimiter: createRateLimiter(5, 60_000),
+	policyLimiter: createRateLimiter(env.policyAskRatePerMin, 60_000),
 });
 
 // Bun entry: `bun --watch --env-file=../../.env src/server.ts` (see

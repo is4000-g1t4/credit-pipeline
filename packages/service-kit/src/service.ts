@@ -35,6 +35,13 @@ const UUID_SEGMENT_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 export interface ServiceOptions {
 	name: string;
 	secret: string;
+	/** HMAC secret for `/api/*` (gateway-signed user identity). Defaults
+	 * to `secret` so existing callers keep working. */
+	apiSecret?: string;
+	/** HMAC secret for `/internal/*`. Defaults to `secret`; the policy
+	 * service passes its dedicated `POLICY_INTERNAL_SECRET` here so a
+	 * gateway secret alone cannot call internal case routes. */
+	internalSecret?: string;
 	logger: Logger;
 	routes: ServiceApp;
 	health: () => Promise<HealthChecks>;
@@ -95,9 +102,10 @@ export function createService(opts: ServiceOptions): ServiceApp {
 		return c.json({ status: ok ? "ok" : "degraded", service: opts.name, checks });
 	});
 
-	const internal = requireInternal(opts.secret);
-	app.use("/api/*", internal);
-	app.use("/internal/*", internal);
+	const apiAuth = requireInternal(opts.apiSecret ?? opts.secret);
+	const internalAuth = requireInternal(opts.internalSecret ?? opts.secret);
+	app.use("/api/*", apiAuth);
+	app.use("/internal/*", internalAuth);
 
 	app.route("/", opts.routes);
 

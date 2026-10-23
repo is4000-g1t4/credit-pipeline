@@ -74,6 +74,7 @@ export function setupApp(opts: { logger?: Logger } = {}): TestContext {
 		loginLimiter: createRateLimiter(1000, 60_000),
 		loginEmailLimiter: createRateLimiter(1000, 60_000),
 		submitLimiter: createRateLimiter(1000, 60_000),
+		policyLimiter: createRateLimiter(1000, 60_000),
 		fetchImpl: fetchImpl as typeof fetch,
 	});
 	return ctx;

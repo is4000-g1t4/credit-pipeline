@@ -32,5 +32,8 @@ export interface GatewayDeps {
 	 * apart — both limiters are checked on every login. */
 	loginEmailLimiter: RateLimiter;
 	submitLimiter: RateLimiter;
+	/** Per-actor policy limiter (ask rate/min on the officer id). Checked
+	 * on every /api/policy/* request after the officer gate. */
+	policyLimiter: RateLimiter;
 	fetchImpl?: FetchImpl;
 }

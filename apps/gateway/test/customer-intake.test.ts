@@ -76,11 +76,15 @@ function setup(captured: Captured[]): {
 			reviewUrl: "http://review.test",
 			loansUrl: "http://loans.test",
 			portfolioUrl: "http://portfolio.test",
+			policyUrl: "http://policy.test",
+			policyUpstreamTimeoutMs: 60_000,
+			policyAskRatePerMin: 10,
 		},
 		logger: createLogger("gateway-t17-test"),
 		loginLimiter: createRateLimiter(1000, 60_000),
 		loginEmailLimiter: createRateLimiter(1000, 60_000),
 		submitLimiter: createRateLimiter(5, 60_000),
+		policyLimiter: createRateLimiter(1000, 60_000),
 		fetchImpl,
 	} satisfies GatewayDeps;
 	return { app: createApp(deps), user };

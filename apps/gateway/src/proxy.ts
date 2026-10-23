@@ -75,8 +75,9 @@ export async function fetchUpstream(
 			headers,
 			body,
 			// Bounded so a hung service cannot hold a gateway worker forever;
-			// the catch below maps the abort to the standard 502 path.
-			signal: AbortSignal.timeout(timeoutMs),
+			// the catch below maps the abort to the standard 502 path. The
+			// client disconnect aborts the upstream too (either signal fires).
+			signal: AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(timeoutMs)]),
 		});
 	} catch {
 		throw new HttpError(502, "BAD_GATEWAY", "upstream service unavailable");

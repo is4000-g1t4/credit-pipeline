@@ -87,6 +87,15 @@ export const researchServerSchema = {
 	// Observation window for research-side period validation; must match the
 	// applications CONTEXT_HISTORY_MONTHS (the service clamps anyway).
 	CONTEXT_HISTORY_MONTHS: z.coerce.number().int().min(1).max(36).default(6),
+	// T03/T04 automatic case policy review. Off by default; the stage runs
+	// after context and its failure never changes the external outcome.
+	POLICY_ASSIST_ENABLED: z.string().default("false"),
+	POLICY_URL: z.string().url().default("http://127.0.0.1:4006"),
+	POLICY_INTERNAL_SECRET: z.string().min(1).default("dev-policy-internal-secret"),
+	POLICY_CASE_TOKEN_SECRET: z.string().min(1).default("dev-policy-case-token-secret"),
+	POLICY_CASE_TOKEN_TTL_SECONDS: z.coerce.number().int().min(1).max(3_600).default(120),
+	POLICY_CASE_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(45_000),
+	POLICY_CASE_MAX_COST_USD: z.coerce.number().min(0).default(0.2),
 };
 
 const parsed = createEnv({
@@ -134,6 +143,13 @@ export const env = {
 	contextTimeoutMs: parsed.CONTEXT_AGENT_TIMEOUT_MS,
 	contextMaxCostUsd: parsed.CONTEXT_AGENT_MAX_COST_USD,
 	contextHistoryMonths: parsed.CONTEXT_HISTORY_MONTHS,
+	policyAssistEnabled: parsed.POLICY_ASSIST_ENABLED.trim().toLowerCase() === "true",
+	policyUrl: parsed.POLICY_URL,
+	policyInternalSecret: parsed.POLICY_INTERNAL_SECRET,
+	policyCaseTokenSecret: parsed.POLICY_CASE_TOKEN_SECRET,
+	policyCaseTokenTtlSeconds: parsed.POLICY_CASE_TOKEN_TTL_SECONDS,
+	policyCaseTimeoutMs: parsed.POLICY_CASE_TIMEOUT_MS,
+	policyCaseMaxCostUsd: parsed.POLICY_CASE_MAX_COST_USD,
 };
 
 export type ResearchEnv = typeof env;
