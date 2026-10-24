@@ -241,7 +241,7 @@
 	},
 	{
 		"id": "nav-no-match-02",
-		"split": "heldout",
+		"split": "dev",
 		"type": "unanswerable",
 		"question": "What is the policy for lending to a private space tourism company?",
 		"product": "sme_term_loan",
@@ -265,7 +265,7 @@
 	},
 	{
 		"id": "nav-ambiguous-02",
-		"split": "heldout",
+		"split": "dev",
 		"type": "ambiguous",
 		"question": "What are the conditions for the special facility?",
 		"product": "sme_term_loan",
@@ -370,5 +370,29 @@
 		"forbiddenText": [],
 		"referenceAnswer": "A margin call is issued requiring cure within 30 days; failure to cure converts the facility to reviewable tenor with monthly monitoring.",
 		"tags": ["answerable", "collateral", "margin-call"]
+	},
+	{
+		"id": "nav-heldout-07",
+		"split": "heldout",
+		"type": "out-of-scope",
+		"question": "How do we screen employees for sanctions?",
+		"product": "personal_loan",
+		"expectedStatus": "out_of_scope",
+		"requiredSections": [],
+		"forbiddenText": [],
+		"referenceAnswer": "",
+		"tags": ["gate", "out-of-scope"]
+	},
+	{
+		"id": "nav-heldout-08",
+		"split": "heldout",
+		"type": "identifier",
+		"question": "Can borrower bob@example.com get a loan?",
+		"product": "personal_loan",
+		"expectedStatus": "identifier_blocked",
+		"requiredSections": [],
+		"forbiddenText": [],
+		"referenceAnswer": "",
+		"tags": ["gate", "identifier"]
 	}
 ]

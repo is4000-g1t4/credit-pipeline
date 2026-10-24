@@ -231,7 +231,7 @@ a supported capability.
 
 | Feature                                       | Archetype                       | Dataset                                         | Command                                       | Status                                     |
 | --------------------------------------------- | ------------------------------- | ----------------------------------------------- | --------------------------------------------- | ------------------------------------------ |
-| Policy navigator (`apps/policy`)              | Retrieval-augmented answer      | `apps/policy/eval/answer-cases.json` (31 cases) | `pnpm --filter @credit/policy eval:answers`   | passing: held-out 8/8, dev 19/23 at pass^3 |
+| Policy navigator (`apps/policy`)              | Retrieval-augmented answer      | `apps/policy/eval/answer-cases.json` (33 cases) | `pnpm --filter @credit/policy eval:answers`   | passing: held-out 8/8, dev 22/25 at pass^3 |
 | Case policy review (`apps/research` → policy) | Explain/classify                | inline demo personas + edge case                | `pnpm --filter @credit/research eval:policy`  | planned                                    |
 | External case brief (`apps/research`)         | Tool-using research             | inline 3-case fixture in `brief-eval.ts`        | `pnpm --filter @credit/research eval:brief`   | passing: 9/9, in-sample                    |
 | Context analyst (`apps/research`)             | Structured extraction/selection | demo personas in `fixtures.ts`                  | `pnpm --filter @credit/research eval:context` | passing: 9/9, in-sample                    |
@@ -318,16 +318,16 @@ Rules:
 
 This is the most visible AI feature and the easiest to grade well.
 
-Dataset, 31 cases (23 dev, 8 held-out):
+Dataset, 33 cases (25 dev, 8 held-out):
 
 - 24 answerable, across underwriting, affordability, documentation, pricing,
   and servicing.
-- 3 unanswerable → `no_match`.
+- 1 adversarial injection question.
+- 2 unanswerable → `no_match`.
 - 2 ambiguous → `needs_policy_owner` or `no_match`.
-- 1 out-of-scope → `out_of_scope`.
-- 1 direct-identifier → `identifier_blocked`.
-- 1 adversarial injection question; no stale/as-of case yet (corpus has one
-  version per policy).
+- 2 out-of-scope → `out_of_scope`.
+- 2 direct-identifier → `identifier_blocked`.
+- No stale/as-of case yet (corpus has one version per policy).
 
 Harness: `apps/policy/eval/answer-eval.ts`. Calls the production Markdown
 parser, `rankChunks`, `createOpenRouterAnswerer`, and
@@ -439,8 +439,8 @@ is the remaining half of the invariant.
 
 | Feature             | Run                   | Headline                                                              |    Cost | Caveat                                                             |
 | ------------------- | --------------------- | --------------------------------------------------------------------- | ------: | ------------------------------------------------------------------ |
-| Policy navigator    | 31 cases × 3 trials   | held-out 8/8 cases, dev 19/23 at pass^3; 93/93 status-correct trials  | $0.3052 | judge uncalibrated; dev failures are completeness                  |
-| External case brief | 3 cases × 3 trials    | 9/9 trials, 3/3 pass^3; adverse/collision correct, citation/PII clean | $0.2177 | 3 synthetic cases, in-sample; registry/support reported, not gated |
+| Policy navigator    | 33 cases × 3 trials   | held-out 8/8 cases, dev 22/25 at pass^3; 99/99 status-correct trials  | $0.3093 | judge uncalibrated; dev failures are completeness                  |
+| External case brief | 3 cases × 3 trials    | 9/9 trials, 3/3 pass^3; adverse/collision correct, citation/PII clean | $0.2387 | 3 synthetic cases, in-sample; registry/support reported, not gated |
 | Context analyst     | 3 personas × 3 trials | 9/9 trials, 3/3 pass^3, first-pass 9/9, 0 dropped signals             | $0.7546 | 3 demo personas, in-sample; coverage validator-enforced            |
 
 Details: `apps/policy/eval/ANSWER-RESULTS.md`,

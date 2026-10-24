@@ -12,6 +12,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+	containsDecisionLanguage,
+	containsForbidden,
 	validateNavigatorAnswer,
 	type AnswerCitation,
 	type AnswerSegment,
@@ -271,12 +273,8 @@ function forbiddenHit(text: string, terms: string[]): number {
 	const lower = text.toLowerCase();
 	let hits = 0;
 	for (const term of terms) if (lower.includes(term.toLowerCase())) hits += 1;
-	if (/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i.test(text)) hits += 1;
-	if (/(?:\+?65[\s-]?)?[689]\d{3}[\s-]?\d{4}\b/.test(text)) hits += 1;
-	if (/\b[STFGM]\d{7}[A-Z]\b/i.test(text)) hits += 1;
-	if (/https?:\/\/|www\.[a-z0-9]/i.test(text)) hits += 1;
-	if (/\b(I|we)\s+(approve|decline|recommend|suggest)\b/i.test(text)) hits += 1;
-	if (/\b(you|we)\s+should\s+(approve|decline)\b/i.test(text)) hits += 1;
+	if (containsForbidden(text)) hits += 1;
+	if (containsDecisionLanguage(text)) hits += 1;
 	return hits;
 }
 

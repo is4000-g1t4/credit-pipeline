@@ -120,6 +120,8 @@ const EMAIL_RE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
 const PHONE_RE = /(?:\+?65[\s-]?)?[689]\d{3}[\s-]?\d{4}\b/;
 const NRIC_RE = /\b[STFGM]\d{7}[A-Z]\b/i;
 const URL_RE = /https?:\/\/|www\.[a-z0-9]/i;
+const DECISION_RE =
+	/\b(I|we)\s+(approve|decline|recommend|suggest)\b|\b(you|we)\s+should\s+(approve|decline)\b/i;
 
 /** One claim per segment, one sentence terminator. Decimal points and
  * abbreviations without a following space do not count; common spaced
@@ -132,8 +134,22 @@ export function isSingleClaim(text: string): boolean {
 	return terminators.length <= 1;
 }
 
-function containsForbidden(text: string): boolean {
+export function containsForbidden(text: string): boolean {
 	return EMAIL_RE.test(text) || PHONE_RE.test(text) || NRIC_RE.test(text) || URL_RE.test(text);
+}
+
+/** First-person/imperative decision language. Policy facts such as "a breach
+ * is a hard decline" are allowed; "we approve this" is not. */
+export function containsDecisionLanguage(text: string): boolean {
+	return DECISION_RE.test(text);
+}
+
+/** Limitations are rendered to officers; drop unsafe ones rather than fail an
+ * otherwise valid answer. */
+function safeLimitations(limitations: string[]): string[] {
+	return limitations.filter(
+		(limitation) => !containsForbidden(limitation) && !containsDecisionLanguage(limitation),
+	);
 }
 
 export function createDrawerToken(
@@ -337,7 +353,7 @@ export function validateNavigatorAnswer(
 				status: data.status,
 				segments: [],
 				citations: [],
-				limitations: data.limitations,
+				limitations: safeLimitations(data.limitations),
 			},
 			errors: [],
 		};
@@ -349,7 +365,7 @@ export function validateNavigatorAnswer(
 				status: "needs_policy_owner",
 				segments: [],
 				citations: [],
-				limitations: data.limitations,
+				limitations: safeLimitations(data.limitations),
 			},
 			errors: ["answer has no segments"],
 		};
@@ -378,7 +394,7 @@ export function validateNavigatorAnswer(
 				status: "needs_policy_owner",
 				segments: [],
 				citations: [],
-				limitations: data.limitations,
+				limitations: safeLimitations(data.limitations),
 			},
 			errors,
 		};
@@ -386,7 +402,7 @@ export function validateNavigatorAnswer(
 	const { segments, citations } = reindexSegments(validated);
 	return {
 		ok: true,
-		answer: { status: "succeeded", segments, citations, limitations: data.limitations },
+		answer: { status: "succeeded", segments, citations, limitations: safeLimitations(data.limitations) },
 		errors: [],
 	};
 }
@@ -415,7 +431,7 @@ export function validateCaseAnswer(
 				status: data.status,
 				summary: data.summary,
 				items: [],
-				limitations: data.limitations,
+				limitations: safeLimitations(data.limitations),
 			},
 			errors: [],
 		};
@@ -471,7 +487,7 @@ export function validateCaseAnswer(
 				status: "needs_policy_owner",
 				summary: data.summary,
 				items: [],
-				limitations: data.limitations,
+				limitations: safeLimitations(data.limitations),
 			},
 			errors: errors.length > 0 ? errors : ["no valid case items"],
 		};
@@ -482,7 +498,7 @@ export function validateCaseAnswer(
 			status: "succeeded",
 			summary: data.summary,
 			items,
-			limitations: [...data.limitations, ...errors.map((error) => `Dropped: ${error}`)],
+			limitations: [...safeLimitations(data.limitations), ...errors.map((error) => `Dropped: ${error}`)],
 		},
 		errors: [],
 	};

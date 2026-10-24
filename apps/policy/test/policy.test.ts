@@ -187,6 +187,24 @@ describe("navigator citation validation", () => {
 		);
 		expect(result.ok).toBe(true);
 	});
+	it("drops unsafe limitations before returning them", () => {
+		const result = validateNavigatorAnswer(
+			{
+				status: "needs_policy_owner",
+				segments: [],
+				citations: [],
+				limitations: [
+					"Email alice@example.com for the policy owner.",
+					"We approve this request.",
+					"The corpus is silent on this point.",
+				],
+			},
+			retrieved,
+			opts,
+		);
+		expect(result.ok).toBe(true);
+		expect(result.answer.limitations).toEqual(["The corpus is silent on this point."]);
+	});
 	it("accepts one claim with an exact quote", () => {
 		const result = validateNavigatorAnswer(
 			{

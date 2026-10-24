@@ -163,12 +163,12 @@ export function createRealRunner(opts: {
 					if (!candidate) continue;
 					const verdict = validateFinalUrl(candidate.url);
 					if (!verdict.ok) continue;
-					extracts += 1;
 					const extracted = await trackTool("fetch_source", () =>
 						tavily.extract([verdict.finalUrl]),
 					);
 					const page = extracted[0];
 					if (!page?.rawContent) continue;
+					extracts += 1;
 					fetched.push({
 						requestedUrl: candidate.url,
 						returnedUrl: page.url,

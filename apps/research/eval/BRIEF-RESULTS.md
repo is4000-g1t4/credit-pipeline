@@ -28,8 +28,8 @@ match, support judge, language repair).
 | Official source linked     | 8/9 trials (one clean brief was empty)  |
 | Registry finding           | 8/9 trials (reported, not gated)        |
 | Independent sources        | 2 (Acme), 1 (Bright), 1 (Meridian)      |
-| Mean / p95 latency         | 7.3 s / 14.9 s                          |
-| Cost                       | $0.2177 (projected ceiling, not billed) |
+| Mean / p95 latency         | 9.5 s / 21.5 s                          |
+| Cost                       | $0.2387 (projected ceiling, not billed) |
 
 Case outcomes:
 
