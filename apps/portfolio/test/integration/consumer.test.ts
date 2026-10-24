@@ -57,7 +57,12 @@ async function feedCount(eventId: string): Promise<number> {
 
 beforeAll(async () => {
 	producer = await connectProducer();
-	consumer = await startConsumer();
+	// Unique group per run: a shared group (or a running dev worker) would
+	// steal our partitions/offsets and the assertions would flake. A fresh
+	// group reads fromBeginning, so only fresh event ids are asserted.
+	consumer = await startConsumer({ groupId: `test-credit-activity-${randomUUID()}` });
+	await waitFor("consumer connect", async () => consumer.isConnected());
+	expect(consumer.isConnected()).toBe(true);
 });
 
 afterAll(async () => {

@@ -1,5 +1,4 @@
 // Pure validator tests: no DB, no network.
-import type OpenAI from "openai";
 import { describe, expect, it } from "vitest";
 import { projectCostUsd } from "../../src/agent.js";
 import { buildUserPrompt, promptHash, PROMPT_VERSION, SYSTEM_TEMPLATE } from "../../src/prompt.js";
@@ -26,6 +25,7 @@ import {
 	sha256Hex,
 	verifyQuote,
 } from "../../src/validator.js";
+import { fakeOpenAi, type RecordedCall } from "../fixtures.js";
 
 describe("snapshot window", () => {
 	it("stores the whole content when small, with exact offsets and hash", () => {
@@ -75,7 +75,10 @@ describe("snapshot window", () => {
 	});
 
 	it("rejects a quote larger than the window", () => {
-		expect(() => buildSnapshot("small", "q".repeat(21 * 1024))).toThrow();
+		// The snapshot content really contains the oversized quote, so the
+		// failure is the window-size guard — not quote-not-found.
+		const quote = "q".repeat(21 * 1024);
+		expect(() => buildSnapshot(`prefix ${quote} suffix`, quote)).toThrow(/window/);
 	});
 
 	it("clamps a large multibyte quote plus look-behind to 20KB", () => {
@@ -454,31 +457,14 @@ describe("support judge", () => {
 	});
 
 	it("sends claim/quote as fenced data-only and the retry as a repair", async () => {
-		const recorded: Array<Record<string, unknown>> = [];
-		const openai = {
-			chat: {
-				completions: {
-					create: async (params: Record<string, unknown>) => {
-						recorded.push(params);
-						const n = recorded.length;
-						return {
-							choices: [
-								{
-									message: {
-										content: JSON.stringify(
-											n === 1
-												? { verdict: "unsupported", span: null }
-												: { verdict: "supported", span: "filed accounts" },
-										),
-									},
-								},
-							],
-							usage: { prompt_tokens: 10, completion_tokens: 5 },
-						};
-					},
-				},
-			},
-		} as unknown as OpenAI;
+		const recorded: RecordedCall[] = [];
+		const openai = fakeOpenAi(
+			[
+				{ verdict: "unsupported", span: null },
+				{ verdict: "supported", span: "filed accounts" },
+			],
+			recorded,
+		);
 		const judge = createLlmSupportJudge(openai, "m");
 		const out = await judgeWithRepair(
 			"Acme filed accounts.",
@@ -488,8 +474,8 @@ describe("support judge", () => {
 		expect(out.verdict).toBe("supported");
 		expect(out.repaired).toBe(true);
 		expect(recorded).toHaveLength(2);
-		const first = recorded[0].messages as Array<{ role: string; content: string }>;
-		const second = recorded[1].messages as Array<{ role: string; content: string }>;
+		const first = recorded[0].params.messages as Array<{ role: string; content: string }>;
+		const second = recorded[1].params.messages as Array<{ role: string; content: string }>;
 		// Data-only framing on both attempts; repair instruction only on retry.
 		expect(first[0].content).toContain("DATA ONLY");
 		expect(first[1].content).toContain("```");

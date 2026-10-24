@@ -4,11 +4,21 @@
 import type {
 	CheckReasonCode,
 	Grade,
+	MonitoringCounts,
+	OfficerDecisionInput,
+	OfficerDecisionResult,
 	OfficerReasonCode,
 	PolicyReason,
 	Product,
 	ResearchBundle,
 } from "@credit/core";
+
+// Single home for the decision/update + monitoring contracts is
+// @credit/core (see contracts.ts) — this file re-exports them so
+// workflows/activities/tests keep importing from here.
+export type { MonitoringCounts, OfficerDecisionInput, OfficerDecisionResult };
+/** Monitoring sweep counts — one name (`MonitoringCounts`) from @credit/core. */
+export type MonitoringResult = MonitoringCounts;
 
 export interface ApplicationWorkflowInput {
 	applicationId: string;
@@ -68,24 +78,6 @@ export interface PolicyDecision {
 	maxAmountCents: number;
 }
 
-export interface OfficerDecisionInput {
-	requestId: string;
-	outcome: "approve" | "decline";
-	approvedAmountCents?: number;
-	termMonths?: number;
-	reasonCode?: OfficerReasonCode;
-	notes?: string;
-	officerUserId?: string;
-	/** Server-built frozen bundle, copied into the snapshot (optional). */
-	research?: ResearchBundle;
-}
-
-export interface OfficerDecisionResult {
-	outcome: "booked" | "declined";
-	decisionId: string;
-	loanId: string | null;
-}
-
 export interface BookLoanInput {
 	applicationId: string;
 	route: "auto" | "officer";
@@ -136,12 +128,6 @@ export interface PendingReviewResult {
 
 export interface ExpireReviewResult {
 	expired: boolean;
-}
-
-export interface MonitoringResult {
-	markedOverdue: number;
-	alertsCreated: number;
-	loansUpdated: number;
 }
 
 export interface ApplicationWorkflowResult {

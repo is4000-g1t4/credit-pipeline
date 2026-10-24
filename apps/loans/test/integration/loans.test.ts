@@ -2,7 +2,7 @@
 // list/detail, demo pay/age guarded by DEMO_MODE + officer, unsigned 401.
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { auditLog, ewsAlerts, installments } from "@credit/db/loans";
+import { auditLog, ewsAlerts, installments, loans } from "@credit/db/loans";
 import { and, eq } from "drizzle-orm";
 import {
 	createUser,
@@ -342,6 +342,28 @@ describe("internal loans by applicant", () => {
 		expect(unsigned.status).toBe(401);
 	});
 
+	it("signs the applications binding check as a service", async () => {
+		const a = await createUser(ctx);
+		const svc = await serviceUser();
+		const { applicationId: appId } = await seedLoan(ctx, a.id);
+		const original = ctx.applicationsStub.fetch;
+		let role: string | undefined;
+		ctx.applicationsStub.fetch = async (url, init) => {
+			role = (init.headers as Record<string, string> | undefined)?.["x-user-role"];
+			return original(url, init);
+		};
+		try {
+			const path = withQuery(a.id, appId);
+			const res = await ctx.app.request(path, {
+				headers: signed(ctx, svc, "GET", path.split("?")[0] as string),
+			});
+			expect(res.status).toBe(200);
+			expect(role).toBe("service");
+		} finally {
+			ctx.applicationsStub.fetch = original;
+		}
+	});
+
 	it("isolates applicants and returns [] when the bound case has no loans", async () => {
 		const a = await createUser(ctx);
 		const b = await createUser(ctx);
@@ -427,6 +449,31 @@ describe("demo controls", () => {
 		expect(paid.status).toBe(200);
 		expect(await jsonBody<unknown>(paid)).toMatchObject({ loanId, status: "closed" });
 
+		// Repaying the same installment is a 409, not a second payment.
+		const again = await ctx.app.request(path, {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				...signed(ctx, officer, "POST", path, {}, body),
+			},
+			body,
+		});
+		expect(again.status).toBe(409);
+		expect((await jsonBody<{ error: { code: string } }>(again)).error.code).toBe("ALREADY_PAID");
+
+		// An installment from another loan is not payable through this loan.
+		const stranger = await seedLoan(ctx, a.id);
+		const crossBody = JSON.stringify({ installmentId: stranger.installmentId });
+		const cross = await ctx.app.request(path, {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				...signed(ctx, officer, "POST", path, {}, crossBody),
+			},
+			body: crossBody,
+		});
+		expect(cross.status).toBe(404);
+
 		const applicant = await ctx.app.request(path, {
 			method: "POST",
 			headers: { "content-type": "application/json", ...signed(ctx, a, "POST", path, {}, body) },
@@ -479,6 +526,18 @@ describe("demo controls", () => {
 		});
 		expect(aged.status).toBe(200);
 		expect(await jsonBody<unknown>(aged)).toMatchObject({ aged: 1, markedOverdue: 1 });
+		// The installment due date actually moved 40 days back (seeded at
+		// 2026-11-19), and the loan's next due date followed it.
+		const items = await ctx.db
+			.select({ dueDate: installments.dueDate })
+			.from(installments)
+			.where(eq(installments.loanId, loanId));
+		expect(items.map((i) => i.dueDate)).toEqual(["2026-10-10"]);
+		const [loan] = await ctx.db
+			.select({ nextDueDate: loans.nextDueDate })
+			.from(loans)
+			.where(eq(loans.id, loanId));
+		expect(loan?.nextDueDate).toBe("2026-10-10");
 
 		const runPath = "/api/demo/monitoring/run";
 		const applicantRun = await ctx.app.request(runPath, {

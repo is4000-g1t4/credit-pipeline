@@ -8,6 +8,7 @@
 // re-verify structure plus forbidden terms before judging.
 import type OpenAI from "openai";
 import { z } from "zod";
+import { callJsonModel } from "./model-call.js";
 import type { Observability } from "./observability.js";
 import { modelBriefSchema, type ModelBrief } from "./validator.js";
 
@@ -65,35 +66,20 @@ export function createLlmLanguageRepair(
 		// Direct OpenAI call (bypasses the Runner hooks): tracked as its own
 		// metadata-only generation under the run conversation (§7). Untracked
 		// without a run id; budget accounting below is unchanged.
-		const call = () =>
-			openai.chat.completions.create(
-				{
-					model,
-					temperature: 0,
-					max_tokens: 4000,
-					response_format: { type: "json_object" },
-					messages: [
-						{ role: "system", content: REPAIR_SYSTEM },
-						{ role: "user", content: repairUserContent(brief) },
-					] as never,
-				},
-				// Request options (deadline), never model input.
-				{ signal: opts?.signal },
-			);
-		const res =
-			opts?.runId && deps?.observability
-				? await deps.observability.trackModelCall(
-						{ runId: opts.runId, model, operation: "language_repair" },
-						call,
-					)
-				: await call();
-		const text = res.choices[0]?.message?.content ?? "";
-		let parsed: unknown;
-		try {
-			parsed = JSON.parse(text);
-		} catch {
-			throw new RepairRejectedError("language repair returned invalid JSON");
-		}
+		const { parsed, usage } = await callJsonModel({
+			openai,
+			model,
+			messages: [
+				{ role: "system", content: REPAIR_SYSTEM },
+				{ role: "user", content: repairUserContent(brief) },
+			],
+			maxTokens: 4000,
+			operation: "language_repair",
+			signal: opts?.signal,
+			runId: opts?.runId,
+			observability: deps?.observability,
+			invalidJson: () => new RepairRejectedError("language repair returned invalid JSON"),
+		});
 		const repaired = repairSchema.safeParse(parsed);
 		if (!repaired.success)
 			throw new RepairRejectedError("language repair failed schema validation");
@@ -113,10 +99,7 @@ export function createLlmLanguageRepair(
 		if (!full.success) throw new RepairRejectedError("language repair failed schema validation");
 		return {
 			brief: full.data,
-			usage: {
-				inputTokens: res.usage?.prompt_tokens ?? 0,
-				outputTokens: res.usage?.completion_tokens ?? 0,
-			},
+			usage,
 		};
 	};
 }

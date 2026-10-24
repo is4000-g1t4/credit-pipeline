@@ -3,15 +3,9 @@
 // numbers come from the owning services' internal stats endpoints (signed,
 // same user); the feed is the local Kafka read model.
 import { activityFeed, type Db } from "@credit/db/portfolio";
-import {
-	HttpError,
-	internalFetch,
-	type ServiceApp,
-	type ServiceVariables,
-} from "@credit/service-kit";
+import { HttpError, internalFetch, requireOfficer, type ServiceApp } from "@credit/service-kit";
 import { desc } from "drizzle-orm";
 import { Hono } from "hono";
-import { createMiddleware } from "hono/factory";
 
 export interface DashboardRouteDeps {
 	db: Db;
@@ -20,13 +14,6 @@ export interface DashboardRouteDeps {
 	internalSecret: string;
 	fetchImpl?: typeof fetch;
 }
-
-const officer = createMiddleware<{ Variables: ServiceVariables }>(async (c, next) => {
-	const me = c.var.user;
-	if (!me) throw new HttpError(401, "UNAUTHENTICATED", "login required");
-	if (me.role !== "officer") throw new HttpError(403, "FORBIDDEN", "officer role required");
-	await next();
-});
 
 interface ApplicationsStats {
 	applications: Record<string, number>;
@@ -42,7 +29,7 @@ export function dashboardRoutes(deps: DashboardRouteDeps): ServiceApp {
 	const app: ServiceApp = new Hono();
 	const { db, applicationsUrl, loansUrl, internalSecret, fetchImpl } = deps;
 
-	app.get("/api/dashboard/summary", officer, async (c) => {
+	app.get("/api/dashboard/summary", requireOfficer, async (c) => {
 		const me = c.var.user;
 		const [appsRes, loansRes, feed] = await Promise.all([
 			internalFetch(applicationsUrl, "/internal/stats", me, {

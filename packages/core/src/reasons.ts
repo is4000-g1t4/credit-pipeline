@@ -50,8 +50,8 @@ export const REASON_TEXT: Record<ReasonCode, string> = {
 	POLICY_EXCEPTION: "Declined as a policy exception.",
 };
 
-export function reasonText(code: ReasonCode): string {
-	return REASON_TEXT[code];
+export function reasonText(code: string): string {
+	return (REASON_TEXT as Record<string, string>)[code] ?? code;
 }
 
 export function makeReason(code: ReasonCode): PolicyReason {

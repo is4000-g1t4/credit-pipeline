@@ -40,7 +40,7 @@ const SEED_USERS = [
 const url = process.env.AUTH_DATABASE_URL;
 if (!url) throw new Error("db:seed: AUTH_DATABASE_URL is not set (root .env?)");
 
-const { db, sql } = createDb(url, authSchema);
+const { db, sql } = createDb(url);
 try {
 	const inserted = await db
 		.insert(users)

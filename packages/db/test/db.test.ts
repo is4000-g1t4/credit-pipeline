@@ -1,6 +1,6 @@
 // @credit/db tests: scrypt round-trip, per-service schema surfaces, and the
 // database-per-service boundary (no cross-service table imports).
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -28,6 +28,11 @@ describe("password", () => {
 		expect(await verifyPassword("demo1234", "")).toBe(false);
 		expect(await verifyPassword("demo1234", "not-a-hash")).toBe(false);
 		expect(await verifyPassword("demo1234", "scrypt$1$2")).toBe(false);
+	});
+
+	it("returns false for out-of-range scrypt params instead of throwing", async () => {
+		const bad = `scrypt$1048576$8$1$${"ab".repeat(16)}$${"cd".repeat(32)}`;
+		await expect(verifyPassword("demo1234", bad)).resolves.toBe(false);
 	});
 });
 
@@ -148,7 +153,17 @@ describe("schema", () => {
 });
 
 describe("data ownership", () => {
-	const services = ["gateway", "applications", "review", "loans", "portfolio", "worker"] as const;
+	const services = [
+		"gateway",
+		"applications",
+		"review",
+		"loans",
+		"portfolio",
+		"worker",
+		"research",
+		"policy",
+		"web",
+	] as const;
 	// Which @credit/db subpaths each app may import (bare "@credit/db" =
 	// client/password only). Review is stateless (no db imports at all).
 	const allowed: Record<(typeof services)[number], string[]> = {
@@ -158,6 +173,9 @@ describe("data ownership", () => {
 		loans: ["@credit/db", "@credit/db/loans", "@credit/db/shared"],
 		portfolio: ["@credit/db", "@credit/db/portfolio"],
 		worker: ["@credit/db", "@credit/db/applications", "@credit/db/loans", "@credit/db/shared"],
+		research: ["@credit/db", "@credit/db/research"],
+		policy: ["@credit/db"],
+		web: [],
 	};
 
 	function tsFiles(dir: string): string[] {
@@ -173,6 +191,17 @@ describe("data ownership", () => {
 		}
 		return out;
 	}
+
+	it("every app directory is allowlisted (no silent escape)", () => {
+		const appsDir = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "..", "apps");
+		const dirs = readdirSync(appsDir, { withFileTypes: true })
+			.filter((e) => e.isDirectory() && existsSync(join(appsDir, e.name, "src")))
+			.map((e) => e.name);
+		expect(dirs.length).toBeGreaterThan(0);
+		for (const dir of dirs) {
+			expect(services as readonly string[], `apps/${dir} missing from allowlist`).toContain(dir);
+		}
+	});
 
 	it("no service imports another domain's tables", () => {
 		const violations: string[] = [];

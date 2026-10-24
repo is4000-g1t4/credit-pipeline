@@ -6,6 +6,7 @@
 // bounds. Model-visible transaction rows strip descriptions and counterparties
 // (injection/PII surface); metadata-only logging, never args or results.
 import { signInternalHeaders } from "@credit/service-kit";
+import { isUuid } from "./ids.js";
 import type { ResearchEnv } from "./env.js";
 
 export class ContextToolError extends Error {}
@@ -65,13 +66,8 @@ interface ToolDeps {
 	/** YYYY-MM-DD observation end; bounds the loans read. Falls back to
 	 * caseFacts.asOf when absent. */
 	asOfDate?: string;
-	/** Auto runs carry it; officer runs resolve it lazily for the loans tool.
-	 * Never model-visible. */
-	applicantUserId?: string | null;
 	fetchImpl?: (url: string, init: RequestInit) => Promise<Response>;
 }
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function numNull(v: unknown): number | null {
 	return typeof v === "number" ? v : null;
@@ -165,8 +161,8 @@ export function createContextTools(deps: ToolDeps): ContextTools {
 	const get = (path: string): Promise<unknown> => getFrom(deps.env.applicationsUrl, path);
 
 	// Internal routing data, never returned to the model. The loans tool
-	// always resolves it fresh (see getLoans); deps.applicantUserId is
-	// retained only so auto-run callers keep passing it (never trusted).
+	// always resolves the applicant id fresh via /context/applicant (see
+	// getLoans).
 
 	const tools: ContextTools = {
 		snapshots: state.snapshots,
@@ -222,7 +218,7 @@ export function createContextTools(deps: ToolDeps): ContextTools {
 			return { accounts: body.accounts };
 		},
 		async getTransactions(input: { accountId: string; cursor?: string }) {
-			if (!UUID_RE.test(input.accountId)) throw new ContextToolError("invalid accountId");
+			if (!isUuid(input.accountId)) throw new ContextToolError("invalid accountId");
 			if (
 				input.cursor !== undefined &&
 				(typeof input.cursor !== "string" || input.cursor.length > 2000)
@@ -264,7 +260,7 @@ export function createContextTools(deps: ToolDeps): ContextTools {
 		// preflight and validator anchor on the unscoped candidate set.
 		async getCashflowMetrics(input: { accountIds?: string[] }) {
 			const ids = input.accountIds ?? [];
-			if (!Array.isArray(ids) || ids.length > 10 || ids.some((id) => !UUID_RE.test(id))) {
+			if (!Array.isArray(ids) || ids.length > 10 || ids.some((id) => !isUuid(id))) {
 				throw new ContextToolError("invalid accountIds: at most 10 UUIDs");
 			}
 			const cacheKey = [...ids].sort().join(",");

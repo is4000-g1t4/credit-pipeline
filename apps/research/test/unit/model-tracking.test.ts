@@ -65,7 +65,6 @@ vi.mock("@grafana/agento11y", async (importOriginal) => {
 	};
 });
 
-import type OpenAI from "openai";
 import {
 	getObservability,
 	resetObservability,
@@ -74,65 +73,13 @@ import {
 } from "../../src/observability.js";
 import { createLlmLanguageRepair } from "../../src/repair.js";
 import { createLlmSupportJudge, judgeWithRepair } from "../../src/support.js";
-import type { ModelBrief } from "../../src/validator.js";
+import { fakeOpenAi, modelBrief } from "../fixtures.js";
 
 const MODEL = "deepseek/deepseek-v3.2-exp";
 const RUN_ID = "run-123";
 
 function envBackup(): Record<string, string | undefined> {
 	return { ...process.env };
-}
-
-function fakeOpenai(replies: unknown[]): OpenAI {
-	let i = 0;
-	return {
-		chat: {
-			completions: {
-				create: async () => {
-					const reply = replies[Math.min(i++, replies.length - 1)];
-					return {
-						choices: [
-							{ message: { content: typeof reply === "string" ? reply : JSON.stringify(reply) } },
-						],
-						usage: { prompt_tokens: 10, completion_tokens: 5 },
-					};
-				},
-			},
-		},
-	} as unknown as OpenAI;
-}
-
-function brief(): ModelBrief {
-	return {
-		summary: "Registry shows timely filings; the loan terms look fine.",
-		findings: [
-			{
-				claim: "Acme Ltd filed accounts for the year ending March 2025 on time.",
-				category: "registry",
-				whyItMatters: "Timely filing is part of the public record.",
-				allegationStatus: "unknown",
-				entityMatch: {
-					identifierType: "name_city",
-					value: "Acme Ltd, Leeds",
-					confidence: "medium",
-				},
-				evidenceLocalIds: ["ev-1"],
-			},
-		],
-		evidence: [
-			{
-				localId: "ev-1",
-				url: "https://find-and-update.company-information.service.gov.uk/company/123",
-				title: "Filings",
-				publisher: "Companies House",
-				publishedAt: "2025-06-01",
-				quote: "Acme Ltd filed accounts for the year ending March 2025 on time.",
-			},
-		],
-		contradictions: [],
-		unknowns: [],
-		questionsForOfficer: [],
-	};
 }
 
 /** Fake observer: records tracked ops, never sees prompts or outputs. */
@@ -158,7 +105,7 @@ describe("direct-call tracking through the factories", () => {
 	it("tracks language repair as one generation under the run conversation", async () => {
 		const { obs, calls } = recordingObserver();
 		const repair = createLlmLanguageRepair(
-			fakeOpenai([
+			fakeOpenAi([
 				{
 					summary: "Registry shows timely filings in the public record.",
 					findings: [
@@ -172,7 +119,7 @@ describe("direct-call tracking through the factories", () => {
 			MODEL,
 			{ observability: obs },
 		);
-		const out = await repair(brief(), { runId: RUN_ID });
+		const out = await repair(modelBrief(), { runId: RUN_ID });
 		expect(calls).toEqual([{ runId: RUN_ID, model: MODEL, operation: "language_repair" }]);
 		// Budget accounting is untouched: the same usage object flows through.
 		expect(out.usage).toEqual({ inputTokens: 10, outputTokens: 5 });
@@ -182,7 +129,7 @@ describe("direct-call tracking through the factories", () => {
 	it("tracks each judge attempt (initial + repair retry) as support_judge", async () => {
 		const { obs, calls } = recordingObserver();
 		const judge = createLlmSupportJudge(
-			fakeOpenai([
+			fakeOpenAi([
 				{ verdict: "unsupported", span: null },
 				{ verdict: "supported", span: "filed accounts" },
 			]),
@@ -208,7 +155,7 @@ describe("direct-call tracking through the factories", () => {
 	it("runs untracked without a run id, still succeeding", async () => {
 		const { obs, calls } = recordingObserver();
 		const repair = createLlmLanguageRepair(
-			fakeOpenai([
+			fakeOpenAi([
 				{
 					summary: "Registry shows timely filings in the public record.",
 					findings: [
@@ -222,7 +169,7 @@ describe("direct-call tracking through the factories", () => {
 			MODEL,
 			{ observability: obs },
 		);
-		const out = await repair(brief());
+		const out = await repair(modelBrief());
 		expect(calls).toEqual([]);
 		expect(out.brief.summary).toBe("Registry shows timely filings in the public record.");
 	});

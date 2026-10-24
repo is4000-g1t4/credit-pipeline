@@ -5,7 +5,6 @@
 // copies for BreadTalk so the checklist blocks. Never touches a touched draft.
 import { assertDemoMutable } from "@credit/core";
 import { createDb } from "@credit/db/applications";
-import * as authSchema from "@credit/db/auth";
 import { assertFixtureClock, assertManifest, loadManifest } from "./lib/manifest.js";
 import {
 	cliAppDocConfig,
@@ -25,7 +24,7 @@ const manifest = loadManifest();
 assertFixtureClock(manifest.demoAsOf, process.env.DEMO_AS_OF);
 assertManifest(manifest);
 
-const auth = createDb(requireEnv("AUTH_DATABASE_URL"), authSchema);
+const auth = createDb(requireEnv("AUTH_DATABASE_URL"));
 const { db: appDb, sql } = createDb(requireEnv("APPLICATIONS_DATABASE_URL"));
 try {
 	const outcome = await ensureDemoCase(manifest, persona, {

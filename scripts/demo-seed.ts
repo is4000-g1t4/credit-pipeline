@@ -4,7 +4,6 @@
 // fixture keys; never overwrites applicant rows or fixture drafts.
 import { assertDemoMutable } from "@credit/core";
 import { createDb } from "@credit/db/applications";
-import * as authSchema from "@credit/db/auth";
 import { assertFixtureClock, assertManifest, loadManifest } from "./lib/manifest.js";
 import { cliCustomerConfig, cliFlags, dbUserDirectory, requireEnv } from "./lib/env.js";
 import { seedDemo } from "./lib/seed.js";
@@ -21,7 +20,7 @@ if (flags.demoSeedVersion !== String(manifest.version)) {
 assertFixtureClock(manifest.demoAsOf, process.env.DEMO_AS_OF);
 const { hash } = assertManifest(manifest);
 
-const auth = createDb(requireEnv("AUTH_DATABASE_URL"), authSchema);
+const auth = createDb(requireEnv("AUTH_DATABASE_URL"));
 const { db: appDb, sql } = createDb(requireEnv("APPLICATIONS_DATABASE_URL"));
 try {
 	const counts = await seedDemo(manifest, {

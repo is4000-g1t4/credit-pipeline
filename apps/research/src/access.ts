@@ -207,10 +207,6 @@ export async function claimOfficerAccess(
 	}
 }
 
-export function isAccessRole(value: unknown): value is AccessRole {
-	return typeof value === "string" && (ACCESS_ROLES as readonly string[]).includes(value);
-}
-
 /**
  * T11 claim-on-read: auto-triggered runs carry no officer grant, so the
  * first officer to open one claims `assigned_officer` via T00

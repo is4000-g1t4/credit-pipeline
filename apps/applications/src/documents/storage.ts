@@ -84,6 +84,27 @@ export async function deleteBlob(root: string, key: string): Promise<void> {
 	}
 }
 
+/** Best-effort purge that reports success: the storage helper swallows
+ * errors, so verify the bytes are actually gone afterwards. A throwing
+ * deleter (tests) also reports false — the caller keeps a retry marker. */
+export async function purgeBlob(
+	root: string,
+	key: string,
+	del: (root: string, key: string) => Promise<void> = deleteBlob,
+): Promise<boolean> {
+	try {
+		await del(root, key);
+	} catch {
+		return false;
+	}
+	try {
+		await fs.stat(await resolveStoragePath(root, key));
+		return false;
+	} catch {
+		return true;
+	}
+}
+
 export interface OpenBlobInput {
 	root: string;
 	storageKey: string;

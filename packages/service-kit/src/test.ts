@@ -1,6 +1,7 @@
 // Fake WorkflowGateway for service tests: records calls, returns canned
 // results, or throws a canned GatewayError. Production code never touches
 // this — only unit/integration tests import it.
+import { randomUUID } from "node:crypto";
 import {
 	GatewayError,
 	type MonitoringCounts,
@@ -8,6 +9,7 @@ import {
 	type OfficerDecisionResult,
 	type WorkflowGateway,
 } from "./gateway.js";
+import { signInternalHeaders, type InternalRole, type InternalUser } from "./internal.js";
 
 export interface FakeGateway extends WorkflowGateway {
 	started: string[];
@@ -67,4 +69,53 @@ export function stubGateway(): FakeGateway {
 		},
 	};
 	return fake;
+}
+
+/** Synthetic user for `app.request` tests (identity is signed headers
+ * only — most service DBs carry no users table). Same shape as
+ * `InternalUser`; ids/emails are unique per call. */
+export function testUser(
+	role: InternalRole = "applicant",
+	overrides: { id?: string; email?: string } = {},
+): InternalUser {
+	const id = overrides.id ?? randomUUID();
+	return { id, email: overrides.email ?? `${role}-${id}@example.com`, role };
+}
+
+export interface SignedTestHeadersOptions {
+	/** Exact request bytes being sent; omitted signs the empty hash. */
+	body?: string | ArrayBuffer | Uint8Array | null;
+	requestId?: string;
+	/** Millis since epoch; defaults to now. */
+	ts?: number;
+	/** Merged over the signed headers (e.g. content-type). */
+	extra?: Record<string, string>;
+}
+
+/** Signed internal headers for `app.request`, as the gateway would send. */
+export function signedInternalHeaders(
+	secret: string,
+	user: Pick<InternalUser, "id" | "email" | "role">,
+	method: string,
+	path: string,
+	opts: SignedTestHeadersOptions = {},
+): Record<string, string> {
+	return {
+		...signInternalHeaders(secret, {
+			userId: user.id,
+			role: user.role,
+			email: user.email,
+			method,
+			path,
+			body: opts.body,
+			requestId: opts.requestId,
+			ts: opts.ts,
+		}),
+		...opts.extra,
+	};
+}
+
+/** JSON stub Response for downstream fetch fakes; status defaults to 200. */
+export function jsonResponse(body: unknown, status = 200): Response {
+	return Response.json(body, { status });
 }

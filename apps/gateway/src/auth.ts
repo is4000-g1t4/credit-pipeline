@@ -11,7 +11,12 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { users } from "@credit/db/auth";
 import { verifyPassword } from "@credit/db";
-import { HttpError, readJson, zodFields } from "@credit/service-kit";
+import {
+	HttpError,
+	readJson,
+	requireOfficer as requireOfficerRole,
+	zodFields,
+} from "@credit/service-kit";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
@@ -167,16 +172,14 @@ export const requireUser = (deps: GatewayDeps) =>
 
 export const requireOfficer = (deps: GatewayDeps) =>
 	createMiddleware<{ Variables: GatewayVariables }>(async (c, next) => {
-		const cookies = parseCookies(c.req.header("cookie") ?? "");
-		const userId = verifySession(cookies[SESSION_COOKIE] ?? "", deps.env.sessionSecret);
-		if (!userId) throw new HttpError(401, "UNAUTHENTICATED", "login required");
-		const user = await loadUser(deps, userId);
-		if (!user) throw new HttpError(401, "UNAUTHENTICATED", "login required");
-		if (user.role !== "officer") {
-			throw new HttpError(403, "FORBIDDEN", "officer role required");
-		}
-		c.set("user", user);
-		await next();
+		// Inner no-op next: requireUser must only load the session user,
+		// never advance the outer chain past the role gate below.
+		await requireUser(deps)(c, async () => {});
+		// Role gate is the shared service-kit helper (same 403 message);
+		// the cookie session + DB load above stays gateway-specific. The
+		// cast bridges GatewayVariables to the signed identity shape —
+		// both carry { id, email, role } and the gate reads only `role`.
+		await requireOfficerRole(c as unknown as Parameters<typeof requireOfficerRole>[0], next);
 	});
 
 const loginSchema = z

@@ -10,27 +10,22 @@ import {
 	dedupeDecisionMade,
 	dedupeReviewExpired,
 	dedupeReviewRequested,
-	type Factor,
-	type Grade,
 	makeReason,
 	type PolicyReason,
 	rateBps,
 } from "@credit/core";
 import {
 	applications,
-	type Db,
 	decisions,
 	kycChecks,
 	policyEvaluations,
-	scores,
 	withTx,
 } from "@credit/db/applications";
 import { loans } from "@credit/db/loans";
-import { ApplicationFailure } from "@temporalio/activity";
 import { eq } from "drizzle-orm";
 import { getApplicationsDb, getLoansDb } from "../db.js";
-import { type ApplicationRow, loadApplicationRow } from "./application.js";
 import { insertOutbox, writeAudit } from "@credit/service-kit";
+import { conflict, loadCreditContext } from "./shared.js";
 import type {
 	ExpireReviewResult,
 	PendingReviewResult,
@@ -50,14 +45,6 @@ export interface PersistDecisionData {
 	reasons: { code: string; text: string }[];
 	notes?: string | null;
 	snapshot: unknown;
-}
-
-function conflict(message: string): Error {
-	return ApplicationFailure.create({
-		message,
-		type: "DecisionConflict",
-		nonRetryable: true,
-	});
 }
 
 export async function persistDecision(
@@ -168,40 +155,6 @@ export async function persistDecision(
 		});
 		return { decisionId, replayed: false };
 	});
-}
-
-interface CreditContext {
-	app: ApplicationRow;
-	score: number;
-	grade: Grade;
-	factors: Factor[];
-	newPaymentCents: number;
-	policyInputs: unknown;
-	policyReasons: PolicyReason[];
-}
-
-/** Score + policy rows every credit snapshot needs (both ran upstream). */
-async function loadCreditContext(db: Db, applicationId: string): Promise<CreditContext> {
-	const app = await loadApplicationRow(applicationId);
-	const scoreRows = await db.select().from(scores).where(eq(scores.applicationId, applicationId));
-	const policyRows = await db
-		.select()
-		.from(policyEvaluations)
-		.where(eq(policyEvaluations.applicationId, applicationId));
-	const scoreRow = scoreRows[0];
-	const policyRow = policyRows[0];
-	if (!scoreRow || !policyRow) {
-		throw new Error(`decision context missing for ${applicationId}`);
-	}
-	return {
-		app,
-		score: scoreRow.score,
-		grade: scoreRow.grade as Grade,
-		factors: scoreRow.factors as Factor[],
-		newPaymentCents: (scoreRow.affordability as { newPaymentCents: number }).newPaymentCents,
-		policyInputs: policyRow.inputs,
-		policyReasons: policyRow.reasons as PolicyReason[],
-	};
 }
 
 /** System policy decline, expected ['processing'] (FR-6.10). FR-4.6: the

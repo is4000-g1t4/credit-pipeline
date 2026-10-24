@@ -1,13 +1,11 @@
 // monitoringWorkflow test: the workflow calls runMonitoring once with
 // today's UTC date and returns its counts. Activities MOCKED — no DB.
 
-import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { monitoringWorkflowName, TASK_QUEUE } from "@credit/core";
+import { monitoringWorkflowName } from "@credit/core";
 import { TestWorkflowEnvironment } from "@temporalio/testing";
-import { Worker } from "@temporalio/worker";
 import { afterAll, beforeAll, describe, expect, it, vi, type Mock } from "vitest";
-import type { Activities } from "../src/activities/types.js";
+import { runWorkflow } from "./workflow-helper.js";
 
 const workflowsPath = fileURLToPath(new URL("../src/workflows", import.meta.url));
 
@@ -28,33 +26,21 @@ describe("monitoringWorkflow", () => {
 			alertsCreated: 2,
 			loansUpdated: 1,
 		}));
-		const taskQueue = `${TASK_QUEUE}-t-${randomUUID()}`;
-		const worker = await Worker.create({
-			connection: env.nativeConnection,
-			namespace: "default",
-			taskQueue,
+		const result = await runWorkflow(
+			env,
 			workflowsPath,
-			activities: { runMonitoring } as unknown as Activities,
+			monitoringWorkflowName,
+			[{ manual: true }],
+			{ runMonitoring },
+		);
+		expect(result).toEqual({
+			markedOverdue: 2,
+			alertsCreated: 2,
+			loansUpdated: 1,
 		});
-		const run = worker.run();
-		try {
-			const result = await env.client.workflow.execute(monitoringWorkflowName, {
-				args: [{ manual: true }],
-				taskQueue,
-				workflowId: `wf-${randomUUID()}`,
-			});
-			expect(result).toEqual({
-				markedOverdue: 2,
-				alertsCreated: 2,
-				loansUpdated: 1,
-			});
-			expect(runMonitoring).toHaveBeenCalledOnce();
-			expect(runMonitoring).toHaveBeenCalledWith({
-				todayUtc: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
-			});
-		} finally {
-			worker.shutdown();
-			await run;
-		}
+		expect(runMonitoring).toHaveBeenCalledOnce();
+		expect(runMonitoring).toHaveBeenCalledWith({
+			todayUtc: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+		});
 	}, 60_000);
 });

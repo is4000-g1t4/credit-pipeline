@@ -21,7 +21,7 @@ curl http://127.0.0.1:3001/api/health
 | Gateway `status: degraded`, `checks.db.ok: false` | `docker compose ps`; is postgres up?                   | `docker compose up -d --wait`; then `pnpm db:wait`                                                                            |
 | `checks.kafka.ok: false`                          | Is the kafka container up?                             | `docker compose up -d --wait`; then `pnpm kafka:init`                                                                         |
 | `checks.temporal.ok: false`                       | Is temporal up? Open UI on 8080                        | `docker compose up -d --wait`; restart the worker                                                                             |
-| `services.<name>.ok: false`                       | `curl http://127.0.0.1:4001/health` (and 4002–4005)    | Start the missing service (`pnpm dev` or `pnpm dev:services`); review checks only temporal, portfolio checks db plus consumer |
+| `services.<name>.ok: false`                       | `curl http://127.0.0.1:4001/health` (and 4002–4006)    | Start the missing service (`pnpm dev` or `pnpm dev:services`); review checks only temporal, portfolio checks db plus consumer |
 | `consumer not connected` in portfolio health      | Kafka down or consumer retrying                        | Wait for the 1-second retry loop; check Kafka; read portfolio logs                                                            |
 | Worker exits or acts strangely                    | Node version; Temporal supports 20/22/24, repo pins 26 | Try Node 24 LTS first                                                                                                         |
 
@@ -69,16 +69,16 @@ curl http://127.0.0.1:3001/api/health
 
 ### Local environment
 
-| Symptom                                              | Check                                                                              | Action                                                                                                                |
-| ---------------------------------------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Port 3000, 3001, or 4001–4005 already in use         | `Get-NetTCPConnection -LocalPort 3000,3001,4001,4002,4003,4004,4005 -State Listen` | Stop only that PID. Never `Stop-Process -Name node`; it kills unrelated tooling                                       |
-| Stale demo state (piled-up cases, half-run demo)     | Non-terminal count per applicant                                                   | Full reset: `docker compose down -v`, `docker compose up -d --wait`, `pnpm setup`                                     |
-| Postgres 17 volume fails on Postgres 18              | Old volume layout                                                                  | One-time reset: `docker compose down`, `docker volume rm project_pgdata`, `docker compose up -d --wait`, `pnpm setup` |
-| `pnpm test` hits EPERM on Windows                    | Stale `node_modules/.vitest-cache` after a container install                       | Delete `node_modules/.vitest-cache` and re-run                                                                        |
-| Playwright browsers missing                          | `e2e` fails to launch chromium                                                     | `pnpm exec playwright install chromium`                                                                               |
-| KafkaJS `TimeoutNegativeWarning` on Node 26          | Benign                                                                             | Ignore; topics still create                                                                                           |
-| dotenv `injected env` line                           | Benign                                                                             | Ignore                                                                                                                |
-| Temporal test-server heartbeat warning in unit tests | Benign, tests only                                                                 | Ignore                                                                                                                |
+| Symptom                                              | Check                                                                                   | Action                                                                                                                |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Port 3000, 3001, or 4001–4006 already in use         | `Get-NetTCPConnection -LocalPort 3000,3001,4001,4002,4003,4004,4005,4006 -State Listen` | Stop only that PID. Never `Stop-Process -Name node`; it kills unrelated tooling                                       |
+| Stale demo state (piled-up cases, half-run demo)     | Non-terminal count per applicant                                                        | Full reset: `docker compose down -v`, `docker compose up -d --wait`, `pnpm setup`                                     |
+| Postgres 17 volume fails on Postgres 18              | Old volume layout                                                                       | One-time reset: `docker compose down`, `docker volume rm project_pgdata`, `docker compose up -d --wait`, `pnpm setup` |
+| `pnpm test` hits EPERM on Windows                    | Stale `node_modules/.vitest-cache` after a container install                            | Delete `node_modules/.vitest-cache` and re-run                                                                        |
+| Playwright browsers missing                          | `e2e` fails to launch chromium                                                          | `pnpm exec playwright install chromium`                                                                               |
+| KafkaJS `TimeoutNegativeWarning` on Node 26          | Benign                                                                                  | Ignore; topics still create                                                                                           |
+| dotenv `injected env` line                           | Benign                                                                                  | Ignore                                                                                                                |
+| Temporal test-server heartbeat warning in unit tests | Benign, tests only                                                                      | Ignore                                                                                                                |
 
 ## Compose overlay
 

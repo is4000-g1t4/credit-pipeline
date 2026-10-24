@@ -40,17 +40,14 @@ import {
 	confirmationHmac,
 	deriveConfirmations,
 	effectiveAsOf,
+	getConfirmableValue,
 	isConfirmableField,
 	requirementsFor,
 } from "../customer/requirements.js";
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+import { isUniqueViolation } from "../documents/pipeline.js";
+import { isUuid, readIdempotencyReplay } from "../ids.js";
 
 const contextConsentSchema = z.object({ consent: z.boolean() }).strict();
-
-function isUniqueViolation(err: unknown): boolean {
-	return typeof err === "object" && err !== null && (err as { code?: unknown }).code === "23505";
-}
 
 export interface T17Clock {
 	demoMode: boolean;
@@ -256,24 +253,7 @@ export function intakeRoutes(deps: IntakeRouteDeps): ServiceApp {
 		}
 		const requestHash = hashCanonical(body);
 
-		const readReplay = async (): Promise<{ id: string; reference: string } | null> => {
-			const rows = await db
-				.select()
-				.from(idempotencyKeys)
-				.where(and(eq(idempotencyKeys.userId, me.id), eq(idempotencyKeys.key, key)));
-			const row = rows[0];
-			if (!row) return null;
-			if (row.requestHash !== requestHash) {
-				throw new HttpError(
-					409,
-					"IDEMPOTENCY_CONFLICT",
-					"Idempotency-Key was already used with a different payload",
-				);
-			}
-			return row.response as { id: string; reference: string };
-		};
-
-		const fast = await readReplay();
+		const fast = await readIdempotencyReplay(db, { userId: me.id, key, requestHash });
 		if (fast) return c.json(fast, 201);
 
 		let outcome: { id: string; reference: string };
@@ -370,7 +350,16 @@ export function intakeRoutes(deps: IntakeRouteDeps): ServiceApp {
 								applicationId: (inserted as { id: string }).id,
 								customerProfileId: profiles.id,
 								field,
-								valueHash: confirmationHmac(submittedValueFor(data, field), t17.confirmationKey),
+								valueHash: confirmationHmac(
+									getConfirmableValue(
+										{
+											identity: data.identity as Record<string, unknown>,
+											sme: (data.sme ?? null) as Record<string, unknown> | null,
+										},
+										field,
+									),
+									t17.confirmationKey,
+								),
 							})),
 						);
 					}
@@ -406,7 +395,7 @@ export function intakeRoutes(deps: IntakeRouteDeps): ServiceApp {
 		} catch (err) {
 			if (err instanceof HttpError) throw err;
 			if (!isUniqueViolation(err)) throw err;
-			const winner = await readReplay();
+			const winner = await readIdempotencyReplay(db, { userId: me.id, key, requestHash });
 			if (!winner) throw err;
 			return c.json(winner, 201);
 		}
@@ -419,7 +408,7 @@ export function intakeRoutes(deps: IntakeRouteDeps): ServiceApp {
 	app.get("/api/applications/:id/requirements", async (c) => {
 		const me = c.var.user;
 		const id = c.req.param("id");
-		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(id)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const rows = await db.select().from(applications).where(eq(applications.id, id));
 		const row = rows[0];
 		if (!row) throw new HttpError(404, "NOT_FOUND", "not found");
@@ -451,7 +440,7 @@ export function intakeRoutes(deps: IntakeRouteDeps): ServiceApp {
 	app.patch("/api/applications/:id/context-consent", async (c) => {
 		const me = c.var.user;
 		const id = c.req.param("id");
-		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(id)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const parsed = contextConsentSchema.safeParse(await readJson(c));
 		if (!parsed.success) {
 			throw new HttpError(400, "VALIDATION_ERROR", "invalid consent", zodFields(parsed.error));
@@ -505,7 +494,7 @@ export function intakeRoutes(deps: IntakeRouteDeps): ServiceApp {
 			throw new HttpError(403, "FORBIDDEN", "applicants only");
 		}
 		const id = c.req.param("id");
-		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(id)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const key = c.req.header("Idempotency-Key")?.trim();
 		if (!key) {
 			throw new HttpError(400, "MISSING_IDEMPOTENCY_KEY", "Idempotency-Key header is required");
@@ -513,31 +502,12 @@ export function intakeRoutes(deps: IntakeRouteDeps): ServiceApp {
 		const body = await readJson(c).catch(() => ({}));
 		const requestHash = hashCanonical({ route: "submit", body });
 
-		const readReplay = async (): Promise<{ id: string; reference: string } | null> => {
-			const rows = await db
-				.select()
-				.from(idempotencyKeys)
-				.where(and(eq(idempotencyKeys.userId, me.id), eq(idempotencyKeys.key, key)));
-			const row = rows[0];
-			if (!row) return null;
-			if (row.requestHash !== requestHash) {
-				throw new HttpError(
-					409,
-					"IDEMPOTENCY_CONFLICT",
-					"Idempotency-Key was already used with a different payload",
-				);
-			}
-			if (row.applicationId !== id) {
-				throw new HttpError(
-					409,
-					"IDEMPOTENCY_CONFLICT",
-					"Idempotency-Key belongs to a different application",
-				);
-			}
-			return row.response as { id: string; reference: string };
-		};
-
-		const fast = await readReplay();
+		const fast = await readIdempotencyReplay(db, {
+			userId: me.id,
+			key,
+			requestHash,
+			applicationId: id,
+		});
 		if (fast) return c.json(fast, 200);
 
 		let outcome: { id: string; reference: string };
@@ -641,7 +611,12 @@ export function intakeRoutes(deps: IntakeRouteDeps): ServiceApp {
 		} catch (err) {
 			if (err instanceof HttpError) throw err;
 			if (!isUniqueViolation(err)) throw err;
-			const winner = await readReplay();
+			const winner = await readIdempotencyReplay(db, {
+				userId: me.id,
+				key,
+				requestHash,
+				applicationId: id,
+			});
 			if (!winner) throw err;
 			return c.json(winner, 200);
 		}
@@ -667,18 +642,4 @@ export function intakeRoutes(deps: IntakeRouteDeps): ServiceApp {
 	// submittedAt; officers 404/excluded) — see routes/applications.ts.
 
 	return app;
-}
-
-/** Submitted value for one confirmable field (equals the profile value for
- * every field stored here — `deriveConfirmations` guarantees it). */
-function submittedValueFor(
-	data: { identity: Record<string, unknown>; sme?: Record<string, unknown> | null },
-	field: string,
-): unknown {
-	const dot = field.indexOf(".");
-	const head = field.slice(0, dot);
-	const tail = field.slice(dot + 1);
-	if (head === "identity") return data.identity[tail];
-	if (head === "sme") return data.sme?.[tail];
-	return undefined;
 }

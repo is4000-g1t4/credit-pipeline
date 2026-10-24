@@ -4,6 +4,7 @@
 import type { Page } from "@playwright/test";
 
 export const API_BASE = "http://127.0.0.1:3001";
+
 export const DEMO_PASSWORD = "demo1234";
 
 export class ApiError extends Error {
@@ -272,4 +273,140 @@ export async function uiLogout(page: Page): Promise<void> {
 		60_000,
 		500,
 	);
+}
+
+export interface IdentityFixture {
+	fullName: string;
+	dob: string;
+	nationalId: string;
+	email: string;
+	phone: string;
+	address: string;
+	city: string;
+}
+
+export interface IndividualBlockFixture {
+	employmentStatus: string;
+	employerName: string;
+	employmentYears: number;
+	monthlyIncomeCents: number;
+	existingDebtCents: number;
+	bankRelationshipYears: number;
+}
+
+export interface SmeBlockFixture {
+	companyName: string;
+	registrationNumber: string;
+	industry: string;
+	yearsTrading: number;
+	employees: number;
+	annualRevenueCents: number;
+	monthlyFcfCents: number;
+	existingDebtServiceCents: number;
+}
+
+export interface ApplicationFixture {
+	type: "individual" | "sme";
+	amountCents: number;
+	termMonths: number;
+	purpose: string;
+	identity: IdentityFixture;
+	individual?: IndividualBlockFixture;
+	sme?: SmeBlockFixture;
+	aiResearchConsent?: boolean;
+}
+
+/** POST /api/applications body: the fixture plus product envelope. */
+export type ApplicationBody = ApplicationFixture & {
+	product: "personal_loan" | "sme_term_loan";
+	consents: [true, true, true];
+};
+
+/** POST /api/applications body for an individual applicant. */
+export function individualApplication(
+	input: Omit<ApplicationFixture, "type"> & { type?: "individual" },
+): ApplicationBody {
+	const { type: _type, ...rest } = input;
+	return {
+		type: "individual",
+		product: "personal_loan",
+		amountCents: rest.amountCents,
+		termMonths: rest.termMonths,
+		purpose: rest.purpose,
+		consents: [true, true, true],
+		...(rest.aiResearchConsent !== undefined ? { aiResearchConsent: rest.aiResearchConsent } : {}),
+		identity: rest.identity,
+		individual: rest.individual,
+	};
+}
+
+/** POST /api/applications body for an SME applicant. */
+export function smeApplication(
+	input: Omit<ApplicationFixture, "type"> & { type?: "sme" },
+): ApplicationBody {
+	const { type: _type, ...rest } = input;
+	return {
+		type: "sme",
+		product: "sme_term_loan",
+		amountCents: rest.amountCents,
+		termMonths: rest.termMonths,
+		purpose: rest.purpose,
+		consents: [true, true, true],
+		...(rest.aiResearchConsent !== undefined ? { aiResearchConsent: rest.aiResearchConsent } : {}),
+		identity: rest.identity,
+		sme: rest.sme,
+	};
+}
+
+/**
+ * Drive the /apply wizard through the real UI for the fixture and return the
+ * created application id. Selectors and steps match the specs; only the data
+ * is parameterized (money is fixture cents, the wizard takes dollars).
+ */
+export async function submitApplication(page: Page, app: ApplicationFixture): Promise<string> {
+	await gotoHydrated(page, "/apply");
+	await page.locator("#field-borrower-type").selectOption(app.type);
+	await page.locator("#field-amount-usd").fill(String(app.amountCents / 100));
+	await page.locator("#field-term-months").fill(String(app.termMonths));
+	await page.locator("#field-purpose").fill(app.purpose);
+	await page.getByRole("button", { name: "Continue" }).click();
+
+	await page.locator("#field-full-name").fill(app.identity.fullName);
+	await page.locator("#field-date-of-birth").fill(app.identity.dob);
+	await page.locator("#field-national-id").fill(app.identity.nationalId);
+	await page.locator("#field-phone").fill(app.identity.phone);
+	await page.locator("#field-address").fill(app.identity.address);
+	await page.locator("#field-city").fill(app.identity.city);
+	if (app.type === "sme" && app.sme) {
+		await page.locator("#field-company-name").fill(app.sme.companyName);
+		await page.locator("#field-registration-no").fill(app.sme.registrationNumber);
+		await page.locator("#field-industry").selectOption(app.sme.industry);
+		await page.locator("#field-years-trading").fill(String(app.sme.yearsTrading));
+		await page.locator("#field-employees").fill(String(app.sme.employees));
+		await page.locator("#field-annual-revenue").fill(String(app.sme.annualRevenueCents / 100));
+		await page.locator("#field-monthly-fcf").fill(String(app.sme.monthlyFcfCents / 100));
+		await page.locator("#field-debt-service").fill(String(app.sme.existingDebtServiceCents / 100));
+	}
+	if (app.type === "individual" && app.individual) {
+		await page.locator("#field-employment-status").selectOption(app.individual.employmentStatus);
+		await page.locator("#field-employer-name").fill(app.individual.employerName);
+		await page.locator("#field-employment-years").fill(String(app.individual.employmentYears));
+		await page
+			.locator("#field-bank-relationship-years")
+			.fill(String(app.individual.bankRelationshipYears));
+		await page
+			.locator("#field-monthly-income")
+			.fill(String(app.individual.monthlyIncomeCents / 100));
+		await page.locator("#field-existing-debt").fill(String(app.individual.existingDebtCents / 100));
+	}
+	await page.getByRole("button", { name: "Continue" }).click();
+
+	await page.getByLabel("Credit check consent").check();
+	await page.getByLabel("Data processing consent").check();
+	await page.getByLabel("Terms consent").check();
+	await page.getByRole("button", { name: "Submit application" }).click();
+	await page.waitForURL(/\/applications\/.+/);
+	const appId = page.url().split("/").pop() ?? "";
+	if (!/^[0-9a-f-]{36}$/.test(appId)) throw new Error(`e2e: bad application id ${appId}`);
+	return appId;
 }

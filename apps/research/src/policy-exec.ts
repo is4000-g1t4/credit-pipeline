@@ -105,7 +105,6 @@ export async function runPolicyStage(
 		runId: string;
 		runToken: string;
 		applicationId: string;
-		applicantUserId?: string | null;
 		requestedBy: string;
 		requestedByRole: "officer" | "service";
 		caseFacts: CaseFacts;

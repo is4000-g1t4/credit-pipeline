@@ -62,9 +62,9 @@ export function classifyScope(question: string): "credit" | "out_of_scope" {
 	return "credit";
 }
 
-const EMAIL_RE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
-const NRIC_RE = /\b[STFGM]\d{7}[A-Z]\b/i;
-const PHONE_RE = /(?:\+?65[\s-]?)?[689]\d{3}[\s-]?\d{4}\b/;
+export const EMAIL_RE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
+export const NRIC_RE = /\b[STFGM]\d{7}[A-Z]\b/i;
+export const PHONE_RE = /(?:\+?65[\s-]?)?[689]\d{3}[\s-]?\d{4}\b/;
 const LONG_ID_RE = /\b(?:\d[ -]?){10,19}\b/;
 
 /** Direct identifiers must never reach the embedding provider. */

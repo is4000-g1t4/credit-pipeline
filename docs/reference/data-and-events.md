@@ -11,13 +11,14 @@ This page is a lookup surface. Audience: developers who change storage or read e
 | `credit_loans`        | Loans service, worker        | `loans`, `installments`, `payments`, `ews_alerts`, `audit_log`, `outbox_events`                                                                              | Ledger plus audit and outbox; denormalized `application_reference`, `applicant_user_id`, `product` |
 | `credit_portfolio`    | Portfolio service            | `processed_events`, `activity_feed`, `dead_letter_events`                                                                                                    | Kafka read model; application and loan ids are opaque                                              |
 | `credit_research`     | Research service             | `agent_runs`, `agent_evidence`, `agent_findings`, `finding_evidence`, `agent_finding_reviews`, `agent_run_views`                                             | Advisory briefs; runs token-claimed, evidence/findings persist atomically with success             |
+| `credit_policy`       | Policy service               | `policy_documents`, `policy_versions`, `policy_sections`, `policy_chunks`, `policy_queries`, ACL/role/audit/spend tables                                     | Versioned corpus, pgvector index, query log, spend ledger                                          |
 
-Sources: `packages/db/src/auth.ts`, `packages/db/src/applications.ts`, `packages/db/src/loans.ts`, `packages/db/src/portfolio.ts`, `packages/db/src/research.ts`, `packages/db/src/shared.ts`.
+Sources: `packages/db/src/auth.ts`, `packages/db/src/applications.ts`, `packages/db/src/loans.ts`, `packages/db/src/portfolio.ts`, `packages/db/src/research.ts`, `packages/db/src/policy.ts`, `packages/db/src/shared.ts`.
 
 Rules:
 
 - No cross-database foreign keys. Cross-service references are plain UUIDs.
-- Each service imports only its own `@credit/db/*` subpath (`./auth`, `./applications`, `./loans`, `./portfolio`, `./research`, `./shared`).
+- Each service imports only its own `@credit/db/*` subpath (`./auth`, `./applications`, `./loans`, `./portfolio`, `./research`, `./policy`, `./shared`).
 - The worker is the only component that writes both `credit_applications` and `credit_loans`. It never touches `credit_auth`, `credit_portfolio`, or `credit_research`.
 - Review is stateless and owns no tables.
 
@@ -33,9 +34,9 @@ Key uniqueness:
 
 ## Migrations and seed
 
-- `pnpm db:init` creates the five service databases plus the Temporal pair if missing. Source: `scripts/db-init.ts`.
-- `pnpm db:migrate` applies each service folder in `packages/db/drizzle/*` to its own database, tracked per database. Source: `packages/db/src/migrate.ts`. When `RESEARCH_DATABASE_URL` is unset (Phase 1 checkout), research is skipped with a clear log and the other four still fail fast — set it (see `getting-started.md` §9) to enable Phase 2.
-- `pnpm db:generate` regenerates migrations from the five configs: `drizzle.config.auth.ts`, `drizzle.config.applications.ts`, `drizzle.config.loans.ts`, `drizzle.config.portfolio.ts`, `drizzle.config.research.ts`. Never hand-edit files under `packages/db/drizzle/`.
+- `pnpm db:init` creates the six service databases plus the Temporal pair if missing. Source: `scripts/db-init.ts`.
+- `pnpm db:migrate` applies each service folder in `packages/db/drizzle/*` to its own database, tracked per database. Source: `packages/db/src/migrate.ts`. When `RESEARCH_DATABASE_URL` is unset (Phase 1 checkout), research is skipped with a clear log and the other five still fail fast — set it (see `getting-started.md` §9) to enable Phase 2.
+- `pnpm db:generate` regenerates migrations from the six configs: `drizzle.config.auth.ts`, `drizzle.config.applications.ts`, `drizzle.config.loans.ts`, `drizzle.config.portfolio.ts`, `drizzle.config.research.ts`, `drizzle.config.policy.ts`. Never hand-edit files under `packages/db/drizzle/`.
 - `pnpm db:seed` inserts the 7 demo users idempotently (`ON CONFLICT DO NOTHING` on email). Source: `packages/db/src/seed.ts`.
 - `pnpm setup` runs `db:wait && db:init && kafka:init && db:migrate && db:seed`.
 - `pnpm kafka:init` creates the 7 topics (3 partitions, replication factor 1), idempotently. Source: `scripts/kafka-init.ts`.

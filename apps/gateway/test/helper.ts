@@ -13,7 +13,8 @@ import { createDb, hashPassword } from "@credit/db";
 import { users } from "@credit/db/auth";
 import { createLogger, type Logger } from "@credit/service-kit";
 import { createApp } from "../src/app.js";
-import { createRateLimiter } from "../src/auth.js";
+import { createRateLimiter, SESSION_COOKIE, signSession } from "../src/auth.js";
+import type { GatewayDeps } from "../src/deps.js";
 import { loadEnv } from "../src/env.js";
 
 process.env.LOG_LEVEL ??= "silent";
@@ -119,4 +120,121 @@ export async function loginCookie(
 
 export async function teardown(ctx: TestContext): Promise<void> {
 	await ctx.sql.end();
+}
+
+// Compose-free stub app (shared by the customer-intake and policy proxy
+// tests, which used to carry their own copies): a stub db answering the
+// session lookup with the current actor + a stub fetchImpl capturing the
+// downstream request (body as text, so tests can assert what was
+// forwarded). ACTORS are fixed uuids; switch with actAs.
+export interface StubActor {
+	id: string;
+	email: string;
+	fullName: string;
+	role: "applicant" | "officer";
+}
+
+export interface StubRequest {
+	method: string;
+	url: string;
+	headers: Record<string, string>;
+	body: string | null;
+}
+
+export const STUB_SESSION_SECRET = "test-session-secret-0123456789abcdef";
+export const STUB_INTERNAL_SECRET = "test-internal-secret-0123456789abcdef";
+
+export function setupStubApp(
+	captured: StubRequest[],
+	opts: { policyLimit?: number } = {},
+): {
+	app: ReturnType<typeof createApp>;
+	officers: [StubActor, StubActor];
+	applicant: StubActor;
+	actAs: (actor: StubActor) => void;
+	cookieFor: (userId: string) => string;
+} {
+	const officers: [StubActor, StubActor] = [
+		{
+			id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+			email: "officer-a@example.com",
+			fullName: "Officer A",
+			role: "officer",
+		},
+		{
+			id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+			email: "Officer B",
+			fullName: "Officer B",
+			role: "officer",
+		},
+	];
+	const applicant: StubActor = {
+		id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+		email: "applicant@example.com",
+		fullName: "Test Applicant",
+		role: "applicant",
+	};
+	let current: StubActor = officers[0];
+	const db = {
+		select: () => ({
+			from: () => ({
+				where: async () => [{ ...current }],
+			}),
+		}),
+	};
+	const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+		const req = new Request(url, init);
+		const headers: Record<string, string> = {};
+		req.headers.forEach((value, key) => {
+			headers[key] = value;
+		});
+		captured.push({
+			method: req.method,
+			url: req.url,
+			headers,
+			body: req.method === "GET" || req.method === "HEAD" ? null : await req.text(),
+		});
+		return new Response(JSON.stringify({ ok: true }), {
+			status: 200,
+			headers: { "content-type": "application/json" },
+		});
+	}) as typeof fetch;
+	const deps = {
+		db: db as unknown as GatewayDeps["db"],
+		sql: {} as GatewayDeps["sql"],
+		env: {
+			nodeEnv: "test",
+			demoMode: true,
+			sessionSecret: STUB_SESSION_SECRET,
+			internalSecret: STUB_INTERNAL_SECRET,
+			databaseUrl: "postgres://localhost:5432/unused",
+			temporalAddress: "localhost:7233",
+			kafkaBrokers: "localhost:9092",
+			webOrigin: "http://localhost:3000",
+			apiPort: 3001,
+			apiHost: "127.0.0.1",
+			applicationsUrl: "http://applications.test",
+			reviewUrl: "http://review.test",
+			loansUrl: "http://loans.test",
+			portfolioUrl: "http://portfolio.test",
+			policyUrl: "http://policy.test",
+			policyUpstreamTimeoutMs: 60_000,
+			policyAskRatePerMin: 10,
+		},
+		logger: createLogger("gateway-stub-test"),
+		loginLimiter: createRateLimiter(1000, 60_000),
+		loginEmailLimiter: createRateLimiter(1000, 60_000),
+		submitLimiter: createRateLimiter(5, 60_000),
+		policyLimiter: createRateLimiter(opts.policyLimit ?? 1000, 60_000),
+		fetchImpl,
+	} satisfies GatewayDeps;
+	return {
+		app: createApp(deps),
+		officers,
+		applicant,
+		actAs: (actor: StubActor) => {
+			current = actor;
+		},
+		cookieFor: (userId: string) => `${SESSION_COOKIE}=${signSession(userId, STUB_SESSION_SECRET)}`,
+	};
 }

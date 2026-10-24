@@ -33,6 +33,7 @@ import {
 	sha256Hex,
 } from "./crypto.js";
 import { lockApplication } from "../documents/access.js";
+import { isUuid } from "../ids.js";
 import { encryptDocument } from "../documents/crypto.js";
 import { parseKind, type DocumentKind } from "../documents/pipeline.js";
 import {
@@ -401,9 +402,8 @@ export async function reuseCustomerDocuments(
 	if (ids.length === 0 || ids.length > REUSE_MAX_DOCS) {
 		throw new HttpError(400, "INVALID_REUSE", `select 1–${REUSE_MAX_DOCS} customer documents`);
 	}
-	const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 	for (const id of ids) {
-		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(id)) throw new HttpError(404, "NOT_FOUND", "not found");
 	}
 
 	const appRows = await db

@@ -23,12 +23,12 @@ import { auditResearch } from "./access.js";
 import type { AgentRunner } from "./agent.js";
 import type { ContextAgentRunner } from "./context-agent.js";
 import type { ResearchEnv } from "./env.js";
+import { isUuid } from "./ids.js";
 import {
 	ensureRunTx,
 	reapStaleRuns,
 	resumeQueuedRuns,
 	type CaseFactsPayload,
-	type RunRow,
 } from "./lifecycle.js";
 import type { Observability } from "./observability.js";
 import { executeRun, type ExecDeps } from "./run.js";
@@ -37,8 +37,6 @@ import type { PolicyRunner } from "./policy-stage.js";
 import type { SupportJudge } from "./support.js";
 
 export const AUTO_TRIGGER_GROUP_ID = "credit-research-auto";
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface AutoTriggerDeps {
 	db: Db;
@@ -73,12 +71,6 @@ let autoTriggerSeenEnabled = false;
 
 export function getAutoTriggerStatus(): { enabled: boolean; connected: boolean } {
 	return { enabled: autoTriggerSeenEnabled, connected: autoTriggerConnected };
-}
-
-/** Test seam: reset the module health state between cases. */
-export function resetAutoTriggerStatus(): void {
-	autoTriggerConnected = false;
-	autoTriggerSeenEnabled = false;
 }
 
 /**
@@ -235,6 +227,21 @@ async function auditAuto(
 
 type AutoEventRow = typeof researchAutoEvents.$inferSelect;
 
+/** Shared `auto.duplicate` audit: the stored outcome rules on redelivery. */
+async function auditDuplicate(
+	tx: Tx,
+	env: ResearchEnv,
+	applicationId: string,
+	triggerEventId: string,
+	row: AutoEventRow,
+): Promise<void> {
+	await auditAuto(tx, env, applicationId, row.runId, "auto.duplicate", {
+		triggerEventId,
+		originalOutcome: row.outcome,
+		...(row.reason ? { reason: row.reason } : {}),
+	});
+}
+
 async function findAutoEvent(
 	db: Db | Tx,
 	applicationId: string,
@@ -300,7 +307,7 @@ export async function handleReviewRequested(
 		typeof envelope.payload === "object" && envelope.payload !== null
 			? String((envelope.payload as { applicationId?: unknown }).applicationId ?? "")
 			: "";
-	if (!UUID_RE.test(applicationId)) {
+	if (!isUuid(applicationId)) {
 		// Un-auditable (the audit row keys on a uuid application id): log
 		// ids only and commit.
 		logger.warn({ eventId: envelope.id }, "auto-trigger: invalid application id, skipping");
@@ -313,11 +320,7 @@ export async function handleReviewRequested(
 	const prior = await withTx(db, async (tx) => {
 		const row = await findAutoEvent(tx, applicationId, envelope.id);
 		if (!row) return null;
-		await auditAuto(tx, env, applicationId, row.runId, "auto.duplicate", {
-			triggerEventId: envelope.id,
-			originalOutcome: row.outcome,
-			...(row.reason ? { reason: row.reason } : {}),
-		});
+		await auditDuplicate(tx, env, applicationId, envelope.id, row);
 		return row;
 	});
 	if (prior) return storedOutcome(prior);
@@ -341,7 +344,7 @@ export async function handleReviewRequested(
 	if (caseFacts.applicationId !== applicationId) {
 		return skipAndRecord(deps, applicationId, envelope.id, "context_mismatch");
 	}
-	if (!UUID_RE.test(applicantUserId)) {
+	if (!isUuid(applicantUserId)) {
 		return skipAndRecord(deps, applicationId, envelope.id, "invalid_applicant");
 	}
 	if (!caseFacts.aiResearchConsent) {
@@ -364,11 +367,7 @@ export async function handleReviewRequested(
 		// was fetching context: re-check under the lock.
 		const raced = await findAutoEvent(tx, applicationId, envelope.id);
 		if (raced) {
-			await auditAuto(tx, env, applicationId, raced.runId, "auto.duplicate", {
-				triggerEventId: envelope.id,
-				originalOutcome: raced.outcome,
-				...(raced.reason ? { reason: raced.reason } : {}),
-			});
+			await auditDuplicate(tx, env, applicationId, envelope.id, raced);
 			return { outcome: storedOutcome(raced), exec: null };
 		}
 		const caps = await checkAutoCaps(tx, env, applicantUserId);
@@ -385,11 +384,7 @@ export async function handleReviewRequested(
 				// Lost the event race between re-check and insert (only a
 				// path outside this lock could interleave — none remains):
 				// the winner's outcome rules.
-				await auditAuto(tx, env, applicationId, stored.runId, "auto.duplicate", {
-					triggerEventId: envelope.id,
-					originalOutcome: stored.outcome,
-					...(stored.reason ? { reason: stored.reason } : {}),
-				});
+				await auditDuplicate(tx, env, applicationId, envelope.id, stored);
 				return { outcome: storedOutcome(stored), exec: null };
 			}
 			await auditAuto(tx, env, applicationId, null, "auto.skip", {
@@ -427,11 +422,7 @@ export async function handleReviewRequested(
 			if (inserted) {
 				await tx.delete(agentRuns).where(eq(agentRuns.id, run.id));
 			}
-			await auditAuto(tx, env, applicationId, stored.runId, "auto.duplicate", {
-				triggerEventId: envelope.id,
-				originalOutcome: stored.outcome,
-				...(stored.reason ? { reason: stored.reason } : {}),
-			});
+			await auditDuplicate(tx, env, applicationId, envelope.id, stored);
 			return { outcome: storedOutcome(stored), exec: null };
 		}
 		await auditAuto(tx, env, applicationId, run.id, "auto.ensure", {
@@ -495,20 +486,12 @@ async function skipAndRecord(
 		await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('research-auto-caps'))`);
 		const raced = await findAutoEvent(tx, applicationId, triggerEventId);
 		if (raced) {
-			await auditAuto(tx, env, applicationId, raced.runId, "auto.duplicate", {
-				triggerEventId,
-				originalOutcome: raced.outcome,
-				...(raced.reason ? { reason: raced.reason } : {}),
-			});
+			await auditDuplicate(tx, env, applicationId, triggerEventId, raced);
 			return raced;
 		}
 		const row = await recordAutoEvent(tx, applicationId, triggerEventId, "skipped", null, reason);
 		if (row.outcome !== "skipped" || row.reason !== reason) {
-			await auditAuto(tx, env, applicationId, row.runId, "auto.duplicate", {
-				triggerEventId,
-				originalOutcome: row.outcome,
-				...(row.reason ? { reason: row.reason } : {}),
-			});
+			await auditDuplicate(tx, env, applicationId, triggerEventId, row);
 			return row;
 		}
 		await auditAuto(tx, env, applicationId, null, "auto.skip", {
@@ -673,5 +656,3 @@ export async function startAutoTrigger(
 		isConnected: () => autoTriggerConnected && !stopped,
 	};
 }
-
-export type { RunRow };

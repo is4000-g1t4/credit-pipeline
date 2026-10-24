@@ -8,8 +8,8 @@ import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { ResearchEnv } from "./env.js";
 import { AGENT_VERSION, promptHash, PROMPT_VERSION } from "./prompt.js";
 import { caseFactsSchema, type CaseFacts } from "@credit/core";
+import { isUuid } from "./ids.js";
 
-export type RunStatus = "queued" | "running" | "succeeded" | "failed";
 export type RunErrorCode =
 	| "model_unavailable"
 	| "tool_error"
@@ -215,11 +215,9 @@ export async function ensureRunTx(
 
 export class StaleRunError extends Error {}
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 /** Malformed ids/tokens match nothing (uuid columns reject them with 22P02). */
 function tokenMatch(runId: string, token: string): boolean {
-	return UUID_RE.test(runId) && UUID_RE.test(token);
+	return isUuid(runId) && isUuid(token);
 }
 
 /** Claim a queued run for execution; false unless status+token match. */
@@ -671,7 +669,7 @@ export async function claimContextRetry(
 	env: ResearchEnv,
 	runId: string,
 ): Promise<{ stageToken: string; stageVersion: number } | null> {
-	if (!UUID_RE.test(runId)) return null;
+	if (!isUuid(runId)) return null;
 	return withTx(db, (tx) => claimContextRetryTx(tx, env, runId));
 }
 
@@ -680,7 +678,7 @@ export async function claimContextRetryTx(
 	env: ResearchEnv,
 	runId: string,
 ): Promise<{ stageToken: string; stageVersion: number } | null> {
-	if (!UUID_RE.test(runId)) return null;
+	if (!isUuid(runId)) return null;
 	const guard = await loadStageGuard(tx, runId);
 	if (!guard) return null;
 	if (

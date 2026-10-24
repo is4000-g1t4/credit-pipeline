@@ -25,18 +25,12 @@ import { stubAgentRunner } from "../../src/agent.js";
 import { createLogger } from "@credit/service-kit";
 import { stubLanguageRepair } from "../../src/repair.js";
 import { stubSupportJudge } from "../../src/support.js";
-import { successFixture } from "../helper.js";
+import { degradedObservability, successFixture } from "../helper.js";
 
 describe("bootRecovery order", () => {
 	it("recovers queued runs before reaping stale runs", async () => {
 		mockCalls.length = 0;
 		const use = successFixture();
-		const degraded = {
-			status: "degraded" as const,
-			hooksFor: () => ({ detach: () => {} }),
-			trackModelCall: <T>(_o: unknown, fn: () => Promise<T>): Promise<T> => fn(),
-			trackToolExecution: <T>(_o: unknown, fn: () => Promise<T>): Promise<T> => fn(),
-		};
 		const { recovered, reaped } = await bootRecovery({
 			db: {} as never,
 			env: {} as never,
@@ -44,7 +38,7 @@ describe("bootRecovery order", () => {
 			runner: stubAgentRunner({ brief: use.brief, fetched: use.fetched }),
 			judge: stubSupportJudge(),
 			repair: stubLanguageRepair(),
-			observability: degraded,
+			observability: degradedObservability,
 		});
 		expect(mockCalls).toEqual(["resume", "reap"]);
 		expect(recovered).toEqual([]);

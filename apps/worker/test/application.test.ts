@@ -2,15 +2,12 @@
 // precedence, data-failure markFailed, terminal re-entry. Activities are
 // MOCKED — no DB/Kafka. Time-skipping test server (no live Temporal).
 
-import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { dedupeDecisionMade, dedupeLoanBooked, TASK_QUEUE } from "@credit/core";
+import { dedupeDecisionMade, dedupeLoanBooked } from "@credit/core";
 import { TestWorkflowEnvironment } from "@temporalio/testing";
-import { Worker } from "@temporalio/worker";
 import { afterAll, beforeAll, describe, expect, it, vi, type Mock } from "vitest";
-import type { Activities, ApplicationDto, ScoringSummary } from "../src/activities/types.js";
+import { APP_ID, baseMocks, runWorkflow } from "./workflow-helper.js";
 
-const APP_ID = "11111111-1111-4111-8111-111111111111";
 const workflowsPath = fileURLToPath(new URL("../src/workflows", import.meta.url));
 
 let env: TestWorkflowEnvironment;
@@ -23,114 +20,8 @@ afterAll(async () => {
 	await env?.teardown();
 });
 
-function appDto(overrides: Partial<ApplicationDto> = {}): ApplicationDto {
-	return {
-		id: APP_ID,
-		reference: "APP-2026-ABCDEF",
-		type: "individual",
-		product: "personal_loan",
-		status: "processing",
-		amountCents: 1200000,
-		termMonths: 48,
-		purpose: "home renovation",
-		identity: {},
-		financial: {},
-		business: null,
-		submittedAt: "2026-10-19T00:00:00.000Z",
-		decidedAt: null,
-		...overrides,
-	};
-}
-
-const INDIVIDUAL_SCORING: ScoringSummary = {
-	kind: "individual",
-	score: 777,
-	grade: "A",
-	product: "personal_loan",
-	requestedAmountCents: 1200000,
-	requestedTermMonths: 48,
-	rateBps: 650,
-	newPaymentCents: 28458,
-	monthlyIncomeCents: 420000,
-	existingDebtCents: 61000,
-	monthlyFcfCents: null,
-	existingDebtServiceCents: null,
-};
-
-function baseMocks(overrides: Record<string, Mock> = {}): Record<string, Mock> {
-	return {
-		loadApplicationAndSetProcessing: vi.fn(async () => appDto()),
-		loadApplication: vi.fn(async () => appDto({ status: "booked" })),
-		runIdentityCheck: vi.fn(async () => ({
-			check: "identity",
-			passed: true,
-		})),
-		runSanctionsCheck: vi.fn(async () => ({
-			check: "sanctions",
-			passed: true,
-		})),
-		runDocumentCheck: vi.fn(async () => ({
-			verified: true,
-			kinds: ["id"],
-		})),
-		fetchBureauReport: vi.fn(async () => ({})),
-		fetchBankData: vi.fn(async () => ({})),
-		scoreAndPersist: vi.fn(async () => INDIVIDUAL_SCORING),
-		evaluateAndPersistPolicy: vi.fn(async () => ({
-			outcome: "auto_approve",
-			reasons: [],
-			maxAmountCents: 1200000,
-		})),
-		persistDecline: vi.fn(async () => ({
-			decisionId: "dec-1",
-			replayed: false,
-			status: "declined",
-		})),
-		persistCheckOnlyDecline: vi.fn(async () => ({
-			decisionId: "dec-1",
-			replayed: false,
-			status: "declined",
-		})),
-		persistOfficerDecline: vi.fn(async () => ({
-			decisionId: "dec-1",
-			replayed: false,
-			status: "declined",
-		})),
-		markPendingReview: vi.fn(async () => ({ status: "pending_review" })),
-		expireReview: vi.fn(async () => ({ expired: true })),
-		bookLoan: vi.fn(async () => ({
-			decisionId: "dec-1",
-			loanId: "loan-1",
-			replayed: false,
-			approvedAmountCents: 1200000,
-			termMonths: 48,
-			rateBps: 650,
-		})),
-		markFailed: vi.fn(async () => ({ marked: true })),
-		...overrides,
-	};
-}
-
 async function execute(mocks: Record<string, Mock>) {
-	const taskQueue = `${TASK_QUEUE}-t-${randomUUID()}`;
-	const worker = await Worker.create({
-		connection: env.nativeConnection,
-		namespace: "default",
-		taskQueue,
-		workflowsPath,
-		activities: mocks as unknown as Activities,
-	});
-	const run = worker.run();
-	try {
-		return await env.client.workflow.execute("applicationWorkflow", {
-			args: [{ applicationId: APP_ID }],
-			taskQueue,
-			workflowId: `wf-${randomUUID()}`,
-		});
-	} finally {
-		worker.shutdown();
-		await run;
-	}
+	return runWorkflow(env, workflowsPath, "applicationWorkflow", [{ applicationId: APP_ID }], mocks);
 }
 
 const firstCall = (m: Mock): number => m.mock.invocationCallOrder[0];

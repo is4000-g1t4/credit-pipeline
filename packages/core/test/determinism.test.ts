@@ -1,14 +1,7 @@
 // Determinism: mocks are pure functions of their inputs — identical across
-// calls, stable across processes (verified against an independent sha256).
-import { createHash } from "node:crypto";
+// calls, stable across processes (pinned by a golden report, not a formula).
 import { describe, expect, it } from "vitest";
-import {
-	bureauSeedKey,
-	mockBankIndividual,
-	mockBankSme,
-	mockBureau,
-	syntheticBalances,
-} from "../src/index.js";
+import { mockBankIndividual, mockBankSme, mockBureau, syntheticBalances } from "../src/index.js";
 
 describe("mock bureau", () => {
 	it("fixed demo profiles match §5.1 exactly", () => {
@@ -55,14 +48,15 @@ describe("mock bureau", () => {
 		expect(mockBureau(id)).toEqual(mockBureau({ ...id }));
 	});
 
-	it("fallback matches an independent sha256 derivation (cross-process stable)", () => {
-		const id = { email: "new.person@example.com", nationalId: "ZX98765432" };
-		const digest = createHash("sha256").update(bureauSeedKey(id), "utf8").digest();
-		const got = mockBureau(id);
-		expect(got.bureauScore).toBe(520 + ((digest[0] * 256 + digest[1]) % 281));
-		expect(got.delinquencies).toBe(digest[2] % 4);
-		expect(got.utilizationPct).toBe(10 + (digest[3] % 81));
-		expect(got.inquiries6m).toBe(digest[4] % 6);
+	it("fallback is a stable golden report for a fixed id", () => {
+		expect(mockBureau({ email: "new.person@example.com", nationalId: "ZX98765432" })).toEqual({
+			provider: "mock-bureau-v1",
+			version: "mock-bureau-v1",
+			bureauScore: 762,
+			delinquencies: 0,
+			utilizationPct: 87,
+			inquiries6m: 0,
+		});
 	});
 
 	it("fallback distribution stays in range over many seeds", () => {
@@ -115,6 +109,7 @@ describe("mock bank", () => {
 			accountAgeYears: 4,
 		});
 		expect(r.monthlyFreeCashFlowCents).toBe(380000);
+		expect(r.monthlyInflowCents).toBe(5_083_333); // round(61_000_000 / 12)
 		expect(r.balancesCents).toHaveLength(12);
 		expect(r).toEqual(
 			mockBankSme({

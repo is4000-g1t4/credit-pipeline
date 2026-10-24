@@ -1,32 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { Hono } from "hono";
-import { createPolicyRoutes } from "../src/routes.js";
+import type { Hono } from "hono";
 import { signCaseToken } from "../src/case-token.js";
+import { createDrawerToken } from "../src/answer.js";
 import type { PolicyDeps, PolicyStore } from "../src/store.js";
-import { HttpError, type ServiceVariables } from "@credit/service-kit";
+import type { ServiceVariables } from "@credit/service-kit";
+import { appWithUser, baseContext, testChunk } from "./helper.js";
 
 const versionId = "11111111-1111-4111-8111-111111111111";
 const policyId = "22222222-2222-4222-8222-222222222222";
-const chunk = {
-	chunkId: "chunk-1",
-	indexVersion: "idx-v1",
-	policyId,
-	policyKey: "POL-CR-001",
-	title: "Credit Underwriting Policy",
-	policyVersionId: versionId,
-	version: "v1",
-	effectiveFrom: "2026-01-01",
-	effectiveTo: null,
-	sectionId: "4.2",
-	heading: "4.2 Affordability",
-	body: "DSCR must be at least 1.25x for SME term loans.",
-	policyFamily: "affordability",
-	productScope: "all",
-	jurisdiction: "SG",
-	embedding: [1, ...Array(1023).fill(0)],
-	embeddingModel: "voyageai/voyage-4-large",
-	embeddingDimensions: 1024,
-	chunkingVersion: "sections-v1",
+
+const officer = {
+	id: "44444444-4444-4444-8444-444444444444",
+	email: "officer@example.com",
+	role: "officer" as const,
+};
+const service = {
+	id: "00000000-0000-0000-0000-000000000000",
+	email: "research@internal.local",
+	role: "service" as const,
 };
 
 function deps(overrides: Partial<PolicyDeps> = {}): {
@@ -44,7 +35,7 @@ function deps(overrides: Partial<PolicyDeps> = {}): {
 			};
 		},
 		async loadChunks() {
-			return [chunk];
+			return [testChunk];
 		},
 		async loadAcls() {
 			return [
@@ -176,43 +167,11 @@ function deps(overrides: Partial<PolicyDeps> = {}): {
 }
 
 function officerApp(d: PolicyDeps): Hono<{ Variables: ServiceVariables }> {
-	const app = new Hono<{ Variables: ServiceVariables }>();
-	app.use("*", async (c, next) => {
-		c.set("user", {
-			id: "44444444-4444-4444-8444-444444444444",
-			email: "officer@example.com",
-			role: "officer",
-		});
-		c.set("requestId", "test");
-		await next();
-	});
-	app.onError((err, c) =>
-		err instanceof HttpError
-			? c.json({ error: { code: err.code, message: err.message } }, err.status as 400)
-			: c.json({ error: { code: "INTERNAL_ERROR", message: "internal error" } }, 500),
-	);
-	app.route("/", createPolicyRoutes(d));
-	return app;
+	return appWithUser(d, officer);
 }
 
 function serviceApp(d: PolicyDeps): Hono<{ Variables: ServiceVariables }> {
-	const app = new Hono<{ Variables: ServiceVariables }>();
-	app.use("*", async (c, next) => {
-		c.set("user", {
-			id: "00000000-0000-0000-0000-000000000000",
-			email: "research@internal.local",
-			role: "service",
-		});
-		c.set("requestId", "test");
-		await next();
-	});
-	app.onError((err, c) =>
-		err instanceof HttpError
-			? c.json({ error: { code: err.code, message: err.message } }, err.status as 400)
-			: c.json({ error: { code: "INTERNAL_ERROR", message: "internal error" } }, 500),
-	);
-	app.route("/", createPolicyRoutes(d));
-	return app;
+	return appWithUser(d, service);
 }
 
 async function postJson(app: Hono<{ Variables: ServiceVariables }>, path: string, body: unknown) {
@@ -221,6 +180,20 @@ async function postJson(app: Hono<{ Variables: ServiceVariables }>, path: string
 		headers: { "content-type": "application/json" },
 		body: JSON.stringify(body),
 	});
+}
+
+function caseTokenFor(d: PolicyDeps, context: ReturnType<typeof baseContext>): string {
+	return signCaseToken(
+		d.env.caseTokenSecret,
+		{
+			runId: context.runId,
+			applicationId: context.applicationId,
+			authorisingActorId: context.authorisingActorId,
+			authorisingActorRole: context.authorisingActorRole,
+			asOf: context.asOf,
+		},
+		120,
+	);
 }
 
 describe("policy routes", () => {
@@ -265,41 +238,8 @@ describe("policy routes", () => {
 	});
 	it("serves a case explanation for the service principal with a bound token", async () => {
 		const { deps: d, stats } = deps();
-		const context = {
-			applicationId: "22222222-2222-4222-8222-222222222222",
-			runId: "33333333-3333-4333-8333-333333333333",
-			authorisingActorId: "44444444-4444-4444-8444-444444444444",
-			authorisingActorRole: "service" as const,
-			asOf: "2026-06-30",
-			type: "sme" as const,
-			product: "sme_term_loan" as const,
-			amountBand: "50k_250k" as const,
-			termBand: "12_36m" as const,
-			signals: [
-				{
-					ref: "signal:negative_balance:negative_eod_days:2026-01-01:2026-06-30:account_1",
-					type: "negative_balance" as const,
-					metric: "negative_eod_days" as const,
-					periodStart: "2026-01-01",
-					periodEnd: "2026-06-30",
-					accountScope: "account_1",
-					status: "review" as const,
-					confidence: "high" as const,
-				},
-			],
-			documentFindings: [],
-		};
-		const token = signCaseToken(
-			d.env.caseTokenSecret,
-			{
-				runId: context.runId,
-				applicationId: context.applicationId,
-				authorisingActorId: context.authorisingActorId,
-				authorisingActorRole: context.authorisingActorRole,
-				asOf: context.asOf,
-			},
-			120,
-		);
+		const context = baseContext();
+		const token = caseTokenFor(d, context);
 		const res = await postJson(serviceApp(d), "/internal/policy/explain-case", {
 			caseContext: context,
 			caseToken: token,
@@ -326,21 +266,177 @@ describe("policy routes", () => {
 			120,
 		);
 		const res = await postJson(serviceApp(d), "/internal/policy/explain-case", {
-			caseContext: {
-				applicationId: "22222222-2222-4222-8222-222222222222",
-				runId: "33333333-3333-4333-8333-333333333333",
-				authorisingActorId: "44444444-4444-4444-8444-444444444444",
-				authorisingActorRole: "service",
-				asOf: "2026-06-30",
-				type: "sme",
-				product: "sme_term_loan",
-				amountBand: "50k_250k",
-				termBand: "12_36m",
-				signals: [],
-				documentFindings: [],
-			},
+			caseContext: baseContext(),
 			caseToken: token,
 		});
 		expect(res.status).toBe(401);
+	});
+
+	it("returns no_match when the ACL denies every chunk", async () => {
+		const { deps: inner, stats } = deps();
+		const d: PolicyDeps = {
+			...inner,
+			store: {
+				...inner.store,
+				async loadAcls() {
+					return [];
+				},
+			},
+		};
+		const res = await postJson(officerApp(d), "/api/policy/ask", {
+			question: "What DSCR must an SME term loan meet?",
+			product: "sme_term_loan",
+		});
+		expect(res.status).toBe(200);
+		expect(((await res.json()) as { status: string }).status).toBe("no_match");
+		expect(stats.queries).toBe(1);
+		expect(stats.answers).toBe(0);
+	});
+
+	it("returns budget_exceeded without embedding when the reserve fails", async () => {
+		const { deps: inner, stats } = deps();
+		const d: PolicyDeps = {
+			...inner,
+			store: {
+				...inner.store,
+				async reserveBudget() {
+					return { error: "budget_exceeded" as const };
+				},
+			},
+		};
+		const res = await postJson(officerApp(d), "/api/policy/ask", {
+			question: "What DSCR must an SME term loan meet?",
+			product: "sme_term_loan",
+		});
+		expect(res.status).toBe(200);
+		expect(((await res.json()) as { status: string }).status).toBe("budget_exceeded");
+		expect(stats.queries).toBe(1);
+		expect(stats.embeds).toBe(0);
+		expect(stats.answers).toBe(0);
+	});
+
+	it("returns budget_exceeded for a case when the reserve fails", async () => {
+		const { deps: inner } = deps();
+		const d: PolicyDeps = {
+			...inner,
+			store: {
+				...inner.store,
+				async reserveBudget() {
+					return { error: "budget_exceeded" as const };
+				},
+			},
+		};
+		const context = baseContext();
+		const res = await postJson(serviceApp(d), "/internal/policy/explain-case", {
+			caseContext: context,
+			caseToken: caseTokenFor(d, context),
+		});
+		expect(res.status).toBe(200);
+		expect(((await res.json()) as { status: string }).status).toBe("budget_exceeded");
+	});
+
+	it("rejects a replayed case token", async () => {
+		const { deps: inner } = deps();
+		const d: PolicyDeps = {
+			...inner,
+			store: {
+				...inner.store,
+				async consumeCaseToken() {
+					return false;
+				},
+			},
+		};
+		const context = baseContext();
+		const res = await postJson(serviceApp(d), "/internal/policy/explain-case", {
+			caseContext: context,
+			caseToken: caseTokenFor(d, context),
+		});
+		expect(res.status).toBe(409);
+		expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
+			"CASE_TOKEN_REPLAY",
+		);
+	});
+
+	it("serves a drawer section with a valid token and rejects a tampered one", async () => {
+		const { deps: inner } = deps();
+		const section = {
+			policyId,
+			policyKey: "POL-CR-001",
+			title: "Credit Underwriting Policy",
+			policyVersionId: versionId,
+			version: "v1",
+			status: "approved",
+			effectiveFrom: "2026-01-01",
+			effectiveTo: null,
+			sectionId: "4.2",
+			heading: "4.2 Affordability",
+			body: "DSCR must be at least 1.25x for SME term loans.",
+			neighbours: [],
+		};
+		const d: PolicyDeps = {
+			...inner,
+			store: {
+				...inner.store,
+				async getSection() {
+					return section;
+				},
+			},
+		};
+		const token = createDrawerToken(d.env.citationSecret, {
+			versionId,
+			sectionId: "4.2",
+			asOf: "2026-06-30",
+			queryId: "test-query",
+		});
+		const ok = await officerApp(d).request(
+			`/api/policy/sections/${versionId}/4.2?token=${encodeURIComponent(token)}`,
+		);
+		expect(ok.status).toBe(200);
+		expect(((await ok.json()) as { sectionId: string }).sectionId).toBe("4.2");
+		const tampered = token.slice(0, -1) + (token.endsWith("A") ? "B" : "A");
+		const bad = await officerApp(d).request(
+			`/api/policy/sections/${versionId}/4.2?token=${encodeURIComponent(tampered)}`,
+		);
+		expect(bad.status).toBe(404);
+	});
+
+	it("rejects a drawer read when the ACL denies it", async () => {
+		const { deps: inner } = deps();
+		const section = {
+			policyId,
+			policyKey: "POL-CR-001",
+			title: "Credit Underwriting Policy",
+			policyVersionId: versionId,
+			version: "v1",
+			status: "approved",
+			effectiveFrom: "2026-01-01",
+			effectiveTo: null,
+			sectionId: "4.2",
+			heading: "4.2 Affordability",
+			body: "DSCR must be at least 1.25x for SME term loans.",
+			neighbours: [],
+		};
+		const d: PolicyDeps = {
+			...inner,
+			store: {
+				...inner.store,
+				async getSection() {
+					return section;
+				},
+				async loadAcls() {
+					return [];
+				},
+			},
+		};
+		const token = createDrawerToken(d.env.citationSecret, {
+			versionId,
+			sectionId: "4.2",
+			asOf: "2026-06-30",
+			queryId: "test-query",
+		});
+		const res = await officerApp(d).request(
+			`/api/policy/sections/${versionId}/4.2?token=${encodeURIComponent(token)}`,
+		);
+		expect(res.status).toBe(404);
 	});
 });

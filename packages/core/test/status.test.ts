@@ -9,6 +9,7 @@ import {
 	deriveLoanStatus,
 	isAllowedTransition,
 	isTerminal,
+	loanRollup,
 } from "../src/index.js";
 
 const ALLOWED: [ApplicationStatus, ApplicationStatus][] = [
@@ -44,12 +45,12 @@ describe("status guards", () => {
 		}
 	});
 
-	it("every disallowed edge fails", () => {
+	it("every disallowed edge fails (self-transitions included)", () => {
 		const allowed = new Set(ALLOWED.map(([f, t]) => `${f}→${t}`));
 		let disallowed = 0;
 		for (const from of ALL) {
 			for (const to of ALL) {
-				if (from === to || allowed.has(`${from}→${to}`)) continue;
+				if (allowed.has(`${from}→${to}`)) continue;
 				disallowed++;
 				expect(isAllowedTransition(from, to), `${from}→${to}`).toBe(false);
 				expect(() => assertAllowedTransition(from, to)).toThrow();
@@ -90,5 +91,19 @@ describe("status guards", () => {
 		).toBe("2026-03-15");
 		expect(computeNextDueDate([{ dueDate: "2026-04-15", status: "paid" }])).toBeNull();
 		expect(computeNextDueDate([])).toBeNull();
+	});
+
+	it("loanRollup combines status, next-due, and outstanding", () => {
+		expect(
+			loanRollup([
+				{ status: "paid", dueDate: "2026-04-15", principalCents: 10_000 },
+				{ status: "scheduled", dueDate: "2026-05-15", principalCents: 10_000 },
+				{ status: "overdue", dueDate: "2026-03-15", principalCents: 5_000 },
+			]),
+		).toEqual({ status: "overdue", nextDueDate: "2026-03-15", outstandingCents: 15_000 });
+		expect(loanRollup([])).toEqual({ status: "active", nextDueDate: null, outstandingCents: 0 });
+		expect(loanRollup([{ status: "paid", dueDate: "2026-04-15", principalCents: 10_000 }])).toEqual(
+			{ status: "closed", nextDueDate: null, outstandingCents: 0 },
+		);
 	});
 });

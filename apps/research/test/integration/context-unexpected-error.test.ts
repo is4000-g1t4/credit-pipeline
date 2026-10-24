@@ -17,37 +17,10 @@ vi.mock("../../src/lifecycle.js", async (importOriginal) => {
 });
 
 import { ContextToolError } from "../../src/context-tools.js";
-import {
-	caseFacts,
-	setupApp,
-	signed,
-	successFixture,
-	teardown,
-	user,
-	type TestContext,
-	type TestUser,
-} from "../helper.js";
+import { caseFacts, get, post, setupApp, successFixture, teardown, user } from "../helper.js";
 import { stubContextRunner } from "../../src/context-agent.js";
 
 process.env.LOG_LEVEL ??= "silent";
-
-async function post(
-	ctx: TestContext,
-	path: string,
-	who: TestUser,
-	payload: unknown,
-): Promise<Response> {
-	const body = JSON.stringify(payload);
-	return ctx.app.request(path, {
-		method: "POST",
-		headers: { "content-type": "application/json", ...signed(ctx, who, "POST", path, {}, body) },
-		body,
-	});
-}
-
-async function get(ctx: TestContext, path: string, who: TestUser): Promise<Response> {
-	return ctx.app.request(path, { headers: signed(ctx, who, "GET", path) });
-}
 
 describe("unexpected context error after external success", () => {
 	it("finalizes the run succeeded with the external brief intact", async () => {

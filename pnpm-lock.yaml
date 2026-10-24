@@ -454,6 +454,9 @@ importers:
 
   apps/policy:
     dependencies:
+      '@credit/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@credit/db':
         specifier: workspace:*
         version: link:../../packages/db

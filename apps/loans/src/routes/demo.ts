@@ -1,13 +1,14 @@
 // Demo controls (SPEC FR-8.5): officer-only AND DEMO_MODE=true, every write
 // audited with demo:true. pay/age run in one transaction with row locks;
 // age then runs monitoring synchronously through the gateway.
-import { computeNextDueDate, dedupePaymentPosted, deriveLoanStatus } from "@credit/core";
+import { computeNextDueDate, dedupePaymentPosted, loanRollup } from "@credit/core";
 import { ewsAlerts, installments, loans, payments, withTx, type Db } from "@credit/db/loans";
 import {
 	GatewayError,
 	HttpError,
 	insertOutbox,
 	readJson,
+	requireOfficer,
 	writeAudit,
 	type ServiceApp,
 	type ServiceVariables,
@@ -32,10 +33,8 @@ const requireDemoOfficer = (deps: DemoRouteDeps) =>
 		if (!deps.env.demoMode) {
 			throw new HttpError(403, "DEMO_MODE_DISABLED", "demo endpoints are disabled");
 		}
-		const me = c.var.user;
-		if (!me) throw new HttpError(401, "UNAUTHENTICATED", "login required");
-		if (me.role !== "officer") throw new HttpError(403, "FORBIDDEN", "officer role required");
-		await next();
+		// Role gate is the shared helper; the demo flag stays local.
+		await requireOfficer(c, next);
 	});
 
 const paySchema = z.object({ installmentId: z.uuid() }).strict();
@@ -115,13 +114,7 @@ export function demoRoutes(deps: DemoRouteDeps): ServiceApp {
 				})
 				.from(installments)
 				.where(eq(installments.loanId, id));
-			const status = deriveLoanStatus(all.map((i) => ({ status: i.status })));
-			const nextDueDate = computeNextDueDate(
-				all.map((i) => ({ dueDate: i.dueDate, status: i.status })),
-			);
-			const outstandingCents = all
-				.filter((i) => i.status !== "paid")
-				.reduce((sum, i) => sum + i.principalCents, 0);
+			const { status, nextDueDate, outstandingCents } = loanRollup(all);
 			await tx.update(loans).set({ status, nextDueDate, outstandingCents }).where(eq(loans.id, id));
 			await writeAudit(tx, {
 				applicationId: loan.applicationId,

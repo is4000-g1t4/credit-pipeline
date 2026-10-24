@@ -74,3 +74,27 @@ export function computeNextDueDate(items: DueItem[]): string | null {
 	}
 	return next;
 }
+
+export interface LoanRollupItem {
+	status: InstallmentState;
+	dueDate: string;
+	principalCents: number;
+}
+
+export interface LoanRollup {
+	status: LoanStatus;
+	nextDueDate: string | null;
+	outstandingCents: number;
+}
+
+/** Recompute a loan row from its installments: derived status, earliest
+ * unpaid due date, and outstanding principal of unpaid installments. */
+export function loanRollup(items: LoanRollupItem[]): LoanRollup {
+	return {
+		status: deriveLoanStatus(items),
+		nextDueDate: computeNextDueDate(items),
+		outstandingCents: items
+			.filter((item) => item.status !== "paid")
+			.reduce((sum, item) => sum + item.principalCents, 0),
+	};
+}

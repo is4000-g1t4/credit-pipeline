@@ -6,7 +6,6 @@
 // filename/PII nulled, the blob purged after commit, and the row kept with
 // `status='deleted'` for audit — including rows referenced by reused app
 // copies (the FK is RESTRICT; app copies carry their own blobs/retention).
-import { promises as fs } from "node:fs";
 import {
 	customerDocumentPages,
 	customerDocuments,
@@ -15,10 +14,10 @@ import {
 	withTx,
 	type Db,
 } from "@credit/db/applications";
-import { HttpError, writeAudit, type Logger } from "@credit/service-kit";
+import { HttpError, writeAudit } from "@credit/service-kit";
 import { and, eq, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { lockApplication } from "../documents/access.js";
-import { deleteBlob, resolveStoragePath } from "../documents/storage.js";
+import { deleteBlob, purgeBlob } from "../documents/storage.js";
 
 export interface CustomerRetentionResult {
 	checked: number;
@@ -53,24 +52,6 @@ export function customerRetentionBlockedBy(
 	documentId: string,
 ): boolean {
 	return holds.some((h) => h.customerDocumentId === null || h.customerDocumentId === documentId);
-}
-
-async function purgeCustomerBlob(
-	root: string,
-	key: string,
-	del: (root: string, key: string) => Promise<void>,
-): Promise<boolean> {
-	try {
-		await del(root, key);
-	} catch {
-		return false;
-	}
-	try {
-		await fs.stat(await resolveStoragePath(root, key));
-		return false;
-	} catch {
-		return true;
-	}
 }
 
 async function tombstoneCustomerDocument(
@@ -193,7 +174,7 @@ export async function runCustomerRetention(
 	for (const { id, key } of pendingPurge) {
 		let ok = false;
 		try {
-			ok = await purgeCustomerBlob(storageDir, key, del);
+			ok = await purgeBlob(storageDir, key, del);
 		} catch {
 			ok = false;
 		}
@@ -320,11 +301,4 @@ export async function releaseCustomerLegalHold(
 		}
 		return presentCustomerHold(released);
 	});
-}
-
-export interface CustomerMaintenanceDeps {
-	db: Db;
-	lockTimeoutMs: number;
-	storageDir: string;
-	logger?: Pick<Logger, "info" | "warn">;
 }

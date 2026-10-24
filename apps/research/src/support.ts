@@ -4,6 +4,7 @@
 // end-to-end (agent + judge), and every call takes the run's deadline signal.
 import type OpenAI from "openai";
 import { z } from "zod";
+import { callJsonModel } from "./model-call.js";
 import type { Observability } from "./observability.js";
 
 export type SupportVerdict = "supported" | "unsupported";
@@ -88,41 +89,23 @@ async function callJudge(
 	// metadata-only generation under the run conversation (§7). Each pair
 	// attempt (initial + repair retry) is a separate generation; budget
 	// accounting in run.ts is unchanged.
-	const call = () =>
-		openai.chat.completions.create(
-			{
-				model,
-				temperature: 0,
-				max_tokens: 300,
-				response_format: { type: "json_object" },
-				messages: judgeMessages(claim, quote, repair) as never,
-			},
-			// Request options (deadline), never model input.
-			{ signal: opts?.signal },
-		);
-	const res =
-		opts?.runId && opts?.observability
-			? await opts.observability.trackModelCall(
-					{ runId: opts.runId, model, operation: "support_judge" },
-					call,
-				)
-			: await call();
-	const text = res.choices[0]?.message?.content ?? "";
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(text);
-	} catch {
-		throw new Error("support judge returned invalid JSON");
-	}
+	const { parsed, usage } = await callJsonModel({
+		openai,
+		model,
+		messages: judgeMessages(claim, quote, repair),
+		maxTokens: 300,
+		operation: "support_judge",
+		signal: opts?.signal,
+		runId: opts?.runId,
+		observability: opts?.observability,
+		invalidJson: () => new Error("support judge returned invalid JSON"),
+	});
 	const verdict = verdictSchema.safeParse(parsed);
 	if (!verdict.success) throw new Error("support judge returned an invalid verdict");
 	return {
 		verdict: verdict.data.verdict,
 		span: verdict.data.span ?? null,
-		usage: {
-			inputTokens: res.usage?.prompt_tokens ?? 0,
-			outputTokens: res.usage?.completion_tokens ?? 0,
-		},
+		usage,
 	};
 }
 

@@ -8,11 +8,19 @@ import {
 	contentDispositionFor,
 	deleteBlob,
 	ensureStorageDir,
+	openAndVerifyBlob,
 	readEncryptedFile,
 	resolveStoragePath,
 	storageKeyFor,
 	writeEncryptedFile,
 } from "../../src/documents/storage.js";
+import {
+	CRYPTO_VERSION,
+	decryptDocument,
+	encryptDocument,
+	parseEncryptionKey,
+	sha256Hex,
+} from "../../src/documents/crypto.js";
 
 let root: string;
 
@@ -33,7 +41,12 @@ describe("document storage", () => {
 		await writeEncryptedFile(root, key, bytes);
 		expect(await readEncryptedFile(root, key)).toEqual(bytes);
 		const st = await fs.stat(path.join(await fs.realpath(root), key));
-		expect(st.mode & 0o777).toBeLessThanOrEqual(0o777);
+		// POSIX temp blobs are owner-only; Windows ACLs don't map to modes.
+		if (process.platform === "win32") {
+			expect(st.mode & 0o777).toBeLessThanOrEqual(0o777);
+		} else {
+			expect(st.mode & 0o777).toBe(0o600);
+		}
 		await deleteBlob(root, key);
 		await expect(readEncryptedFile(root, key)).rejects.toThrow();
 	});
@@ -76,5 +89,56 @@ describe("document storage", () => {
 		);
 		expect(contentDispositionFor(id, "image/png")).toContain(".png");
 		expect(contentDispositionFor(id, "image/jpeg")).toContain(".jpg");
+	});
+
+	it("openAndVerifyBlob fails closed on hash mismatch or corrupt ciphertext", async () => {
+		const key = parseEncryptionKey(randomBytes(32).toString("base64"));
+		const keys = new Map([["v1", key]]);
+		const appId = randomUUID();
+		const fileId = randomUUID();
+		const plaintext = Buffer.from("verify me");
+		const enc = encryptDocument({
+			plaintext,
+			fileId,
+			applicationId: appId,
+			key,
+			keyId: "v1",
+		});
+		const storageKey = storageKeyFor(appId, fileId);
+		await writeEncryptedFile(root, storageKey, enc.ciphertext);
+		const input = {
+			root,
+			storageKey,
+			nonceB64: enc.nonceB64,
+			tagB64: enc.tagB64,
+			fileId,
+			applicationId: appId,
+			cryptoVersion: CRYPTO_VERSION,
+			keyId: "v1",
+			keys,
+			expectedSha256: sha256Hex(plaintext),
+		};
+		await expect(openAndVerifyBlob(input)).resolves.toEqual(plaintext);
+		// Wrong expected hash (e.g. tampered DB row) never decrypts to output.
+		await expect(
+			openAndVerifyBlob({ ...input, expectedSha256: sha256Hex(Buffer.from("other")) }),
+		).rejects.toThrow("hash mismatch");
+		// Corrupt ciphertext fails closed too.
+		const corrupt = Buffer.from(enc.ciphertext);
+		corrupt[0] ^= 1;
+		await writeEncryptedFile(root, storageKey, corrupt);
+		await expect(openAndVerifyBlob(input)).rejects.toThrow();
+		expect(() =>
+			decryptDocument({
+				ciphertext: corrupt,
+				nonceB64: enc.nonceB64,
+				tagB64: enc.tagB64,
+				fileId,
+				applicationId: appId,
+				cryptoVersion: CRYPTO_VERSION,
+				keyId: "v1",
+				keys,
+			}),
+		).toThrow();
 	});
 });

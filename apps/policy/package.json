@@ -15,6 +15,7 @@
 		"eval:answers": "tsx eval/answer-eval.ts"
 	},
 	"dependencies": {
+		"@credit/core": "workspace:*",
 		"@credit/db": "workspace:*",
 		"@credit/service-kit": "workspace:*",
 		"@t3-oss/env-core": "catalog:",

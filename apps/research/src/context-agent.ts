@@ -7,23 +7,14 @@
 // observed, so it can correct tuples without inventing new data. Validation
 // lives in run.ts; the runner only produces raw output plus the snapshots
 // and evidence the validator needs.
-import {
-	Agent,
-	OpenAIChatCompletionsModel,
-	Runner,
-	setTracingDisabled,
-	tool,
-} from "@openai/agents";
+import { Agent, OpenAIChatCompletionsModel, Runner, tool } from "@openai/agents";
 import OpenAI from "openai";
 import { z } from "zod";
+import { readRunUsage, type AgentsOpenAIClient } from "./openai-agents.js";
 import { createContextTools, ContextToolError, type CandidateSnapshot } from "./context-tools.js";
 import { contextModelOutputSchema, CONTEXT_PROMPT_VERSION } from "./context-validator.js";
 import type { ResearchEnv } from "./env.js";
 import type { Observability } from "./observability.js";
-
-setTracingDisabled(true);
-
-type AgentsOpenAIClient = ConstructorParameters<typeof OpenAIChatCompletionsModel>[0];
 
 export interface ContextUsage {
 	inputTokens: number;
@@ -52,9 +43,6 @@ export interface ContextRunInput {
 	signal: AbortSignal;
 	runId?: string;
 	observability?: Observability;
-	/** Internal routing only, never model-visible: lets the loans tool call
-	 * the loans service without a second applicant lookup. */
-	applicantUserId?: string | null;
 }
 
 export interface ContextRepairInput extends ContextRunInput {
@@ -218,18 +206,6 @@ const transactionsParams = z
  * model reasons over a capped head + counts (cost control). */
 const MODEL_TX_ROW_CAP = 50;
 
-function readUsage(result: unknown): { inputTokens: number; outputTokens: number } {
-	const r = result as {
-		state?: { usage?: { inputTokens?: number; outputTokens?: number } };
-		usage?: { inputTokens?: number; outputTokens?: number };
-	};
-	const usage = r?.state?.usage ?? r?.usage;
-	return {
-		inputTokens: usage?.inputTokens ?? 0,
-		outputTokens: usage?.outputTokens ?? 0,
-	};
-}
-
 export type ContextToolsLike = Pick<
 	ReturnType<typeof createContextTools>,
 	| "snapshots"
@@ -340,7 +316,6 @@ export function createRealContextRunner(opts: {
 				applicationId: input.applicationId,
 				caseFacts: input.caseFacts,
 				externalSummary: input.externalSummary,
-				applicantUserId: input.applicantUserId,
 				asOfDate: input.asOfDate,
 				// Split budget: the preflight pass counts HTTP calls against
 				// the preflight allowance; the model loop counts invocations
@@ -375,7 +350,6 @@ export function createRealContextRunner(opts: {
 				applicationId: input.applicationId,
 				caseFacts: input.caseFacts,
 				externalSummary: input.externalSummary,
-				applicantUserId: input.applicantUserId,
 				maxCalls: env.contextMaxToolCalls,
 			});
 			const prompt = buildRepairPrompt(
@@ -562,7 +536,7 @@ async function runContextModel(
 		}
 		return {
 			output: result.finalOutput,
-			usage: readUsage(result),
+			usage: readRunUsage(result),
 			modelBudgetExceeded: budget.exceeded,
 		};
 	} catch (err) {

@@ -1,6 +1,6 @@
-// Service-side outbox + audit writers. Same contract as the worker's helpers
-// (FR-10.2/10.3/10.5: strict event envelopes, dedupe keys, PII-key guard) —
-// shared here so production service code and the worker import one copy.
+// Service-side outbox + audit writers (FR-10.2/10.3/10.5: strict event
+// envelopes, dedupe keys, PII-key guard) — shared here so production
+// service code and the worker activities import one copy.
 import { buildEnvelope, type EventType, eventEnvelopeSchema, TOPICS } from "@credit/core";
 import { auditLog, outboxEvents, type Tx } from "@credit/db/shared";
 

@@ -17,13 +17,13 @@ import {
 	HttpError,
 	internalFetch,
 	readJson,
+	requireOfficer,
 	type ServiceApp,
 	type ServiceVariables,
 	type WorkflowGateway,
 	zodFields,
 } from "@credit/service-kit";
 import { Hono } from "hono";
-import { createMiddleware } from "hono/factory";
 import { z } from "zod";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -69,13 +69,6 @@ export function reviewRoutes(deps: ReviewRouteDeps): ServiceApp {
 	const app: ServiceApp = new Hono();
 	const { gateway, applicationsUrl, loansUrl, researchUrl, internalSecret, fetchImpl } = deps;
 
-	const officer = createMiddleware<{ Variables: ServiceVariables }>(async (c, next) => {
-		const me = c.var.user;
-		if (!me) throw new HttpError(401, "UNAUTHENTICATED", "login required");
-		if (me.role !== "officer") throw new HttpError(403, "FORBIDDEN", "officer role required");
-		await next();
-	});
-
 	// Phase 2 gate (SPEC §10): applicants already 403 above; officer routes
 	// below 404 while the feature is disabled.
 	const requireResearch = (): void => {
@@ -98,13 +91,13 @@ export function reviewRoutes(deps: ReviewRouteDeps): ServiceApp {
 	): Promise<Response> =>
 		internalFetch(baseUrl, path, user, { method: "POST", body, secret: internalSecret, fetchImpl });
 
-	app.get("/api/review/queue", officer, async (c) => {
+	app.get("/api/review/queue", requireOfficer, async (c) => {
 		const res = await get(applicationsUrl, "/internal/review/queue", c.var.user);
 		if (!res.ok) throw new HttpError(502, "BAD_GATEWAY", "upstream service unavailable");
 		return c.json(await res.json());
 	});
 
-	app.post("/api/review/:id/decision", officer, async (c) => {
+	app.post("/api/review/:id/decision", requireOfficer, async (c) => {
 		const me = c.var.user;
 		const id = c.req.param("id");
 		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
@@ -257,7 +250,7 @@ export function reviewRoutes(deps: ReviewRouteDeps): ServiceApp {
 	// Applicants 403 in the `officer` middleware before any other check;
 	// officer + disabled flag 404s; consent 403s; non-pending 409s.
 
-	app.post("/api/review/:id/research", officer, async (c) => {
+	app.post("/api/review/:id/research", requireOfficer, async (c) => {
 		const me = c.var.user;
 		const id = c.req.param("id");
 		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
@@ -293,7 +286,7 @@ export function reviewRoutes(deps: ReviewRouteDeps): ServiceApp {
 		return c.json({ runId: ensured.run.id, status: ensured.run.status }, 202);
 	});
 
-	app.get("/api/review/:id/research", officer, async (c) => {
+	app.get("/api/review/:id/research", requireOfficer, async (c) => {
 		const id = c.req.param("id");
 		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
 		requireResearch();
@@ -309,7 +302,7 @@ export function reviewRoutes(deps: ReviewRouteDeps): ServiceApp {
 	// very skips this endpoint exists to surface. Case existence is
 	// checked (404 for unknown cases, no orphan grant); cross-officer
 	// reads 404 via the research claim, passed through untouched.
-	app.get("/api/review/:id/research/audit", officer, async (c) => {
+	app.get("/api/review/:id/research/audit", requireOfficer, async (c) => {
 		const id = c.req.param("id");
 		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
 		requireResearch();
@@ -320,7 +313,7 @@ export function reviewRoutes(deps: ReviewRouteDeps): ServiceApp {
 		return c.json(await readUpstream(res));
 	});
 
-	app.post("/api/review/:id/research/view", officer, async (c) => {
+	app.post("/api/review/:id/research/view", requireOfficer, async (c) => {
 		const id = c.req.param("id");
 		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
 		requireResearch();
@@ -337,7 +330,7 @@ export function reviewRoutes(deps: ReviewRouteDeps): ServiceApp {
 		return c.json(await readUpstream(res));
 	});
 
-	app.post("/api/review/:id/research/findings/:findingId", officer, async (c) => {
+	app.post("/api/review/:id/research/findings/:findingId", requireOfficer, async (c) => {
 		const id = c.req.param("id");
 		const findingId = c.req.param("findingId");
 		if (!UUID_RE.test(id) || !UUID_RE.test(findingId)) {
@@ -363,7 +356,7 @@ export function reviewRoutes(deps: ReviewRouteDeps): ServiceApp {
 	// (the research retry is run-scoped) and forwards its 202 — the stage
 	// runs in the background, so this never waits on a model call. Signal
 	// review appends and returns the updated signal (201).
-	app.post("/api/review/:id/research/context/retry", officer, async (c) => {
+	app.post("/api/review/:id/research/context/retry", requireOfficer, async (c) => {
 		const id = c.req.param("id");
 		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
 		requireResearch();
@@ -387,27 +380,31 @@ export function reviewRoutes(deps: ReviewRouteDeps): ServiceApp {
 		return c.json(await readUpstream(res), 202);
 	});
 
-	app.post("/api/review/:id/research/context/signals/:signalId/review", officer, async (c) => {
-		const id = c.req.param("id");
-		const signalId = c.req.param("signalId");
-		if (!UUID_RE.test(id) || !UUID_RE.test(signalId)) {
-			throw new HttpError(404, "NOT_FOUND", "not found");
-		}
-		requireResearch();
-		const parsed = findingReviewSchema.safeParse(await readJson(c));
-		if (!parsed.success) {
-			throw new HttpError(422, "VALIDATION_ERROR", "invalid review", zodFields(parsed.error));
-		}
-		const res = await post(
-			researchUrl,
-			`/internal/research/applications/${id}/context/signals/${signalId}/review`,
-			c.var.user,
-			parsed.data,
-		);
-		// 201 with the updated signal; 404 on signal/run/application
-		// mismatch; 409 on a superseded signal.
-		return c.json(await readUpstream(res), 201);
-	});
+	app.post(
+		"/api/review/:id/research/context/signals/:signalId/review",
+		requireOfficer,
+		async (c) => {
+			const id = c.req.param("id");
+			const signalId = c.req.param("signalId");
+			if (!UUID_RE.test(id) || !UUID_RE.test(signalId)) {
+				throw new HttpError(404, "NOT_FOUND", "not found");
+			}
+			requireResearch();
+			const parsed = findingReviewSchema.safeParse(await readJson(c));
+			if (!parsed.success) {
+				throw new HttpError(422, "VALIDATION_ERROR", "invalid review", zodFields(parsed.error));
+			}
+			const res = await post(
+				researchUrl,
+				`/internal/research/applications/${id}/context/signals/${signalId}/review`,
+				c.var.user,
+				parsed.data,
+			);
+			// 201 with the updated signal; 404 on signal/run/application
+			// mismatch; 409 on a superseded signal.
+			return c.json(await readUpstream(res), 201);
+		},
+	);
 
 	return app;
 }

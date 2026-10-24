@@ -17,5 +17,7 @@ export * from "./reasons.js";
 export * from "./reference.js";
 export * from "./schemas.js";
 export * from "./scoring.js";
+export * from "./signals.js";
 export * from "./snapshot.js";
 export * from "./status.js";
+export * from "./text.js";

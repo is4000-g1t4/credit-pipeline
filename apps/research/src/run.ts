@@ -137,6 +137,27 @@ export async function fetchContextConsentOverHttp(
 	}
 }
 
+/**
+ * Shared context-consent probe: the test seam when set, otherwise the
+ * signed HMAC read. Fail closed: a throwing probe reads as no consent —
+ * the stage skips/fails while external research is unaffected.
+ */
+export function contextConsentProbe(
+	deps: Pick<ExecDeps, "fetchContextConsent">,
+	env: ResearchEnv,
+	onError?: (err: unknown) => void,
+): (applicationId: string) => Promise<boolean> {
+	const probe = deps.fetchContextConsent ?? ((id: string) => fetchContextConsentOverHttp(env, id));
+	return async (applicationId: string) => {
+		try {
+			return await probe(applicationId);
+		} catch (err) {
+			onError?.(err);
+			return false;
+		}
+	};
+}
+
 interface ProcessedEvidence {
 	localId: string;
 	id: string;
@@ -315,7 +336,6 @@ export async function executeRun(deps: ExecDeps, runId: string, token: string): 
 				runId,
 				runToken: token,
 				applicationId: run.applicationId,
-				applicantUserId: run.applicantUserId,
 				caseFacts: run.caseFacts as Record<string, unknown>,
 				asOfDate: asOf,
 				externalSummary: external.ok ? externalSummaryOf(external) : null,
@@ -353,14 +373,12 @@ export async function executeRun(deps: ExecDeps, runId: string, token: string): 
 					env,
 					logger: deps.logger,
 					policyRunner: deps.policyRunner,
-					fetchConsent:
-						deps.fetchContextConsent ?? ((id: string) => fetchContextConsentOverHttp(env, id)),
+					fetchConsent: contextConsentProbe(deps, env),
 				},
 				{
 					runId,
 					runToken: token,
 					applicationId: run.applicationId,
-					applicantUserId: run.applicantUserId,
 					requestedBy: run.requestedBy,
 					requestedByRole: run.requestedByRole,
 					caseFacts: run.caseFacts as unknown as CaseFacts,
@@ -504,11 +522,14 @@ interface ExternalFailure {
 type ExternalOutcome = ExternalSuccess | ExternalFailure;
 
 /** Structured validated claims for the context tool — never raw web text. */
-function externalSummaryOf(external: ExternalSuccess): unknown {
-	const brief = external.brief as { summary?: unknown };
+function externalSummaryOf(input: {
+	brief: unknown;
+	findings: Array<{ claim: string; category: string; confidence: string }>;
+}): unknown {
+	const brief = input.brief as { summary?: unknown };
 	return {
 		summary: typeof brief.summary === "string" ? brief.summary : null,
-		findings: external.findings.map((f) => ({
+		findings: input.findings.map((f) => ({
 			claim: f.claim,
 			category: f.category,
 			confidence: f.confidence,
@@ -595,7 +616,6 @@ export async function runContextStage(
 	opts: {
 		runId: string;
 		applicationId: string;
-		applicantUserId?: string | null;
 		caseFacts: Record<string, unknown>;
 		asOfDate: string;
 		runToken?: string;
@@ -623,18 +643,12 @@ export async function runContextStage(
 	}
 	// Fresh consent probe: withdrawal blocks new context work. Probe
 	// failure fails closed to skip — external research is unaffected.
-	const fetchConsent =
-		deps.fetchContextConsent ?? ((id: string) => fetchContextConsentOverHttp(env, id));
-	let consent = false;
-	try {
-		consent = await fetchConsent(applicationId);
-	} catch (err) {
+	const consent = await contextConsentProbe(deps, env, (err) =>
 		deps.logger.error(
 			{ runId, err: err instanceof Error ? err.message : String(err) },
 			"context consent probe failed",
-		);
-		consent = false;
-	}
+		),
+	)(applicationId);
 	if (!consent) {
 		if (opts.runToken) await skipContextStage(db, runId, opts.runToken);
 		if (opts.stageToken) {
@@ -681,7 +695,6 @@ export async function runContextStage(
 		const signal = AbortSignal.timeout(env.contextTimeoutMs);
 		const base = {
 			applicationId,
-			applicantUserId: opts.applicantUserId ?? null,
 			caseFacts: opts.caseFacts,
 			asOfDate: opts.asOfDate,
 			externalSummary: opts.externalSummary,
@@ -765,18 +778,12 @@ export async function runContextStage(
 		// model call must not land stored context. Fail the stage closed
 		// (consent_required) instead of persisting; the external outcome is
 		// untouched. The same value gates inside the persist transaction.
-		const probe =
-			deps.fetchContextConsent ?? ((id: string) => fetchContextConsentOverHttp(env, id));
-		let persistConsent = false;
-		try {
-			persistConsent = await probe(applicationId);
-		} catch (err) {
+		const persistConsent = await contextConsentProbe(deps, env, (err) =>
 			deps.logger.error(
 				{ runId, err: err instanceof Error ? err.message : String(err) },
 				"context persist consent recheck failed",
-			);
-			persistConsent = false;
-		}
+			),
+		)(applicationId);
 		if (!persistConsent) {
 			const measured = projectCostUsd(inputTokens, outputTokens);
 			await persistContextFailure(db, runId, token, "consent_required", {
@@ -894,22 +901,13 @@ export async function executeContextRetry(
 	let externalSummary: unknown = null;
 	if (run.status === "succeeded" && run.brief) {
 		const findings = await db.select().from(agentFindings).where(eq(agentFindings.runId, runId));
-		const brief = run.brief as { summary?: unknown };
-		externalSummary = {
-			summary: typeof brief.summary === "string" ? brief.summary : null,
-			findings: findings.map((f) => ({
-				claim: f.claim,
-				category: f.category,
-				confidence: f.confidence,
-			})),
-		};
+		externalSummary = externalSummaryOf({ brief: run.brief, findings });
 	}
 	const asOf = asOfDate(run.asOf.toISOString());
 	const result = await runContextStage(deps, {
 		runId,
 		stageToken,
 		applicationId: run.applicationId,
-		applicantUserId: run.applicantUserId,
 		caseFacts: run.caseFacts as Record<string, unknown>,
 		asOfDate: asOf,
 		externalSummary,

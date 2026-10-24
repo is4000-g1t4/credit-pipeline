@@ -17,18 +17,22 @@ import {
 	documentFindings,
 	documentPages,
 } from "@credit/db/applications";
-import { createLogger } from "@credit/service-kit";
-import { stubGateway } from "@credit/service-kit/test";
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../../src/app.js";
 import { configFromEnv } from "../../src/documents/service.js";
+import { createLogger } from "@credit/service-kit";
+import { stubGateway } from "@credit/service-kit/test";
 import type { ExtractionResult, OcrAdapter } from "../../src/documents/ocr.js";
 import type { ScannerAdapter } from "../../src/documents/scanner.js";
 import { loadEnv } from "../../src/env.js";
 import {
 	createUser,
 	individualPayload,
+	multipart,
+	pdfBytes,
+	postApplication,
+	setupApp,
 	signed,
 	type TestContext,
 	type TestUser,
@@ -69,28 +73,15 @@ interface Ctx extends TestContext {
 let ctx: Ctx;
 
 function setup(): Ctx {
-	const env = loadEnv();
-	const { db, sql } = createDb(env.databaseUrl);
-	const gateway = stubGateway();
-	const app = createApp({
-		db,
-		sql,
-		env,
-		gateway,
-		logger: createLogger("applications-d2-test"),
+	const ctx = setupApp({
+		storageDir: (globalThis as { d2Dir?: string }).d2Dir ?? "",
 		documents: {
-			config: {
-				...configFromEnv(env),
-				featureEnabled: true,
-				storageDir: (globalThis as { d2Dir?: string }).d2Dir ?? "",
-				encryptionKey: ENCRYPTION_KEY,
-				keyId: "v1",
-			},
+			config: { featureEnabled: true, encryptionKey: ENCRYPTION_KEY, keyId: "v1" },
 			scanner: cleanScanner,
 			ocr: ocrWith("unused"),
 		},
 	});
-	return { app, db, sql, gateway, secret: env.internalSecret, storageDir: "" };
+	return { ...ctx, storageDir: "" };
 }
 
 function smePayload(email: string): Record<string, unknown> {
@@ -123,20 +114,15 @@ function smePayload(email: string): Record<string, unknown> {
 	};
 }
 
-async function postApplication(user: TestUser, sme: boolean): Promise<string> {
-	const path = "/api/applications";
-	const payload = sme
-		? { ...smePayload(user.email), documentProcessingConsent: true }
-		: { ...individualPayload(user.email), documentProcessingConsent: true };
-	const body = JSON.stringify(payload);
-	const res = await ctx.app.request(path, {
-		method: "POST",
-		headers: {
-			"content-type": "application/json",
-			...signed(ctx, user, "POST", path, { "Idempotency-Key": randomUUID() }, body),
-		},
-		body,
-	});
+async function postApplicationId(user: TestUser, sme: boolean): Promise<string> {
+	const res = await postApplication(
+		ctx,
+		user,
+		"/api/applications",
+		sme
+			? { ...smePayload(user.email), documentProcessingConsent: true }
+			: { ...individualPayload(user.email), documentProcessingConsent: true },
+	);
 	expect(res.status).toBe(201);
 	return ((await res.json()) as { id: string }).id;
 }
@@ -152,7 +138,7 @@ async function newCase(
 ): Promise<{ appId: string; owner: TestUser; officer: TestUser }> {
 	const owner = await createUser(ctx);
 	const officer = await createUser(ctx, "officer");
-	const appId = await postApplication(owner, sme);
+	const appId = await postApplicationId(owner, sme);
 	await grantOfficer(appId, officer);
 	return { appId, owner, officer };
 }
@@ -215,35 +201,6 @@ async function postCrosscheck(user: TestUser, appId: string): Promise<Response> 
 async function getCrosscheck(user: TestUser, appId: string): Promise<Response> {
 	const path = `/api/applications/${appId}/documents/crosscheck`;
 	return ctx.app.request(path, { headers: signed(ctx, user, "GET", path) });
-}
-
-function pdfBytes(tag: string): Buffer {
-	return Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.from(tag), randomBytes(64)]);
-}
-
-function multipart(
-	boundary: string,
-	fields: Array<{ name: string; filename?: string; contentType?: string; data: Buffer | string }>,
-): Buffer {
-	const chunks: Buffer[] = [];
-	for (const f of fields) {
-		chunks.push(Buffer.from(`--${boundary}\r\n`, "utf8"));
-		if (f.filename) {
-			chunks.push(
-				Buffer.from(
-					`Content-Disposition: form-data; name="${f.name}"; filename="${f.filename}"\r\n` +
-						`Content-Type: ${f.contentType ?? "application/octet-stream"}\r\n\r\n`,
-					"utf8",
-				),
-			);
-		} else {
-			chunks.push(Buffer.from(`Content-Disposition: form-data; name="${f.name}"\r\n\r\n`, "utf8"));
-		}
-		chunks.push(typeof f.data === "string" ? Buffer.from(f.data, "utf8") : f.data);
-		chunks.push(Buffer.from("\r\n", "utf8"));
-	}
-	chunks.push(Buffer.from(`--${boundary}--\r\n`, "utf8"));
-	return Buffer.concat(chunks);
 }
 
 beforeAll(async () => {
@@ -631,7 +588,7 @@ describe("draft chase", () => {
 		try {
 			const owner = await createUser(ctx);
 			const officer = await createUser(ctx, "officer");
-			const appId = await postApplication(owner, true);
+			const appId = await postApplicationId(owner, true);
 			await grantOfficer(appId, officer);
 
 			const boundary = `----d2e2e${randomUUID().replace(/-/g, "")}`;
@@ -727,7 +684,7 @@ describe("draft chase", () => {
 
 			// Cross-app finding ids 404 (cite this finding from another case).
 			const other = await createUser(ctx);
-			const otherApp = await postApplication(other, true);
+			const otherApp = await postApplicationId(other, true);
 			const otherOfficer = await createUser(ctx, "officer");
 			await grantOfficer(otherApp, otherOfficer);
 			await seedFile(otherApp, "other", [{ text: "x" }]);

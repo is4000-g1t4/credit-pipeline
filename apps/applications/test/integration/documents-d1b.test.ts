@@ -6,7 +6,6 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createDb } from "@credit/db";
 import {
 	auditLog,
 	caseAccessGrants,
@@ -17,19 +16,20 @@ import {
 	documentFindings,
 	documentPages,
 } from "@credit/db/applications";
-import { createLogger } from "@credit/service-kit";
-import { stubGateway } from "@credit/service-kit/test";
 import { and, eq, isNull } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createApp } from "../../src/app.js";
-import { configFromEnv } from "../../src/documents/service.js";
 import { runDocumentRetention } from "../../src/documents/retention.js";
+import { configFromEnv } from "../../src/documents/service.js";
 import type { ExtractionResult, OcrAdapter, OcrLimits } from "../../src/documents/ocr.js";
 import type { ScannerAdapter } from "../../src/documents/scanner.js";
 import { loadEnv } from "../../src/env.js";
 import {
 	createUser,
 	individualPayload,
+	multipart,
+	pdfBytes,
+	postApplication,
+	setupApp,
 	signed,
 	type TestContext,
 	type TestUser,
@@ -66,70 +66,21 @@ interface Ctx extends TestContext {
 let ctx: Ctx;
 
 function setup(): Ctx {
-	const env = loadEnv();
-	const { db, sql } = createDb(env.databaseUrl);
-	const gateway = stubGateway();
-	const app = createApp({
-		db,
-		sql,
-		env,
-		gateway,
-		logger: createLogger("applications-d1b-test"),
+	const ctx = setupApp({
+		storageDir: (globalThis as { d1bDir?: string }).d1bDir ?? "",
 		documents: {
-			config: {
-				...configFromEnv(env),
-				featureEnabled: true,
-				storageDir: (globalThis as { d1bDir?: string }).d1bDir ?? "",
-				encryptionKey: ENCRYPTION_KEY,
-				keyId: "v1",
-			},
+			config: { featureEnabled: true, encryptionKey: ENCRYPTION_KEY, keyId: "v1" },
 			scanner: cleanScanner,
 			ocr: readyOcr,
 		},
 	});
-	return { app, db, sql, gateway, secret: env.internalSecret, storageDir: "" };
+	return { ...ctx, storageDir: "" };
 }
 
-function pdfBytes(tag: string): Buffer {
-	return Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.from(tag), randomBytes(64)]);
-}
-
-function multipart(
-	boundary: string,
-	fields: Array<{ name: string; filename?: string; contentType?: string; data: Buffer | string }>,
-): Buffer {
-	const chunks: Buffer[] = [];
-	for (const f of fields) {
-		chunks.push(Buffer.from(`--${boundary}\r\n`, "utf8"));
-		if (f.filename) {
-			chunks.push(
-				Buffer.from(
-					`Content-Disposition: form-data; name="${f.name}"; filename="${f.filename}"\r\n` +
-						`Content-Type: ${f.contentType ?? "application/octet-stream"}\r\n\r\n`,
-					"utf8",
-				),
-			);
-		} else {
-			chunks.push(Buffer.from(`Content-Disposition: form-data; name="${f.name}"\r\n\r\n`, "utf8"));
-		}
-		chunks.push(typeof f.data === "string" ? Buffer.from(f.data, "utf8") : f.data);
-		chunks.push(Buffer.from("\r\n", "utf8"));
-	}
-	chunks.push(Buffer.from(`--${boundary}--\r\n`, "utf8"));
-	return Buffer.concat(chunks);
-}
-
-async function postApplication(user: TestUser): Promise<string> {
-	const path = "/api/applications";
-	const payload = { ...individualPayload(user.email), documentProcessingConsent: true };
-	const body = JSON.stringify(payload);
-	const res = await ctx.app.request(path, {
-		method: "POST",
-		headers: {
-			"content-type": "application/json",
-			...signed(ctx, user, "POST", path, { "Idempotency-Key": randomUUID() }, body),
-		},
-		body,
+async function postApplicationId(user: TestUser): Promise<string> {
+	const res = await postApplication(ctx, user, "/api/applications", {
+		...individualPayload(user.email),
+		documentProcessingConsent: true,
 	});
 	expect(res.status).toBe(201);
 	return ((await res.json()) as { id: string }).id;
@@ -203,7 +154,7 @@ describe("assignment lifecycle", () => {
 		const officer = await createUser(ctx, "officer");
 		const officer2 = await createUser(ctx, "officer");
 		const stranger = await createUser(ctx);
-		const appId = await postApplication(owner);
+		const appId = await postApplicationId(owner);
 
 		const first = await claim(officer, appId);
 		expect(first.status).toBe(200);
@@ -236,7 +187,7 @@ describe("assignment lifecycle", () => {
 		const owner = await createUser(ctx);
 		const officer = await createUser(ctx, "officer");
 		const officer2 = await createUser(ctx, "officer");
-		const appId = await postApplication(owner);
+		const appId = await postApplicationId(owner);
 		expect((await claim(officer, appId)).status).toBe(200);
 
 		const revokePath = `/internal/applications/${appId}/document-access/revoke`;
@@ -276,7 +227,7 @@ describe("assignment lifecycle", () => {
 	it("internal grant/revoke are service-only and validated", async () => {
 		const owner = await createUser(ctx);
 		const officer = await createUser(ctx, "officer");
-		const appId = await postApplication(owner);
+		const appId = await postApplicationId(owner);
 		const grantPath = `/internal/applications/${appId}/document-access/grant`;
 		const revokePath = `/internal/applications/${appId}/document-access/revoke`;
 
@@ -335,7 +286,7 @@ describe("retention", () => {
 	}> {
 		const owner = await createUser(ctx);
 		const officer = await createUser(ctx, "officer");
-		const appId = await postApplication(owner);
+		const appId = await postApplicationId(owner);
 		expect((await claim(officer, appId)).status).toBe(200);
 		const up = await upload(officer, appId, "business_registration", pdfBytes("retain"), FILENAME);
 		expect(up.status).toBe(201);
@@ -474,7 +425,7 @@ describe("retention", () => {
 	it("legal hold blocks deletion; release allows it (app and file scope)", async () => {
 		const owner = await createUser(ctx);
 		const officer = await createUser(ctx, "officer");
-		const appId = await postApplication(owner);
+		const appId = await postApplicationId(owner);
 		expect((await claim(officer, appId)).status).toBe(200);
 		const a = await upload(officer, appId, "other", pdfBytes("hold-a"), "a.pdf");
 		const b = await upload(officer, appId, "other", pdfBytes("hold-b"), "b.pdf");
@@ -506,7 +457,7 @@ describe("retention", () => {
 
 		// Cross-app file hold 404s; empty reason 400s.
 		const other = await createUser(ctx);
-		const otherApp = await postApplication(other);
+		const otherApp = await postApplicationId(other);
 		expect(
 			(
 				await servicePost(`/internal/applications/${otherApp}/documents/${a.file.id}/legal-hold`, {
@@ -568,7 +519,7 @@ describe("retention", () => {
 	it("failed blob purge leaves a retry marker; the next sweep purges", async () => {
 		const owner = await createUser(ctx);
 		const officer = await createUser(ctx, "officer");
-		const appId = await postApplication(owner);
+		const appId = await postApplicationId(owner);
 		expect((await claim(officer, appId)).status).toBe(200);
 		const up = await upload(officer, appId, "other", pdfBytes("retry-blob"), "r.pdf");
 		expect(up.status).toBe(201);
@@ -621,7 +572,7 @@ describe("retention", () => {
 
 	it("retention on an empty/held-free case is a quiet no-op", async () => {
 		const owner = await createUser(ctx);
-		const appId = await postApplication(owner);
+		const appId = await postApplicationId(owner);
 		const counts = (await (
 			await servicePost(`/internal/applications/${appId}/documents/retention/run`)
 		).json()) as Record<string, number>;

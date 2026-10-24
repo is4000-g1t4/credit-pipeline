@@ -6,14 +6,9 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createDb } from "@credit/db";
 import { auditLog, caseAccessGrants, documentFiles } from "@credit/db/applications";
-import { createLogger } from "@credit/service-kit";
-import { stubGateway } from "@credit/service-kit/test";
 import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { createApp } from "../../src/app.js";
-import { configFromEnv } from "../../src/documents/service.js";
 import {
 	OcrFailed,
 	type ExtractionResult,
@@ -21,10 +16,13 @@ import {
 	type OcrLimits,
 } from "../../src/documents/ocr.js";
 import type { ScannerAdapter } from "../../src/documents/scanner.js";
-import { loadEnv } from "../../src/env.js";
 import {
 	createUser,
 	individualPayload,
+	multipart,
+	pdfBytes,
+	postApplication,
+	setupApp,
 	signed,
 	type TestContext,
 	type TestUser,
@@ -109,9 +107,6 @@ function gatedOcr() {
 	return { state, adapter, release: () => release() };
 }
 
-function pdfBytes(tag: string): Buffer {
-	return Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.from(tag), randomBytes(64)]);
-}
 function pngBytes(tag: string): Buffer {
 	return Buffer.concat([
 		Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
@@ -123,31 +118,6 @@ function jpegBytes(tag: string): Buffer {
 	return Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from(tag), randomBytes(64)]);
 }
 
-function multipart(
-	boundary: string,
-	fields: Array<{ name: string; filename?: string; contentType?: string; data: Buffer | string }>,
-): Buffer {
-	const chunks: Buffer[] = [];
-	for (const f of fields) {
-		chunks.push(Buffer.from(`--${boundary}\r\n`, "utf8"));
-		if (f.filename) {
-			chunks.push(
-				Buffer.from(
-					`Content-Disposition: form-data; name="${f.name}"; filename="${f.filename}"\r\n` +
-						`Content-Type: ${f.contentType ?? "application/octet-stream"}\r\n\r\n`,
-					"utf8",
-				),
-			);
-		} else {
-			chunks.push(Buffer.from(`Content-Disposition: form-data; name="${f.name}"\r\n\r\n`, "utf8"));
-		}
-		chunks.push(typeof f.data === "string" ? Buffer.from(f.data, "utf8") : f.data);
-		chunks.push(Buffer.from("\r\n", "utf8"));
-	}
-	chunks.push(Buffer.from(`--${boundary}--\r\n`, "utf8"));
-	return Buffer.concat(chunks);
-}
-
 interface DocContext extends TestContext {
 	scanner: ReturnType<typeof mutableScanner>;
 	ocr: ReturnType<typeof mutableOcr>;
@@ -157,48 +127,31 @@ function setupDocs(
 	overrides: Record<string, unknown> = {},
 	adapters: { scanner?: ScannerAdapter; ocr?: OcrAdapter } = {},
 ): DocContext {
-	const env = loadEnv();
-	const { db, sql } = createDb(env.databaseUrl);
-	const gateway = stubGateway();
 	const scanner = mutableScanner();
 	const ocr = mutableOcr(READY_TEXT);
-	const config = {
-		...configFromEnv(env),
-		featureEnabled: true,
+	const ctx = setupApp({
 		storageDir: (globalThis as { docTestDir?: string }).docTestDir ?? "",
-		encryptionKey: ENCRYPTION_KEY,
-		keyId: "v1",
-		...overrides,
-	};
-	const app = createApp({
-		db,
-		sql,
-		env,
-		gateway,
-		logger: createLogger("applications-docs-test"),
 		documents: {
-			config,
+			config: {
+				featureEnabled: true,
+				encryptionKey: ENCRYPTION_KEY,
+				keyId: "v1",
+				...overrides,
+			},
 			scanner: adapters.scanner ?? scanner.adapter,
 			ocr: adapters.ocr ?? ocr.adapter,
 		},
 	});
-	return { app, db, sql, gateway, secret: env.internalSecret, scanner, ocr };
+	return { ...ctx, scanner, ocr };
 }
 
 let ctx: DocContext;
 let storageDir: string;
 
-async function postApplication(user: TestUser, consent: boolean): Promise<string> {
-	const path = "/api/applications";
-	const payload = { ...individualPayload(user.email), documentProcessingConsent: consent };
-	const body = JSON.stringify(payload);
-	const res = await ctx.app.request(path, {
-		method: "POST",
-		headers: {
-			"content-type": "application/json",
-			...signed(ctx, user, "POST", path, { "Idempotency-Key": randomUUID() }, body),
-		},
-		body,
+async function postApplicationId(user: TestUser, consent: boolean): Promise<string> {
+	const res = await postApplication(ctx, user, "/api/applications", {
+		...individualPayload(user.email),
+		documentProcessingConsent: consent,
 	});
 	expect(res.status).toBe(201);
 	return ((await res.json()) as { id: string }).id;
@@ -218,7 +171,7 @@ async function newCase(
 ): Promise<{ appId: string; owner: TestUser; officer: TestUser }> {
 	const owner = await createUser(ctx);
 	const officer = await createUser(ctx, "officer");
-	const appId = await postApplication(owner, consent);
+	const appId = await postApplicationId(owner, consent);
 	await grantOfficer(appId, officer);
 	return { appId, owner, officer };
 }
@@ -468,16 +421,9 @@ describe("consent and feature gates", () => {
 		const off = setupDocs({ featureEnabled: false });
 		try {
 			const owner = await createUser(off);
-			const path0 = "/api/applications";
-			const payload = { ...individualPayload(owner.email), documentProcessingConsent: true };
-			const body = JSON.stringify(payload);
-			const created = await off.app.request(path0, {
-				method: "POST",
-				headers: {
-					"content-type": "application/json",
-					...signed(off, owner, "POST", path0, { "Idempotency-Key": randomUUID() }, body),
-				},
-				body,
+			const created = await postApplication(off, owner, "/api/applications", {
+				...individualPayload(owner.email),
+				documentProcessingConsent: true,
 			});
 			expect(created.status).toBe(201);
 			const { id } = (await created.json()) as { id: string };
@@ -578,6 +524,13 @@ describe("failure semantics", () => {
 		const res = await upload(owner, appId, "other", big, "big.pdf");
 		expect(res.status).toBe(413);
 		expect(await errorCode(res)).toBe("FILE_TOO_LARGE");
+		const rows = await ctx.db
+			.select()
+			.from(documentFiles)
+			.where(eq(documentFiles.applicationId, appId));
+		expect(rows).toHaveLength(1);
+		expect(rows[0].status).toBe("rejected");
+		expect(rows[0].errorCode).toBe("FILE_TOO_LARGE");
 	});
 
 	it("5/min/app rate limit, then 429", async () => {
@@ -607,6 +560,10 @@ describe("failure semantics", () => {
 			const second = await upload(owner, appId, "other", pdfBytes("busy-2"), "b2.pdf");
 			expect(second.status).toBe(429);
 			expect(await errorCode(second)).toBe("OCR_BUSY");
+			// Neither upload persisted: the first is still gated, the second never wrote.
+			expect(
+				await ctx.db.select().from(documentFiles).where(eq(documentFiles.applicationId, appId)),
+			).toEqual([]);
 			gate.release();
 			expect((await first).status).toBe(201);
 		} finally {

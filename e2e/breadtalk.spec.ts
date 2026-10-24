@@ -27,7 +27,10 @@ test("BreadTalk draft: prefill → stale checklist → blocked submit → reuse 
 	const applicant = new Api();
 	try {
 		await applicant.login("breadtalk@example.com");
-	} catch {
+	} catch (err) {
+		// Skip only on the known missing-fixture signals (unknown user 401,
+		// missing user 404); network/5xx failures must fail loudly.
+		if (!(err instanceof ApiError) || (err.status !== 401 && err.status !== 404)) throw err;
 		test.skip(true, `${SETUP_HINT} (login failed)`);
 	}
 	let profile!: {
@@ -36,7 +39,8 @@ test("BreadTalk draft: prefill → stale checklist → blocked submit → reuse 
 	};
 	try {
 		profile = await applicant.get("/api/customer/profile");
-	} catch {
+	} catch (err) {
+		if (!(err instanceof ApiError) || (err.status !== 401 && err.status !== 404)) throw err;
 		test.skip(true, `${SETUP_HINT} (no customer profile)`);
 	}
 
@@ -139,21 +143,38 @@ test("BreadTalk draft: prefill → stale checklist → blocked submit → reuse 
 	// Submit once → submitted (the worker then owns review.requested). The
 	// worker can advance submitted → processing → pending_review within one
 	// poll beat, so wait for leaving draft, not for the transient state.
-	await submit.click();
-	const done = await poll(
-		`application ${appId} to leave draft`,
-		async () => {
-			const d = await applicant.get<{ application: { status: string } }>(
-				`/api/applications/${appId}`,
-			);
-			return d.application.status === "draft" ? null : d;
-		},
-		180_000,
-		2000,
+	// Repeat runs can exhaust the 3-active-application budget, in which case
+	// the submit 409s with TOO_MANY_APPLICATIONS: reuse an existing active
+	// case instead — the same fallback documents.spec.ts uses.
+	const actives = (
+		await applicant.get<{ items: Array<{ id: string; status: string }> }>(
+			"/api/applications?limit=100",
+		)
+	).items.filter(
+		(a) => a.id !== appId && ["submitted", "processing", "pending_review"].includes(a.status),
 	);
-	expect(["submitted", "processing", "pending_review", "booked"]).toContain(
-		done.application.status,
-	);
+	let caseId = appId;
+	if (actives.length >= 3) {
+		const existing = actives.find((a) => a.status === "pending_review") ?? actives[0];
+		if (!existing) throw new Error("breadtalk: active budget exhausted with no reusable case");
+		caseId = existing.id;
+	} else {
+		await submit.click();
+		const done = await poll(
+			`application ${appId} to leave draft`,
+			async () => {
+				const d = await applicant.get<{ application: { status: string } }>(
+					`/api/applications/${appId}`,
+				);
+				return d.application.status === "draft" ? null : d;
+			},
+			180_000,
+			2000,
+		);
+		expect(["submitted", "processing", "pending_review", "booked"]).toContain(
+			done.application.status,
+		);
+	}
 
 	// --- Context leg (D4): officer opens the submitted case and sees the
 	// Internal context section after T11, then accept/dismiss round-trips a
@@ -162,7 +183,7 @@ test("BreadTalk draft: prefill → stale checklist → blocked submit → reuse 
 	// contract instead (officer 404 + hidden panel) — the spec runs green
 	// either way, never skipped. BREADTALK_CONTEXT_STUB=1 seeds the
 	// deterministic stub (no model spend) instead of waiting on a live run.
-	await waitStatus(applicant, appId, "pending_review");
+	await waitStatus(applicant, caseId, "pending_review");
 	const officer = new Api();
 	await officer.login("officer@example.com");
 	const stubMode = process.env.BREADTALK_CONTEXT_STUB === "1";
@@ -172,7 +193,7 @@ test("BreadTalk draft: prefill → stale checklist → blocked submit → reuse 
 		const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 		execFileSync(
 			process.platform === "win32" ? "bun.exe" : "bun",
-			["scripts/demo-context-stub.ts", "--persona=breadtalk", `--app-id=${appId}`],
+			["scripts/demo-context-stub.ts", "--persona=breadtalk", `--app-id=${caseId}`],
 			{ cwd: root, stdio: "pipe", env: { ...process.env, DEMO_MODE: "true" } },
 		);
 	}
@@ -187,7 +208,7 @@ test("BreadTalk draft: prefill → stale checklist → blocked submit → reuse 
 	let researchDisabled = false;
 	async function readLatest(): Promise<ContextLatest | null> {
 		try {
-			return await officer.get<ContextLatest>(`/api/review/${appId}/research`);
+			return await officer.get<ContextLatest>(`/api/review/${caseId}/research`);
 		} catch (err) {
 			if (err instanceof ApiError && err.status === 404 && err.code === "RESEARCH_DISABLED") {
 				researchDisabled = true;
@@ -212,7 +233,7 @@ test("BreadTalk draft: prefill → stale checklist → blocked submit → reuse 
 		// page hides the research panel entirely.
 		await uiLogout(page);
 		await uiLogin(page, "officer@example.com");
-		await gotoHydrated(page, `/officer/review/${appId}`);
+		await gotoHydrated(page, `/officer/review/${caseId}`);
 		await expect(page.getByText("Identity").first()).toBeVisible({ timeout: 60_000 });
 		await expect(page.locator('section[aria-label="Agent research"]')).toHaveCount(0);
 		await expect(page.locator('section[aria-label="Internal context"]')).toHaveCount(0);
@@ -222,7 +243,7 @@ test("BreadTalk draft: prefill → stale checklist → blocked submit → reuse 
 	// real ensure path, then poll both stages terminal.
 	if (!latest && !stubMode) {
 		const ensured = await officer.post<{ runId: string; status: string }>(
-			`/api/review/${appId}/research`,
+			`/api/review/${caseId}/research`,
 		);
 		expect(ensured.runId).toMatch(/^[0-9a-f-]{36}$/);
 	}
@@ -231,7 +252,7 @@ test("BreadTalk draft: prefill → stale checklist → blocked submit → reuse 
 	latest = await poll(
 		"research run + context stage terminal",
 		async () => {
-			const cur = await officer.get<ContextLatest>(`/api/review/${appId}/research`);
+			const cur = await officer.get<ContextLatest>(`/api/review/${caseId}/research`);
 			const runTerminal = cur.run.status === "succeeded" || cur.run.status === "failed";
 			const contextTerminal = cur.context.status !== "queued" && cur.context.status !== "running";
 			return runTerminal && contextTerminal ? cur : null;
@@ -244,7 +265,7 @@ test("BreadTalk draft: prefill → stale checklist → blocked submit → reuse 
 	// brief, with status-appropriate content (never an all-clear).
 	await uiLogout(page);
 	await uiLogin(page, "officer@example.com");
-	await gotoHydrated(page, `/officer/review/${appId}`);
+	await gotoHydrated(page, `/officer/review/${caseId}`);
 	const internal = page.locator('section[aria-label="Internal context"]');
 	await expect(internal).toBeVisible({ timeout: 60_000 });
 	if (latest.context.status === "succeeded") {
@@ -259,7 +280,7 @@ test("BreadTalk draft: prefill → stale checklist → blocked submit → reuse 
 		await poll(
 			"first signal accepted",
 			async () => {
-				const cur = await officer.get<ContextLatest>(`/api/review/${appId}/research`);
+				const cur = await officer.get<ContextLatest>(`/api/review/${caseId}/research`);
 				return cur.context.signals.find((s) => s.id === first.id)?.reviewStatus === "accepted"
 					? true
 					: null;
@@ -273,7 +294,7 @@ test("BreadTalk draft: prefill → stale checklist → blocked submit → reuse 
 			await poll(
 				"second signal dismissed",
 				async () => {
-					const cur = await officer.get<ContextLatest>(`/api/review/${appId}/research`);
+					const cur = await officer.get<ContextLatest>(`/api/review/${caseId}/research`);
 					return cur.context.signals.find((s) => s.id === second.id)?.reviewStatus === "rejected"
 						? true
 						: null;
@@ -292,7 +313,7 @@ test("BreadTalk draft: prefill → stale checklist → blocked submit → reuse 
 		await poll(
 			"context stage terminal after retry",
 			async () => {
-				const cur = await officer.get<ContextLatest>(`/api/review/${appId}/research`);
+				const cur = await officer.get<ContextLatest>(`/api/review/${caseId}/research`);
 				return cur.context.status !== "queued" && cur.context.status !== "running" ? true : null;
 			},
 			300_000,

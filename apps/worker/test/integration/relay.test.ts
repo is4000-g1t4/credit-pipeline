@@ -1,6 +1,11 @@
 // Relay integration (compose): insert an outbox row per writer DB, observe
 // each arrive in real Kafka under the row-key fallback, and see
 // published_at set. Each DB has its own relay loop + advisory lock key.
+//
+// Dev-worker race: a locally running worker shares these compose DBs and
+// may win the advisory lock and publish our row first. The test polls
+// relayOnce until the row lands — whoever publishes it — instead of
+// assuming a single call does the work.
 
 import { randomUUID } from "node:crypto";
 import { outboxEvents } from "@credit/db/shared";
@@ -14,7 +19,7 @@ import {
 	drizzleRelayStore,
 	relayOnce,
 } from "../../src/outbox/relay.js";
-import { connectProducer, kafkaBrokers, testDb, testLoansDb } from "./helpers.js";
+import { connectProducer, kafkaBrokers, testDb, testLoansDb, waitFor } from "./helpers.js";
 
 const appsDb = testDb();
 const loansDb = testLoansDb();
@@ -100,13 +105,21 @@ describe("relayOnce (integration)", () => {
 			rowIds.push({ db: handle.db, id: rowId });
 
 			const seen = observeKey(TOPIC, key, `w3b-relay-obs-${randomUUID()}`);
-			const result = await relayOnce({
-				now: new Date(),
-				producer,
-				store: drizzleRelayStore(reserve, lock),
+			// Whoever wins the advisory lock publishes the row (a dev
+			// worker may beat us to it) — poll until it lands, then assert
+			// the end state rather than which call did the work.
+			await waitFor(`outbox row ${rowId} published`, async () => {
+				await relayOnce({
+					now: new Date(),
+					producer,
+					store: drizzleRelayStore(reserve, lock),
+				});
+				const [row] = await handle.db
+					.select({ publishedAt: outboxEvents.publishedAt })
+					.from(outboxEvents)
+					.where(eq(outboxEvents.id, rowId));
+				return row?.publishedAt instanceof Date;
 			});
-			expect(result.skipped).toBe(false);
-			expect(result.published).toBeGreaterThanOrEqual(1);
 
 			const [updated] = await handle.db
 				.select()

@@ -4,7 +4,7 @@
 // effect. All document text renders as React text nodes (never
 // dangerouslySetInnerHTML); bidi/zero-width controls are stripped in
 // display; nothing document-derived reaches console, logs, or URLs.
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import {
 	ApiError,
@@ -24,6 +24,7 @@ import {
 	type DocumentCrosscheck,
 	type DocumentFile,
 	type DocumentKind,
+	type DocumentsList,
 } from "../lib/api";
 import { Card, ErrorBox, StatusBadge } from "./ui";
 
@@ -370,6 +371,48 @@ function UploadForm({
 	);
 }
 
+function DocumentFileList({
+	applicationId,
+	files,
+	onChanged,
+	inspected,
+	onInspected,
+	showPages,
+}: {
+	applicationId: string;
+	files: UseQueryResult<DocumentsList>;
+	onChanged: () => void;
+	inspected?: Set<string>;
+	onInspected?: (fileId: string) => void;
+	showPages?: boolean;
+}) {
+	return (
+		<div className="mt-3" aria-live="polite">
+			{files.isPending ? (
+				<p className="text-sm text-gray-500">Loading documents…</p>
+			) : files.isError ? (
+				<ErrorBox message={friendlyMessage(files.error)} onRetry={() => void files.refetch()} />
+			) : files.data.files.length === 0 ? (
+				<p className="text-sm text-gray-500">No documents uploaded yet.</p>
+			) : (
+				<ul className="space-y-2">
+					{files.data.files.map((f) => (
+						<FileRow
+							key={f.id}
+							applicationId={applicationId}
+							file={f}
+							onChanged={onChanged}
+							inspected={inspected}
+							onInspected={onInspected}
+							showPages={showPages}
+						/>
+					))}
+				</ul>
+			)}
+		</div>
+	);
+}
+
 function ApplicantDocuments({
 	applicationId,
 	consent,
@@ -444,21 +487,7 @@ function ApplicantDocuments({
 				}
 				onUploaded={refresh}
 			/>
-			<div className="mt-3" aria-live="polite">
-				{files.isPending ? (
-					<p className="text-sm text-gray-500">Loading documents…</p>
-				) : files.isError ? (
-					<ErrorBox message={friendlyMessage(files.error)} onRetry={() => void files.refetch()} />
-				) : files.data.files.length === 0 ? (
-					<p className="text-sm text-gray-500">No documents uploaded yet.</p>
-				) : (
-					<ul className="space-y-2">
-						{files.data.files.map((f) => (
-							<FileRow key={f.id} applicationId={applicationId} file={f} onChanged={refresh} />
-						))}
-					</ul>
-				)}
-			</div>
+			<DocumentFileList applicationId={applicationId} files={files} onChanged={refresh} />
 		</Card>
 	);
 }
@@ -666,29 +695,14 @@ function OfficerDocuments({ applicationId }: { applicationId: string }) {
 				disabledHint={null}
 				onUploaded={refresh}
 			/>
-			<div className="mt-3" aria-live="polite">
-				{files.isPending ? (
-					<p className="text-sm text-gray-500">Loading documents…</p>
-				) : files.isError ? (
-					<ErrorBox message={friendlyMessage(files.error)} onRetry={() => void files.refetch()} />
-				) : files.data.files.length === 0 ? (
-					<p className="text-sm text-gray-500">No documents uploaded yet.</p>
-				) : (
-					<ul className="space-y-2">
-						{files.data.files.map((f) => (
-							<FileRow
-								key={f.id}
-								applicationId={applicationId}
-								file={f}
-								onChanged={refresh}
-								inspected={inspected}
-								onInspected={(id) => setInspected((prev) => new Set(prev).add(id))}
-								showPages
-							/>
-						))}
-					</ul>
-				)}
-			</div>
+			<DocumentFileList
+				applicationId={applicationId}
+				files={files}
+				onChanged={refresh}
+				inspected={inspected}
+				onInspected={(id) => setInspected((prev) => new Set(prev).add(id))}
+				showPages
+			/>
 
 			<div className="mt-4 border-t border-gray-100 pt-3">
 				<h3 className="text-sm font-semibold">Cross-check</h3>

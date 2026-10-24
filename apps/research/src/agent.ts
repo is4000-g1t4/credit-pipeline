@@ -2,15 +2,10 @@
 // OpenAIChatCompletionsModel against OpenRouter; OpenAI tracing disabled.
 // Fake path: deterministic stub (tests + local runs without keys).
 import { randomUUID } from "node:crypto";
-import {
-	Agent,
-	OpenAIChatCompletionsModel,
-	Runner,
-	setTracingDisabled,
-	tool,
-} from "@openai/agents";
+import { Agent, OpenAIChatCompletionsModel, Runner, tool } from "@openai/agents";
 import OpenAI from "openai";
 import { z } from "zod";
+import { readRunUsage, type AgentsOpenAIClient } from "./openai-agents.js";
 import type { ResearchEnv } from "./env.js";
 import type { Observability } from "./observability.js";
 import { buildUserPrompt, SYSTEM_TEMPLATE, type PromptCaseFacts } from "./prompt.js";
@@ -23,14 +18,6 @@ import {
 } from "./tavily.js";
 import { validateFinalUrl } from "./urls.js";
 import { modelBriefSchema } from "./validator.js";
-
-// The Agents SDK's CJS typings load openai's `client.d.ts` while ESM
-// importers load `client.d.mts`: same runtime API, distinct `#private`
-// identities. The SDK duck-types the client (no instanceof on this path),
-// so one boundary cast is safe and honest.
-type AgentsOpenAIClient = ConstructorParameters<typeof OpenAIChatCompletionsModel>[0];
-
-setTracingDisabled(true);
 
 export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
@@ -335,7 +322,7 @@ export function createRealRunner(opts: {
 					maxTurns: env.agentMaxTurns,
 					signal: input.signal,
 				});
-				let usage = readUsage(result);
+				let usage = readRunUsage(result);
 				if (!input.signal.aborted && fetched.length === 0) {
 					// No evidence at all: one bounded retry with an explicit
 					// tool requirement. A preflight hit means the brief can be
@@ -345,7 +332,7 @@ export function createRealRunner(opts: {
 						`${userPrompt}\n\nRetry requirement: your previous response made no tool calls and no evidence was fetched. You MUST call search_sources for adverse_media and for registry before writing the brief. If either search returns no usable content, record that in unknowns.`,
 						{ maxTurns: env.agentMaxTurns, signal: input.signal },
 					);
-					const retryUsage = readUsage(retry);
+					const retryUsage = readRunUsage(retry);
 					usage = {
 						inputTokens: usage.inputTokens + retryUsage.inputTokens,
 						outputTokens: usage.outputTokens + retryUsage.outputTokens,
@@ -380,18 +367,6 @@ export function createRealRunner(opts: {
 interface TavilySearchHitLite {
 	title: string | null;
 	publishedDate: string | null;
-}
-
-function readUsage(result: unknown): { inputTokens: number; outputTokens: number } {
-	const r = result as {
-		state?: { usage?: { inputTokens?: number; outputTokens?: number } };
-		usage?: { inputTokens?: number; outputTokens?: number };
-	};
-	const usage = r?.state?.usage ?? r?.usage;
-	return {
-		inputTokens: usage?.inputTokens ?? 0,
-		outputTokens: usage?.outputTokens ?? 0,
-	};
 }
 
 /** Deterministic test double: canned brief + fetched evidence, no network. */

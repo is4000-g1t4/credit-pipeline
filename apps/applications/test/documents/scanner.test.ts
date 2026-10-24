@@ -20,7 +20,13 @@ describe("document scanner", () => {
 	});
 
 	it("fails closed when no daemon listens", async () => {
-		const scanner = createClamAvScanner({ host: "127.0.0.1", port: 13999, timeoutMs: 1000 });
+		// Bind-then-close: a guaranteed-empty port, never a fixed one that a
+		// local daemon could occupy.
+		const held = net.createServer();
+		await new Promise<void>((resolve) => held.listen(0, "127.0.0.1", resolve));
+		const port = (held.address() as net.AddressInfo).port;
+		await new Promise<void>((resolve) => held.close(() => resolve()));
+		const scanner = createClamAvScanner({ host: "127.0.0.1", port, timeoutMs: 1000 });
 		await expect(scanner.scan(Buffer.from("%PDF-"))).rejects.toBeInstanceOf(ScannerUnavailable);
 	});
 
@@ -36,7 +42,7 @@ describe("document scanner", () => {
 			const scanner = createClamAvScanner({ host: "127.0.0.1", port, timeoutMs: 3000 });
 			await expect(scanner.scan(Buffer.from("%PDF-"))).resolves.toBe("clean");
 		} finally {
-			server.close();
+			await new Promise<void>((resolve) => server.close(() => resolve()));
 		}
 	});
 

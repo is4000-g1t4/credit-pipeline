@@ -334,17 +334,6 @@ export function classifyCustomerDoc(
 	return { eligible: true };
 }
 
-/** Copy dedupe is the natural (application, source kind, bytes) triple — a
- * re-POST replays instead of storing a second blob. */
-export function reuseDedupeKey(
-	applicationId: string,
-	customerDocumentId: string,
-	sourceKind: string,
-	sha256: string,
-): string {
-	return canonicalJson({ applicationId, customerDocumentId, sourceKind, sha256 });
-}
-
 // --- Profile confirmations (SPEC §2.2): the client `valueHash` is advisory
 // only. A field counts as reused iff the submitted value canonically equals
 // the profile value; the stored hash is a server HMAC, never a plain hash

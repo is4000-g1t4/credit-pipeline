@@ -1,9 +1,8 @@
-import { createHmac, randomUUID } from "node:crypto";
 import { signInternalHeaders } from "@credit/service-kit";
 import { z } from "zod";
 import type { CaseFacts } from "@credit/core";
+import { signCaseToken } from "../../policy/src/case-token.js";
 import {
-	documentRef,
 	policyCaseContextSchema,
 	signalRef,
 	type PolicyCaseContext,
@@ -166,34 +165,6 @@ export function buildPolicyCaseContext(input: PolicyStageInput): PolicyCaseConte
 	});
 }
 
-function mintCaseToken(
-	secret: string,
-	claims: Omit<z.infer<typeof caseTokenClaims>, "jti" | "exp" | "v">,
-	ttlSeconds: number,
-): string {
-	const payload = Buffer.from(
-		JSON.stringify({
-			v: 1,
-			...claims,
-			jti: randomUUID(),
-			exp: Math.floor(Date.now() / 1000) + ttlSeconds,
-		}),
-	).toString("base64url");
-	const sig = createHmac("sha256", secret).update(payload).digest("base64url");
-	return `${payload}.${sig}`;
-}
-
-const caseTokenClaims = z.object({
-	v: z.literal(1),
-	jti: uuid,
-	runId: uuid,
-	applicationId: uuid,
-	authorisingActorId: uuid,
-	authorisingActorRole: z.enum(["officer", "service"]),
-	asOf: z.string(),
-	exp: z.number(),
-});
-
 const caseResponseSchema = z
 	.object({
 		status: z.enum(["succeeded", "no_match", "needs_policy_owner", "budget_exceeded", "failed"]),
@@ -275,7 +246,7 @@ export function createHttpPolicyRunner(
 }
 
 export function createCaseTokenForInput(env: PolicyRunnerEnv, input: PolicyStageInput): string {
-	return mintCaseToken(
+	return signCaseToken(
 		env.policyCaseTokenSecret,
 		{
 			runId: input.runId,
@@ -288,25 +259,4 @@ export function createCaseTokenForInput(env: PolicyRunnerEnv, input: PolicyStage
 	);
 }
 
-export function policyCaseInputFromRun(input: {
-	applicationId: string;
-	runId: string;
-	requestedBy: string;
-	requestedByRole: "officer" | "service";
-	caseFacts: CaseFacts;
-	signals: PolicyStageInput["signals"];
-	documentFindings?: PolicyStageInput["documentFindings"];
-}): PolicyStageInput {
-	return {
-		applicationId: input.applicationId,
-		runId: input.runId,
-		authorisingActorId: input.requestedBy,
-		authorisingActorRole: input.requestedByRole,
-		asOf: input.caseFacts.asOf,
-		caseFacts: input.caseFacts,
-		signals: input.signals,
-		documentFindings: input.documentFindings,
-	};
-}
-
-export { amountBand, termBand, documentRef };
+export { amountBand, termBand };

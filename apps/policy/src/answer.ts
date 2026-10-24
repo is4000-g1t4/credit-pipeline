@@ -1,6 +1,8 @@
 import { createHash, createHmac } from "node:crypto";
+import { locateQuote } from "@credit/core";
 import { z } from "zod";
 import { documentRef, signalRef, type PolicyCaseContext } from "./case-context.js";
+import { EMAIL_RE, NRIC_RE, PHONE_RE } from "./gates.js";
 
 export interface RetrievedSection {
 	policyId: string;
@@ -116,9 +118,6 @@ export const caseModelSchema = z
 	})
 	.strict();
 
-const EMAIL_RE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
-const PHONE_RE = /(?:\+?65[\s-]?)?[689]\d{3}[\s-]?\d{4}\b/;
-const NRIC_RE = /\b[STFGM]\d{7}[A-Z]\b/i;
 const URL_RE = /https?:\/\/|www\.[a-z0-9]/i;
 const DECISION_RE =
 	/\b(I|we)\s+(approve|decline|recommend|suggest)\b|\b(you|we)\s+should\s+(approve|decline)\b/i;
@@ -211,60 +210,6 @@ function findRetrieved(
 	return candidates.length === 1 ? (candidates[0] as RetrievedSection) : null;
 }
 
-/** Locate a model quote in the canonical body. Policy Markdown is hard-wrapped,
- * so a model copying a sentence often collapses a newline to a space; an exact
- * `indexOf` would reject a perfectly good citation. Try the exact match first,
- * then a whitespace-normalized match and return the canonical substring (with
- * its original offsets) so stored citations remain exact.
- */
-export function findQuote(
-	body: string,
-	quote: string,
-): { quote: string; quoteStart: number; quoteEnd: number } | null {
-	const exact = body.indexOf(quote);
-	if (exact >= 0) {
-		return { quote, quoteStart: exact, quoteEnd: exact + quote.length };
-	}
-	const normalize = (text: string): { text: string; map: number[] } => {
-		const chars: string[] = [];
-		const map: number[] = [];
-		let lastSpace = false;
-		for (let i = 0; i < text.length; i++) {
-			const ch = text[i] as string;
-			if (/\s/.test(ch)) {
-				if (!lastSpace && chars.length > 0) {
-					chars.push(" ");
-					map.push(i);
-					lastSpace = true;
-				}
-			} else {
-				chars.push(ch);
-				map.push(i);
-				lastSpace = false;
-			}
-		}
-		if (chars[chars.length - 1] === " ") {
-			chars.pop();
-			map.pop();
-		}
-		return { text: chars.join(""), map };
-	};
-	const haystack = normalize(body);
-	const needle = normalize(quote.trim());
-	if (needle.text.length < 20) return null;
-	const hit = haystack.text.indexOf(needle.text);
-	if (hit < 0) return null;
-	const start = haystack.map[hit];
-	const end = haystack.map[hit + needle.text.length - 1];
-	if (start === undefined || end === undefined) return null;
-	const canonical = body.slice(start, end + 1);
-	// Whitespace normalization is for hard wraps, not for stitching separate
-	// bullets, table rows, or paragraphs into one quote.
-	if (/\n\s*\n/.test(canonical)) return null;
-	if (/\n\s*(?:[-*+|#]|\d+\.)\s/.test(canonical)) return null;
-	return { quote: canonical, quoteStart: start, quoteEnd: end + 1 };
-}
-
 function validateSegment(
 	segment: z.infer<typeof modelSegmentSchema>,
 	citations: z.infer<typeof modelCitationSchema>[],
@@ -283,7 +228,7 @@ function validateSegment(
 		if (!raw) return null;
 		const section = findRetrieved(retrieved, raw);
 		if (!section) return null;
-		const located = findQuote(section.body, raw.quote);
+		const located = locateQuote(section.body, raw.quote, { minLength: 20 });
 		if (!located) return null;
 		if (containsForbidden(raw.quote) || containsForbidden(located.quote)) return null;
 		out.push({
@@ -402,7 +347,12 @@ export function validateNavigatorAnswer(
 	const { segments, citations } = reindexSegments(validated);
 	return {
 		ok: true,
-		answer: { status: "succeeded", segments, citations, limitations: safeLimitations(data.limitations) },
+		answer: {
+			status: "succeeded",
+			segments,
+			citations,
+			limitations: safeLimitations(data.limitations),
+		},
 		errors: [],
 	};
 }
@@ -498,7 +448,10 @@ export function validateCaseAnswer(
 			status: "succeeded",
 			summary: data.summary,
 			items,
-			limitations: [...safeLimitations(data.limitations), ...errors.map((error) => `Dropped: ${error}`)],
+			limitations: [
+				...safeLimitations(data.limitations),
+				...errors.map((error) => `Dropped: ${error}`),
+			],
 		},
 		errors: [],
 	};

@@ -29,66 +29,28 @@ import {
 	dedupeLoanBooked,
 	dscrGte,
 	dtiLte,
-	type Factor,
-	type Grade,
 	monthlyPaymentCents,
 	PERSONAL_MIN_CENTS,
-	type PolicyReason,
 	rateBps,
 	SME_MIN_CENTS,
 	TERM_MAX_MONTHS,
 	TERM_MIN_MONTHS,
 } from "@credit/core";
-import {
-	applications,
-	decisions,
-	policyEvaluations,
-	scores,
-	withTx,
-} from "@credit/db/applications";
+import { applications, decisions, withTx } from "@credit/db/applications";
 import { installments, loans } from "@credit/db/loans";
-import { ApplicationFailure } from "@temporalio/activity";
 import { and, eq, inArray } from "drizzle-orm";
 import { getApplicationsDb, getLoansDb } from "../db.js";
-import { loadApplicationRow } from "./application.js";
 import { insertOutbox, writeAudit } from "@credit/service-kit";
+import { conflict, invalid, loadCreditContext } from "./shared.js";
 import type { BookLoanInput, BookLoanResult } from "./types.js";
-
-function invalid(message: string): Error {
-	return ApplicationFailure.create({
-		message,
-		type: "InvalidTerms",
-		nonRetryable: true,
-	});
-}
-
-function conflict(message: string): Error {
-	return ApplicationFailure.create({
-		message,
-		type: "DecisionConflict",
-		nonRetryable: true,
-	});
-}
 
 export async function bookLoan(input: BookLoanInput): Promise<BookLoanResult> {
 	const { db: appsDb } = getApplicationsDb();
 	const { db: loansDb } = getLoansDb();
-	const app = await loadApplicationRow(input.applicationId);
-
-	const scoreRows = await appsDb
-		.select()
-		.from(scores)
-		.where(eq(scores.applicationId, input.applicationId));
-	const policyRows = await appsDb
-		.select()
-		.from(policyEvaluations)
-		.where(eq(policyEvaluations.applicationId, input.applicationId));
-	const scoreRow = scoreRows[0];
-	const policyRow = policyRows[0];
-	if (!scoreRow || !policyRow) {
-		throw new Error(`bookLoan: missing score/policy for ${input.applicationId}`);
-	}
-	const grade = scoreRow.grade as Grade;
+	const { app, score, grade, factors, policyInputs, policyReasons } = await loadCreditContext(
+		appsDb,
+		input.applicationId,
+	);
 	const rate = rateBps(grade, app.product);
 
 	const approvedAmountCents =
@@ -145,22 +107,22 @@ export async function bookLoan(input: BookLoanInput): Promise<BookLoanResult> {
 	const actor = input.route === "auto" ? "system" : (input.officerUserId ?? "officer");
 	const snapshot = buildCreditSnapshot({
 		inputs: {
-			...(policyRow.inputs as Record<string, unknown>),
+			...(policyInputs as Record<string, unknown>),
 			...(input.route === "officer"
 				? { approvedAmountCents, termMonths, requestId: input.requestId }
 				: {}),
 		},
-		score: scoreRow.score,
+		score,
 		grade,
-		factors: scoreRow.factors as Factor[],
+		factors,
 		rateBps: rate,
 		monthlyPaymentCents: payment,
-		reasons: policyRow.reasons as PolicyReason[],
+		reasons: policyReasons,
 		actor,
 		...(input.research !== undefined ? { research: input.research } : {}),
 		decidedAt: now.toISOString(),
 	});
-	const reasonCodes = (policyRow.reasons as PolicyReason[]).map((r) => r.code);
+	const reasonCodes = policyReasons.map((r) => r.code);
 
 	const sameRequest = (requestId: string | null): boolean =>
 		input.route === "officer" &&
@@ -211,7 +173,7 @@ export async function bookLoan(input: BookLoanInput): Promise<BookLoanResult> {
 				approvedAmountCents,
 				termMonths,
 				rateBps: rate,
-				reasons: policyRow.reasons as PolicyReason[],
+				reasons: policyReasons,
 				notes: input.route === "officer" ? (input.notes ?? null) : null,
 				snapshot,
 				decidedAt: now,

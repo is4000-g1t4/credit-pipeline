@@ -8,6 +8,7 @@ import {
 	gotoHydrated,
 	type LoanDetail,
 	poll,
+	smeApplication,
 	uiLogin,
 	waitStatus,
 	waitTerminal,
@@ -22,33 +23,33 @@ test("Monitoring demo: age → alert → acknowledge → pay", async ({ page }) 
 	await officer.login("officer@example.com");
 
 	// --- Setup via API: fresh Tomás SME application → referred → approved. ---
-	const created = await applicant.post<{ id: string; reference: string }>("/api/applications", {
-		type: "sme",
-		product: "sme_term_loan",
-		amountCents: 6_000_000,
-		termMonths: 60,
-		purpose: "Café expansion (monitoring demo)",
-		consents: [true, true, true],
-		identity: {
-			fullName: "Tomas Aurora",
-			dob: "1985-03-20",
-			nationalId: "TOMAS42X2",
-			email: TOMAS,
-			phone: "+1-555-0200",
-			address: "2 Café Street",
-			city: "Demo City",
-		},
-		sme: {
-			companyName: "Café Aurora",
-			registrationNumber: "CAFEAUR2",
-			industry: "hospitality",
-			yearsTrading: 4,
-			employees: 9,
-			annualRevenueCents: 61_000_000,
-			monthlyFcfCents: 380_000,
-			existingDebtServiceCents: 30_000,
-		},
-	});
+	const created = await applicant.post<{ id: string; reference: string }>(
+		"/api/applications",
+		smeApplication({
+			amountCents: 6_000_000,
+			termMonths: 60,
+			purpose: "Café expansion (monitoring demo)",
+			identity: {
+				fullName: "Tomas Aurora",
+				dob: "1985-03-20",
+				nationalId: "TOMAS42X2",
+				email: TOMAS,
+				phone: "+1-555-0200",
+				address: "2 Café Street",
+				city: "Demo City",
+			},
+			sme: {
+				companyName: "Café Aurora",
+				registrationNumber: "CAFEAUR2",
+				industry: "hospitality",
+				yearsTrading: 4,
+				employees: 9,
+				annualRevenueCents: 61_000_000,
+				monthlyFcfCents: 380_000,
+				existingDebtServiceCents: 30_000,
+			},
+		}),
+	);
 	const referred = await waitStatus(applicant, created.id, "pending_review");
 	expect(referred.application.status).toBe("pending_review");
 
@@ -82,11 +83,14 @@ test("Monitoring demo: age → alert → acknowledge → pay", async ({ page }) 
 		timeout: 120_000,
 	});
 
-	// …then run monitoring explicitly from the panel.
+	// …then run monitoring explicitly from the panel. The status line still
+	// shows the age step's text, so asserting on it would pass even if this
+	// click did nothing — wait for this run's own POST instead.
+	const monitoringResponse = page.waitForResponse(
+		(r) => r.url().includes("/api/demo/monitoring/run") && r.request().method() === "POST",
+	);
 	await page.getByRole("button", { name: "Run monitoring" }).click();
-	await expect(ageResult).toContainText(/markedOverdue|workflowId/, {
-		timeout: 120_000,
-	});
+	expect((await monitoringResponse).ok()).toBe(true);
 
 	// An overdue alert appears (API state proof + UI proof). Polled because
 	// a 202 monitoring run may still be finishing server-side.

@@ -13,14 +13,15 @@ This page explains the design. Audience: developers who change the system, and r
 | Loans service (Hono)        | 4003                        | Bun                          | Owns `credit_loans`                                        |
 | Portfolio service (Hono)    | 4004                        | Bun                          | Owns `credit_portfolio`; runs the Kafka consumer           |
 | Research service (Hono)     | 4005                        | Node via `tsx src/server.ts` | Owns `credit_research`; advisory briefs only               |
+| Policy service (Hono)       | 4006                        | Bun                          | Owns `credit_policy`; officer navigator + case review      |
 | Worker                      | —                           | Node via `tsx src/index.ts`  | Holds `credit_applications` and `credit_loans` connections |
-| Postgres 18                 | 5432                        | Container                    | Five service databases plus the Temporal pair              |
+| Postgres 18                 | 5432                        | Container                    | Six service databases plus the Temporal pair               |
 | Kafka (KRaft)               | 9092 host, 29092 in compose | Container                    | Seven topics                                               |
 | Temporal                    | 7233, UI on 8080            | Container                    | Workflows, updates, schedules                              |
 
 Sources: `apps/web/vite.config.ts`, `apps/gateway/src/server.ts`, `apps/worker/package.json`, `docker-compose.yml`, `compose.services.yml`.
 
-The runtime split is deliberate. Gateway, the four pipeline services, and the web build run on Bun. The worker and the research service run on Node: the worker uses `@temporalio/worker`, and research uses the Agents/Grafana SDKs (both Node-only — never Bun). The repository pins Node 26 in `.nvmrc` while Temporal officially supports 20/22/24. If the worker misbehaves, try Node 24 first.
+The runtime split is deliberate. Gateway, the pipeline services, and the web build run on Bun. The worker and the research service run on Node: the worker uses `@temporalio/worker`, and research uses the Agents/Grafana SDKs (both Node-only — never Bun). The repository pins Node 26 in `.nvmrc` while Temporal officially supports 20/22/24. If the worker misbehaves, try Node 24 first.
 
 ## Request flow
 
@@ -29,7 +30,7 @@ Browser
   -> Web :3000 (Nitro route rule proxies /api/** to 127.0.0.1:3001/api/**)
   -> Gateway :3001 (reads the session cookie, loads the user)
   -> signed internal call (HMAC headers, no cookies)
-  -> service :4001-:4005 (checks the signature and the role)
+  -> service :4001-:4006 (checks the signature and the role)
 ```
 
 The web app never calls services directly. Browser callers use the same-origin `/api` proxy. Non-browser clients can call the gateway directly. The gateway has no CORS middleware.

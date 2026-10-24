@@ -10,8 +10,13 @@ dotenv.config({
 import { randomUUID } from "node:crypto";
 import { generateReference } from "@credit/core";
 import { createDb, installments, loans } from "@credit/db/loans";
-import { createLogger, signInternalHeaders } from "@credit/service-kit";
-import { stubGateway, type FakeGateway } from "@credit/service-kit/test";
+import { createLogger } from "@credit/service-kit";
+import {
+	signedInternalHeaders,
+	stubGateway,
+	testUser,
+	type FakeGateway,
+} from "@credit/service-kit/test";
 import { eq } from "drizzle-orm";
 import { createApp } from "../src/app.js";
 import { loadEnv } from "../src/env.js";
@@ -89,8 +94,8 @@ export async function createUser(
 	_ctx: TestContext,
 	role: "applicant" | "officer" = "applicant",
 ): Promise<TestUser> {
-	const email = `svc-${randomUUID()}@example.com`;
-	return { id: randomUUID(), email, role };
+	const base = testUser(role);
+	return { id: base.id, email: base.email, role };
 }
 
 /** Signed internal headers for `app.request`, as the P1b gateway would send. */
@@ -102,17 +107,7 @@ export function signed(
 	extra: Record<string, string> = {},
 	body?: string,
 ): Record<string, string> {
-	return {
-		...signInternalHeaders(ctx.secret, {
-			userId: user.id,
-			role: user.role,
-			email: user.email,
-			method,
-			path,
-			body,
-		}),
-		...extra,
-	};
+	return signedInternalHeaders(ctx.secret, user, method, path, { body, extra });
 }
 
 /** One loan + a single scheduled installment, owned by `userId`. The loan

@@ -6,6 +6,7 @@
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { createMiddleware } from "hono/factory";
 import { GatewayError } from "./gateway.js";
 import { type HealthChecks } from "./health.js";
 import { errorBody, HttpError } from "./http.js";
@@ -15,7 +16,9 @@ import type { Logger } from "./logger.js";
 export type { ServiceVariables };
 export type ServiceApp = Hono<{ Variables: ServiceVariables }>;
 
-const MAX_JSON_BYTES = 100_000;
+/** Default JSON body cap (100 KB). Services opt into larger per-path
+ * limits via `bodyLimitOverrides` (T01 uploads); never the default. */
+export const JSON_BODY_LIMIT = 100_000;
 
 /** 10 MB file + multipart overhead (T01 document uploads). Services opt
  * into it per-path via `bodyLimitOverrides`; it is never the default. */
@@ -30,7 +33,7 @@ export interface BodyLimitOverride {
 }
 
 /** UUID path segments (application/run/officer ids) — redacted in logs. */
-const UUID_SEGMENT_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+export const UUID_SEGMENT_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 
 export interface ServiceOptions {
 	name: string;
@@ -50,10 +53,10 @@ export interface ServiceOptions {
 	bodyLimitOverrides?: BodyLimitOverride[];
 }
 
-export function createService(opts: ServiceOptions): ServiceApp {
-	const app: ServiceApp = new Hono();
-
-	app.use("*", async (c, next) => {
+/** Request logging: echoes/sets `x-request-id`, then logs request id +
+ * method/redacted path/status/ms — never bodies, queries, or PII. */
+export const requestLogger = (logger: Logger) =>
+	createMiddleware<{ Variables: ServiceVariables }>(async (c, next) => {
 		const start = Date.now();
 		const requestId = c.req.header("x-request-id") ?? randomUUID();
 		c.set("requestId", requestId);
@@ -61,7 +64,7 @@ export function createService(opts: ServiceOptions): ServiceApp {
 		try {
 			await next();
 		} finally {
-			opts.logger.info(
+			logger.info(
 				{
 					requestId,
 					method: c.req.method,
@@ -76,9 +79,30 @@ export function createService(opts: ServiceOptions): ServiceApp {
 		}
 	});
 
+/** 404 envelope plus the typed error mapping (no stacks): HttpError and
+ * GatewayError keep their code/message, anything else is a 500. */
+export function installErrorHandlers(app: ServiceApp, logger: Logger): void {
+	app.notFound((c) => c.json(errorBody("NOT_FOUND", "not found"), 404));
+	app.onError((err, c) => {
+		if (err instanceof HttpError) {
+			return c.json(errorBody(err.code, err.message, err.fields), err.status as 400);
+		}
+		if (err instanceof GatewayError) {
+			return c.json(errorBody(err.code, err.message), err.status as 400);
+		}
+		logger.error({ err }, "unhandled error");
+		return c.json(errorBody("INTERNAL_ERROR", "internal error"), 500);
+	});
+}
+
+export function createService(opts: ServiceOptions): ServiceApp {
+	const app: ServiceApp = new Hono();
+
+	app.use("*", requestLogger(opts.logger));
+
 	for (const pattern of ["/api/*", "/internal/*"]) {
 		app.use(pattern, async (c, next) => {
-			let maxSize = MAX_JSON_BYTES;
+			let maxSize = JSON_BODY_LIMIT;
 			for (const override of opts.bodyLimitOverrides ?? []) {
 				if (override.method !== undefined && override.method !== c.req.method) continue;
 				// Global-flag patterns keep match state: reset per request.
@@ -109,17 +133,7 @@ export function createService(opts: ServiceOptions): ServiceApp {
 
 	app.route("/", opts.routes);
 
-	app.notFound((c) => c.json(errorBody("NOT_FOUND", "not found"), 404));
-	app.onError((err, c) => {
-		if (err instanceof HttpError) {
-			return c.json(errorBody(err.code, err.message, err.fields), err.status as 400);
-		}
-		if (err instanceof GatewayError) {
-			return c.json(errorBody(err.code, err.message), err.status as 400);
-		}
-		opts.logger.error({ err }, "unhandled error");
-		return c.json(errorBody("INTERNAL_ERROR", "internal error"), 500);
-	});
+	installErrorHandlers(app, opts.logger);
 
 	return app;
 }

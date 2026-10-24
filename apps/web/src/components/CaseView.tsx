@@ -1,13 +1,9 @@
 // Full case view (SPEC FR-7.2) — shared by the applicant case page and the
 // officer review page. Renders everything the API delivers; null-safe for
 // check-only decisions (null amounts render as "—").
-import { REASON_TEXT } from "@credit/core/browser";
+import { reasonText } from "@credit/core/browser";
 import { type CaseDetail, formatDateOnly, formatDateTime, formatMoney } from "../lib/api";
 import { Card, MockBadge, Money, StatusBadge } from "./ui";
-
-function reasonText(code: string): string {
-	return (REASON_TEXT as Record<string, string>)[code] ?? code;
-}
 
 function FactorList({
 	factors,

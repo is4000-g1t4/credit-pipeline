@@ -11,7 +11,6 @@
 //
 // D2 seam: crosscheck/chase tables already exist (D0 schema); when a file
 // has no findings/links the sweep is a no-op for those tables.
-import { promises as fs } from "node:fs";
 import {
 	applications,
 	chaseRequestFindings,
@@ -28,7 +27,7 @@ import { writeAudit, HttpError, type Logger } from "@credit/service-kit";
 import { and, eq, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
 import { lockApplication } from "./access.js";
 import { sweepDocumentOrphans, type SweepResult } from "./service.js";
-import { deleteBlob, resolveStoragePath } from "./storage.js";
+import { deleteBlob, purgeBlob } from "./storage.js";
 import { runCustomerRetention, type CustomerRetentionResult } from "../customer/retention.js";
 
 export interface RetentionResult {
@@ -60,27 +59,6 @@ export function retentionBlockedBy(
 	fileId: string,
 ): boolean {
 	return holds.some((h) => h.documentFileId === null || h.documentFileId === fileId);
-}
-
-/** Best-effort purge that reports success: the storage helper swallows
- * errors, so verify the bytes are actually gone afterwards. A throwing
- * deleter (tests) also reports false — the caller keeps a retry marker. */
-export async function purgeBlob(
-	root: string,
-	key: string,
-	del: (root: string, key: string) => Promise<void> = deleteBlob,
-): Promise<boolean> {
-	try {
-		await del(root, key);
-	} catch {
-		return false;
-	}
-	try {
-		await fs.stat(await resolveStoragePath(root, key));
-		return false;
-	} catch {
-		return true;
-	}
 }
 
 async function tombstoneFile(

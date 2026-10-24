@@ -11,24 +11,17 @@
 // contradiction, allegation); failures are recorded in `dropped` and the
 // narrative is ignored.
 import { z } from "zod";
+import { SIGNAL_TYPES } from "@credit/core";
+import { isUuid } from "./ids.js";
 import { scanForbidden, scanProtected } from "./validator.js";
 import type { CandidateSnapshot } from "./context-tools.js";
 
 export const CONTEXT_VALIDATOR_VERSION = "context-v4";
 export const CONTEXT_PROMPT_VERSION = "context-v5";
 
-const signalTypeSchema = z.enum([
-	"negative_balance",
-	"revenue_concentration",
-	"round_trip",
-	"cash_deposit_share",
-	"declared_vs_observed_cashflow",
-	"returned_payment",
-	"insufficient_data",
-]);
+const signalTypeSchema = z.enum(SIGNAL_TYPES);
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const URL_RE = /https?:\/\/|www\.[a-z0-9]/i;
 
 /** Imperative/instruction smuggling in persisted model prose: an applicant
@@ -416,7 +409,7 @@ export function validateContextOutput(input: ContextValidationInput): ContextVal
 			drop("candidate already reported");
 			continue;
 		}
-		if (candidate.accountScope !== "all" && !UUID_RE.test(candidate.accountScope)) {
+		if (candidate.accountScope !== "all" && !isUuid(candidate.accountScope)) {
 			drop("candidate scope is not an account");
 			continue;
 		}

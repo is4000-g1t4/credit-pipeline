@@ -32,6 +32,7 @@ import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import type { Sql } from "postgres";
 import { z } from "zod";
+import { isUuid, UUID_RE } from "../ids.js";
 import {
 	CONTEXT_METRICS_POLICY_VERSION,
 	CONTEXT_METRICS_ROW_CAP,
@@ -51,8 +52,6 @@ import {
 	runDocumentRetention,
 	LockTimeout,
 } from "../documents/index.js";
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function isoDay(d: Date): string {
 	return d.toISOString().slice(0, 10);
@@ -202,7 +201,7 @@ export function internalRoutes(deps: InternalRouteDeps): ServiceApp {
 	// officers get 404 here exactly like the case-facts route.
 	app.get("/internal/applications/:id/decision", officer, async (c) => {
 		const id = c.req.param("id");
-		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(id)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const rows = await db.select().from(applications).where(eq(applications.id, id));
 		const row = rows[0];
 		if (!row) throw new HttpError(404, "NOT_FOUND", "not found");
@@ -221,7 +220,7 @@ export function internalRoutes(deps: InternalRouteDeps): ServiceApp {
 	// (Phase 2). Never expose DOB, national ID, address, bureau, or documents.
 	app.get("/internal/applications/:id/case-facts", officer, async (c) => {
 		const id = c.req.param("id");
-		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(id)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const rows = await db.select().from(applications).where(eq(applications.id, id));
 		const row = rows[0];
 		if (!row) throw new HttpError(404, "NOT_FOUND", "not found");
@@ -238,7 +237,7 @@ export function internalRoutes(deps: InternalRouteDeps): ServiceApp {
 	// so T18 can skip its stage without touching the T11 gate.
 	app.get("/internal/applications/:id/research-context", requireService, async (c) => {
 		const id = c.req.param("id");
-		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(id)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const rows = await db.select().from(applications).where(eq(applications.id, id));
 		const row = rows[0];
 		if (!row) throw new HttpError(404, "NOT_FOUND", "not found");
@@ -285,7 +284,7 @@ export function internalRoutes(deps: InternalRouteDeps): ServiceApp {
 	app.post("/internal/applications/:id/document-access/grant", requireService, async (c) => {
 		const me = c.var.user;
 		const id = c.req.param("id");
-		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(id)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const parsed = grantSchema.safeParse(await readJson(c));
 		if (!parsed.success) {
 			throw new HttpError(400, "VALIDATION_ERROR", "invalid grant", zodFields(parsed.error));
@@ -315,7 +314,7 @@ export function internalRoutes(deps: InternalRouteDeps): ServiceApp {
 	app.post("/internal/applications/:id/document-access/revoke", requireService, async (c) => {
 		const me = c.var.user;
 		const id = c.req.param("id");
-		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(id)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const parsed = revokeSchema.safeParse(await readJson(c));
 		if (!parsed.success) {
 			throw new HttpError(400, "VALIDATION_ERROR", "invalid revoke", zodFields(parsed.error));
@@ -334,7 +333,7 @@ export function internalRoutes(deps: InternalRouteDeps): ServiceApp {
 	app.post("/internal/applications/:id/documents/legal-hold", requireService, async (c) => {
 		const me = c.var.user;
 		const id = c.req.param("id");
-		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(id)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const parsed = holdSchema.safeParse(await readJson(c));
 		if (!parsed.success) {
 			throw new HttpError(400, "VALIDATION_ERROR", "invalid hold", zodFields(parsed.error));
@@ -355,7 +354,7 @@ export function internalRoutes(deps: InternalRouteDeps): ServiceApp {
 		const me = c.var.user;
 		const id = c.req.param("id");
 		const fileId = c.req.param("fileId");
-		if (!UUID_RE.test(id) || !UUID_RE.test(fileId)) {
+		if (!isUuid(id) || !isUuid(fileId)) {
 			throw new HttpError(404, "NOT_FOUND", "not found");
 		}
 		const parsed = holdSchema.safeParse(await readJson(c));
@@ -384,7 +383,7 @@ export function internalRoutes(deps: InternalRouteDeps): ServiceApp {
 			const me = c.var.user;
 			const id = c.req.param("id");
 			const holdId = c.req.param("holdId");
-			if (!UUID_RE.test(id) || !UUID_RE.test(holdId)) {
+			if (!isUuid(id) || !isUuid(holdId)) {
 				throw new HttpError(404, "NOT_FOUND", "not found");
 			}
 			const hold = await withLockTimeout(() =>
@@ -401,7 +400,7 @@ export function internalRoutes(deps: InternalRouteDeps): ServiceApp {
 
 	app.post("/internal/applications/:id/documents/retention/run", requireService, async (c) => {
 		const id = c.req.param("id");
-		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(id)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const rows = await db.select().from(applications).where(eq(applications.id, id));
 		if (!rows[0]) throw new HttpError(404, "NOT_FOUND", "not found");
 		const counts = await withLockTimeout(() =>
@@ -515,7 +514,7 @@ export function internalRoutes(deps: InternalRouteDeps): ServiceApp {
 	app.get("/internal/applications/:id/context/profile", requireService, async (c) => {
 		const me = c.var.user;
 		const id = c.req.param("id");
-		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(id)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const kase = await requireContextCase(id, "profile", me.id);
 		if (!kase.profile) throw new HttpError(404, "NOT_FOUND", "not found");
 		const identity = (kase.profile.identity ?? {}) as Record<string, unknown>;
@@ -539,7 +538,7 @@ export function internalRoutes(deps: InternalRouteDeps): ServiceApp {
 	app.get("/internal/applications/:id/context/accounts", requireService, async (c) => {
 		const me = c.var.user;
 		const id = c.req.param("id");
-		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(id)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const kase = await requireContextCase(id, "accounts", me.id);
 		if (!kase.profile) throw new HttpError(404, "NOT_FOUND", "not found");
 		const rows = await db
@@ -565,10 +564,10 @@ export function internalRoutes(deps: InternalRouteDeps): ServiceApp {
 	app.get("/internal/applications/:id/context/transactions", requireService, async (c) => {
 		const me = c.var.user;
 		const id = c.req.param("id");
-		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(id)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const kase = await requireContextCase(id, "transactions", me.id);
 		const accountId = c.req.query("accountId") ?? "";
-		if (!UUID_RE.test(accountId)) {
+		if (!isUuid(accountId)) {
 			throw new HttpError(400, "VALIDATION_ERROR", "accountId is required");
 		}
 		await requireOwnedAccount(kase, "transactions", me.id, accountId);
@@ -645,7 +644,7 @@ export function internalRoutes(deps: InternalRouteDeps): ServiceApp {
 	app.get("/internal/applications/:id/context/metrics", requireService, async (c) => {
 		const me = c.var.user;
 		const id = c.req.param("id");
-		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(id)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const kase = await requireContextCase(id, "metrics", me.id);
 		const { from, to } = clampWindow(kase, c);
 		const rawIds = c.req.query("accountIds");
@@ -674,7 +673,7 @@ export function internalRoutes(deps: InternalRouteDeps): ServiceApp {
 				throw new HttpError(400, "VALIDATION_ERROR", `at most ${context.maxAccounts} account IDs`);
 			}
 			for (const accountId of ids) {
-				if (!UUID_RE.test(accountId)) {
+				if (!isUuid(accountId)) {
 					throw new HttpError(400, "VALIDATION_ERROR", "invalid account ID");
 				}
 				await requireOwnedAccount(kase, "metrics", me.id, accountId);
@@ -743,7 +742,7 @@ export function internalRoutes(deps: InternalRouteDeps): ServiceApp {
 	app.get("/internal/applications/:id/context/financials", requireService, async (c) => {
 		const me = c.var.user;
 		const id = c.req.param("id");
-		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(id)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const kase = await requireContextCase(id, "financials", me.id);
 		await auditContext("context.read", id, me.id, { route: "financials" });
 		return c.json({
@@ -772,7 +771,7 @@ export function internalRoutes(deps: InternalRouteDeps): ServiceApp {
 	app.get("/internal/applications/:id/context/document-findings", requireService, async (c) => {
 		const me = c.var.user;
 		const id = c.req.param("id");
-		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(id)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const kase = await requireContextCase(id, "document-findings", me.id);
 		const latest = await db
 			.select()
@@ -857,7 +856,7 @@ export function internalRoutes(deps: InternalRouteDeps): ServiceApp {
 	app.get("/internal/applications/:id/context/applicant", requireService, async (c) => {
 		const me = c.var.user;
 		const id = c.req.param("id");
-		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(id)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const kase = await requireContextCase(id, "applicant", me.id);
 		await auditContext("context.read", id, me.id, { route: "applicant" });
 		return c.json({ applicationId: id, applicantUserId: kase.app.applicantUserId });
@@ -870,7 +869,7 @@ export function internalRoutes(deps: InternalRouteDeps): ServiceApp {
 	app.get("/internal/applications/:id/context/credit-history", requireService, async (c) => {
 		const me = c.var.user;
 		const id = c.req.param("id");
-		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(id)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const kase = await requireContextCase(id, "credit-history", me.id);
 		const priors = await db
 			.select()
@@ -951,7 +950,7 @@ export function internalRoutes(deps: InternalRouteDeps): ServiceApp {
 	app.get("/internal/applications/:id/context/external-reports", requireService, async (c) => {
 		const me = c.var.user;
 		const id = c.req.param("id");
-		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(id)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const kase = await requireContextCase(id, "external-reports", me.id);
 		const rows = await db
 			.select()
@@ -995,7 +994,7 @@ export function internalRoutes(deps: InternalRouteDeps): ServiceApp {
 	app.get("/internal/applications/:id/context/kyc-checks", requireService, async (c) => {
 		const me = c.var.user;
 		const id = c.req.param("id");
-		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(id)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const kase = await requireContextCase(id, "kyc-checks", me.id);
 		const rows = await db
 			.select()

@@ -10,15 +10,9 @@ import { stubContextRunner } from "../../src/context-agent.js";
 import { loadEnv } from "../../src/env.js";
 import { stubLanguageRepair } from "../../src/repair.js";
 import { stubSupportJudge } from "../../src/support.js";
+import { degradedObservability } from "../helper.js";
 
 process.env.LOG_LEVEL ??= "silent";
-
-const degraded = {
-	status: "degraded" as const,
-	hooksFor: () => ({ detach: () => {} }),
-	trackModelCall: <T>(_opts: unknown, fn: () => Promise<T>): Promise<T> => fn(),
-	trackToolExecution: <T>(_opts: unknown, fn: () => Promise<T>): Promise<T> => fn(),
-};
 
 function healthApp(overrides: Partial<ReturnType<typeof loadEnv>> = {}) {
 	const env = { ...loadEnv(), ...overrides };
@@ -31,7 +25,7 @@ function healthApp(overrides: Partial<ReturnType<typeof loadEnv>> = {}) {
 		runner: stubAgentRunner({ brief: null, fetched: [] }),
 		judge: stubSupportJudge(),
 		repair: stubLanguageRepair(),
-		observability: degraded,
+		observability: degradedObservability,
 		contextRunner: stubContextRunner({ outputs: [] }),
 	});
 }

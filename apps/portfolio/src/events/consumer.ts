@@ -10,7 +10,7 @@
 // Owned by the portfolio service (Wave P2): it writes the Kafka read model
 // into credit_portfolio. Started/stopped by the portfolio server lifecycle.
 
-import { type EventEnvelope, eventEnvelopeSchema, REASON_TEXT, TOPICS } from "@credit/core";
+import { type EventEnvelope, eventEnvelopeSchema, reasonText, TOPICS } from "@credit/core";
 import { withTx } from "@credit/db";
 import { activityFeed, deadLetterEvents, processedEvents } from "@credit/db/portfolio";
 import { Kafka } from "kafkajs";
@@ -22,7 +22,7 @@ export const CONSUMER_GROUP_ID = "credit-activity";
 function reasonList(codes: unknown): string {
 	if (!Array.isArray(codes)) return "";
 	return codes
-		.map((c) => (typeof c === "string" ? ((REASON_TEXT as Record<string, string>)[c] ?? c) : ""))
+		.map((c) => (typeof c === "string" ? reasonText(c) : ""))
 		.filter(Boolean)
 		.join("; ");
 }

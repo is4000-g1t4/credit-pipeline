@@ -12,7 +12,7 @@ import {
 import { policyCaseContextSchema } from "./case-context.js";
 import { verifyCaseToken } from "./case-token.js";
 import { classifyScope, hasDirectIdentifier, hmacQuestion } from "./gates.js";
-import { caseRetrievalText, policyFamiliesForSignal } from "./mapping.js";
+import { caseRetrievalText, DOCUMENT_FAMILY, policyFamiliesForSignal } from "./mapping.js";
 import { canRead, filterByAcl, rankChunks, type Actor } from "./retrieval.js";
 import type { PolicyDeps, PolicyStore } from "./store.js";
 
@@ -130,6 +130,58 @@ function citationRows(
 	return rows;
 }
 
+async function requireActiveIndex(
+	store: PolicyStore,
+	env: PolicyDeps["env"],
+): Promise<NonNullable<Awaited<ReturnType<PolicyStore["getActiveIndex"]>>>> {
+	const active = await store.getActiveIndex();
+	if (!active) throw new Error("policy index is unavailable");
+	if (
+		active.embeddingModel !== env.embeddingModel ||
+		active.embeddingDimensions !== env.embeddingDimensions
+	) {
+		throw new Error("policy embedding index configuration mismatch");
+	}
+	return active;
+}
+
+function makeSettle(
+	store: PolicyStore,
+	reservationId: string,
+	logger: PolicyDeps["logger"],
+	queryId: string,
+	message: string,
+): (costUsd: number) => Promise<void> {
+	return async (costUsd: number): Promise<void> => {
+		try {
+			await store.settleBudget(reservationId, costUsd);
+		} catch (err) {
+			logger.warn({ err, queryId }, message);
+		}
+	};
+}
+
+async function settleInvalidAnswer(
+	store: PolicyStore,
+	base: QueryBase,
+	retrievedIds: string[],
+	costUsd: number,
+	validation: { ok: boolean; answer: { status: string; limitations: string[] } },
+	settle: (costUsd: number) => Promise<void>,
+): Promise<{ status: string; limitations: string[] }> {
+	const status = validation.ok ? validation.answer.status : "needs_policy_owner";
+	await logQuery(
+		store,
+		base,
+		status,
+		validation.ok ? null : "citation_invalid",
+		retrievedIds,
+		costUsd,
+	);
+	await settle(costUsd);
+	return { status, limitations: validation.answer.limitations };
+}
+
 export function createPolicyRoutes(deps: PolicyDeps): Hono<{ Variables: ServiceVariables }> {
 	const app = new Hono<{ Variables: ServiceVariables }>();
 	const { store, env, logger } = deps;
@@ -180,22 +232,15 @@ export function createPolicyRoutes(deps: PolicyDeps): Hono<{ Variables: ServiceV
 			await logQuery(store, base, "budget_exceeded", "budget_exceeded");
 			return c.json({ status: "budget_exceeded", segments: [], citations: [], limitations: [] });
 		}
-		const settle = async (costUsd: number): Promise<void> => {
-			try {
-				await store.settleBudget(reserved.reservationId, costUsd);
-			} catch (err) {
-				logger.warn({ err, queryId }, "policy budget settle failed");
-			}
-		};
+		const settle = makeSettle(
+			store,
+			reserved.reservationId,
+			logger,
+			queryId,
+			"policy budget settle failed",
+		);
 		try {
-			const active = await store.getActiveIndex();
-			if (!active) throw new Error("policy index is unavailable");
-			if (
-				active.embeddingModel !== env.embeddingModel ||
-				active.embeddingDimensions !== env.embeddingDimensions
-			) {
-				throw new Error("policy embedding index configuration mismatch");
-			}
+			const active = await requireActiveIndex(store, env);
 			const [vector] = await deps.embedder.embed([question]);
 			if (!vector) throw new Error("policy query embedding is empty");
 			const chunks = await store.loadChunks({
@@ -238,21 +283,19 @@ export function createPolicyRoutes(deps: PolicyDeps): Hono<{ Variables: ServiceV
 				);
 			}
 			if (!validation.ok || validation.answer.status !== "succeeded") {
-				const status = validation.ok ? validation.answer.status : "needs_policy_owner";
-				await logQuery(
+				const invalid = await settleInvalidAnswer(
 					store,
 					base,
-					status,
-					validation.ok ? null : "citation_invalid",
 					retrievedIds,
 					result.usage.costUsd,
+					validation,
+					settle,
 				);
-				await settle(result.usage.costUsd);
 				return c.json({
-					status,
+					status: invalid.status,
 					segments: [],
 					citations: [],
-					limitations: validation.answer.limitations,
+					limitations: invalid.limitations,
 					usage: result.usage,
 				});
 			}
@@ -319,22 +362,15 @@ export function createPolicyRoutes(deps: PolicyDeps): Hono<{ Variables: ServiceV
 			await logQuery(store, base, "budget_exceeded", "budget_exceeded");
 			return c.json({ status: "budget_exceeded", items: [], limitations: [] });
 		}
-		const settle = async (costUsd: number): Promise<void> => {
-			try {
-				await store.settleBudget(reserved.reservationId, costUsd);
-			} catch (err) {
-				logger.warn({ err, queryId }, "policy case budget settle failed");
-			}
-		};
+		const settle = makeSettle(
+			store,
+			reserved.reservationId,
+			logger,
+			queryId,
+			"policy case budget settle failed",
+		);
 		try {
-			const active = await store.getActiveIndex();
-			if (!active) throw new Error("policy index is unavailable");
-			if (
-				active.embeddingModel !== env.embeddingModel ||
-				active.embeddingDimensions !== env.embeddingDimensions
-			) {
-				throw new Error("policy embedding index configuration mismatch");
-			}
+			const active = await requireActiveIndex(store, env);
 			const retrievalText = caseRetrievalText(caseContext);
 			const [vector] = await deps.embedder.embed([retrievalText]);
 			if (!vector) throw new Error("case query embedding is empty");
@@ -350,7 +386,7 @@ export function createPolicyRoutes(deps: PolicyDeps): Hono<{ Variables: ServiceV
 			const allowed = filterByAcl(chunks, actor, acls);
 			const families = new Set([
 				...caseContext.signals.flatMap((signal) => policyFamiliesForSignal(signal)),
-				"documentation",
+				DOCUMENT_FAMILY,
 			]);
 			const scoped = allowed.filter((chunk) => families.has(chunk.policyFamily));
 			const ranked = rankChunks(
@@ -387,20 +423,18 @@ export function createPolicyRoutes(deps: PolicyDeps): Hono<{ Variables: ServiceV
 				);
 			}
 			if (!validation.ok || validation.answer.status !== "succeeded") {
-				const status = validation.ok ? validation.answer.status : "needs_policy_owner";
-				await logQuery(
+				const invalid = await settleInvalidAnswer(
 					store,
 					base,
-					status,
-					validation.ok ? null : "citation_invalid",
 					retrievedIds,
 					result.usage.costUsd,
+					validation,
+					settle,
 				);
-				await settle(result.usage.costUsd);
 				return c.json({
-					status,
+					status: invalid.status,
 					items: [],
-					limitations: validation.answer.limitations,
+					limitations: invalid.limitations,
 					usage: result.usage,
 				});
 			}
@@ -497,5 +531,3 @@ export function createPolicyRoutes(deps: PolicyDeps): Hono<{ Variables: ServiceV
 
 	return app;
 }
-
-export const policyRoutes = createPolicyRoutes;

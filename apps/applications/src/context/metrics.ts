@@ -1,3 +1,9 @@
+import type {
+	ConfidenceLevel,
+	SignalStatus as CoreSignalStatus,
+	SignalType as CoreSignalType,
+} from "@credit/core";
+
 // T18 deterministic candidate signals, v1 (SPEC-t17-t18 §3.3, D3a).
 //
 // Pure: no DB, no I/O, no clock — the internal route injects the clamped
@@ -14,17 +20,10 @@ export const CONTEXT_METRICS_ROW_CAP = 10_000;
 /** Evidence ID cap per candidate: bounded tool output for the D3b agent. */
 export const CONTEXT_SIGNAL_EVIDENCE_CAP = 20;
 
-export type SignalType =
-	| "negative_balance"
-	| "revenue_concentration"
-	| "round_trip"
-	| "cash_deposit_share"
-	| "declared_vs_observed_cashflow"
-	| "returned_payment"
-	| "insufficient_data";
-
-export type SignalConfidence = "low" | "medium" | "high";
-export type SignalStatus = "review" | "needs_chase" | "insufficient_data";
+/** T18 vocabulary lives in @credit/core; these aliases stay for importers. */
+export type SignalType = CoreSignalType;
+export type SignalConfidence = ConfidenceLevel;
+export type SignalStatus = CoreSignalStatus;
 
 export interface ContextThresholds {
 	historyMonths: number;

@@ -6,7 +6,7 @@
 // is safe. Outstanding = principal of unpaid installments (booking sets it
 // to the principal, so the recompute stays consistent).
 
-import { computeNextDueDate, dedupeEwsAlert, deriveLoanStatus } from "@credit/core";
+import { dedupeEwsAlert, loanRollup } from "@credit/core";
 import { ewsAlerts, installments, loans, withTx } from "@credit/db/loans";
 import { and, eq, inArray, lte } from "drizzle-orm";
 import { getLoansDb } from "../db.js";
@@ -146,13 +146,7 @@ export async function runMonitoring(input: { todayUtc: string }): Promise<Monito
 				})
 				.from(installments)
 				.where(eq(installments.loanId, loanId));
-			const status = deriveLoanStatus(items.map((i) => ({ status: i.status })));
-			const nextDueDate = computeNextDueDate(
-				items.map((i) => ({ dueDate: i.dueDate, status: i.status })),
-			);
-			const outstandingCents = items
-				.filter((i) => i.status !== "paid")
-				.reduce((sum, i) => sum + i.principalCents, 0);
+			const { status, nextDueDate, outstandingCents } = loanRollup(items);
 			await tx
 				.update(loans)
 				.set({ status, nextDueDate, outstandingCents })

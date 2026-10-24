@@ -20,16 +20,19 @@ const indBase: Ind = {
 
 const smeBase: Sme = {
 	kind: "sme",
-	blendedScore: 750,
+	blendedScore: 750, // headroom above the 700 auto minimum
 	monthlyFcfCents: 150,
 	existingDebtServiceCents: 0,
 	newPaymentCents: 100, // 150/100 = exactly 1.5
 	amountCents: 2500000, // exactly $25k
 	termMonths: 36,
 	yearsTrading: 2,
-	annualRevenueCents: 50000000, // exactly $50k → wait, minimum is $50k
+	annualRevenueCents: 50000000, // $500k headroom above the $50k minimum
 	industry: "services",
 };
+
+// Exact auto thresholds: 700 score, $50k revenue minimum.
+const smeExact: Sme = { ...smeBase, blendedScore: 700, annualRevenueCents: 5_000_000 };
 
 describe("policy boundaries — individual", () => {
 	it("exact auto thresholds approve (700 / 0.35 / $15k / 1y)", () => {
@@ -125,8 +128,8 @@ describe("policy boundaries — individual", () => {
 });
 
 describe("policy boundaries — SME", () => {
-	it("exact auto thresholds approve (700 / 1.5 / $25k / 2y)", () => {
-		const e = evaluatePolicy(smeBase);
+	it("exact auto thresholds approve (700 / 1.5 / $25k / 2y / $50k)", () => {
+		const e = evaluatePolicy(smeExact);
 		expect(e.outcome).toBe("auto_approve");
 		expect(e.reasons).toEqual([]);
 	});
@@ -155,7 +158,7 @@ describe("policy boundaries — SME", () => {
 	it("revenue $49,999.99 declines; exactly $50k passes", () => {
 		const low = evaluatePolicy({ ...smeBase, annualRevenueCents: 4999999 });
 		expect([low.outcome, low.reasons[0].code]).toEqual(["decline", "REVENUE_TOO_LOW"]);
-		const ok = evaluatePolicy(smeBase);
+		const ok = evaluatePolicy(smeExact);
 		expect(ok.outcome).toBe("auto_approve");
 	});
 

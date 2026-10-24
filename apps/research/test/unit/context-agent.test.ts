@@ -10,22 +10,7 @@ import {
 	stubContextRunner,
 	type ModelBudget,
 } from "../../src/context-agent.js";
-import type { CandidateSnapshot } from "../../src/context-tools.js";
-
-const SNAP: CandidateSnapshot = {
-	localId: "c1",
-	type: "negative_balance",
-	periodStart: "2025-12-30",
-	periodEnd: "2026-01-15",
-	metric: "negative_eod_days",
-	observed: 3,
-	expected: 0,
-	confidence: "high",
-	status: "review",
-	policyVersion: "context-metrics-v1",
-	accountScope: "all",
-	evidenceIds: ["tx-1"],
-};
+import { candidateSnapshot } from "../fixtures.js";
 
 function runInput() {
 	return {
@@ -38,16 +23,17 @@ function runInput() {
 }
 
 describe("stubContextRunner", () => {
+	const snap = () => candidateSnapshot({ evidenceIds: ["tx-1"] });
 	it("returns scripted output with snapshots and counts calls", async () => {
 		const output = { claims: [], signals: [], dataGaps: [], limitations: [] };
 		const stub = stubContextRunner({
 			outputs: [output],
-			snapshots: [SNAP],
+			snapshots: [snap()],
 			seenEvidence: new Map([["tx-1", new Set(["transaction"])]]),
 		});
 		const first = await stub.runContext(runInput());
 		expect(first.output).toBe(output);
-		expect(first.snapshots).toEqual([SNAP]);
+		expect(first.snapshots).toEqual([snap()]);
 		expect(first.seenEvidence.get("tx-1")).toContain("transaction");
 		expect(first.usage.toolCalls).toBe(3);
 		expect(stub.calls).toBe(1);
@@ -65,7 +51,7 @@ describe("stubContextRunner", () => {
 			...runInput(),
 			previous: "first",
 			issues: ["bad"],
-			snapshots: [SNAP],
+			snapshots: [snap()],
 			seenEvidence: new Map([["tx-1", new Set(["transaction"])]]),
 		});
 		expect(repaired.output).toBe("fixed");

@@ -43,14 +43,10 @@ import {
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+import { isUniqueViolation } from "../documents/pipeline.js";
+import { isUuid, readIdempotencyReplay } from "../ids.js";
 
 const documentConsentSchema = z.object({ consent: z.boolean() }).strict();
-
-function isUniqueViolation(err: unknown): boolean {
-	return typeof err === "object" && err !== null && (err as { code?: unknown }).code === "23505";
-}
 
 function summarize(row: typeof applications.$inferSelect): Record<string, unknown> {
 	return {
@@ -137,28 +133,8 @@ export function applicationsRoutes(deps: ApplicationsRouteDeps): ServiceApp {
 		}
 		const requestHash = hashCanonical(body);
 
-		const readReplay = async (): Promise<{
-			id: string;
-			reference: string;
-		} | null> => {
-			const rows = await db
-				.select()
-				.from(idempotencyKeys)
-				.where(and(eq(idempotencyKeys.userId, me.id), eq(idempotencyKeys.key, key)));
-			const row = rows[0];
-			if (!row) return null;
-			if (row.requestHash !== requestHash) {
-				throw new HttpError(
-					409,
-					"IDEMPOTENCY_CONFLICT",
-					"Idempotency-Key was already used with a different payload",
-				);
-			}
-			return row.response as { id: string; reference: string };
-		};
-
 		// Fast path: exact replay without a write transaction.
-		const fast = await readReplay();
+		const fast = await readIdempotencyReplay(db, { userId: me.id, key, requestHash });
 		if (fast) return c.json(fast, 201);
 
 		let outcome: { id: string; reference: string };
@@ -275,7 +251,7 @@ export function applicationsRoutes(deps: ApplicationsRouteDeps): ServiceApp {
 			// The tx aborted on a unique violation: a concurrent same-key
 			// insert won the race. Re-read outside and replay on hash match.
 			if (!isUniqueViolation(err)) throw err;
-			const winner = await readReplay();
+			const winner = await readIdempotencyReplay(db, { userId: me.id, key, requestHash });
 			if (!winner) throw err;
 			return c.json(winner, 201);
 		}
@@ -310,7 +286,7 @@ export function applicationsRoutes(deps: ApplicationsRouteDeps): ServiceApp {
 		if (cursor) {
 			const sep = cursor.indexOf(",");
 			const at = sep < 0 ? null : new Date(cursor.slice(0, sep));
-			if (sep < 0 || !at || Number.isNaN(at.getTime()) || !UUID_RE.test(cursor.slice(sep + 1))) {
+			if (sep < 0 || !at || Number.isNaN(at.getTime()) || !isUuid(cursor.slice(sep + 1))) {
 				throw new HttpError(400, "INVALID_CURSOR", "cursor must be '<ISO-8601>,<uuid>'");
 			}
 			cursorAt = at;
@@ -341,7 +317,7 @@ export function applicationsRoutes(deps: ApplicationsRouteDeps): ServiceApp {
 	app.get("/api/applications/:id", async (c) => {
 		const me = c.var.user;
 		const id = c.req.param("id");
-		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(id)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const rows = await db.select().from(applications).where(eq(applications.id, id));
 		const row = rows[0];
 		// Cross-applicant access → 404, never 403 (FR-11.2). T17: officers
@@ -412,7 +388,7 @@ export function applicationsRoutes(deps: ApplicationsRouteDeps): ServiceApp {
 	app.patch("/api/applications/:id/document-consent", async (c) => {
 		const me = c.var.user;
 		const id = c.req.param("id");
-		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(id)) throw new HttpError(404, "NOT_FOUND", "not found");
 		if (!documentsEnabled) throw new HttpError(404, "NOT_FOUND", "not found");
 		const parsed = documentConsentSchema.safeParse(await readJson(c));
 		if (!parsed.success) {

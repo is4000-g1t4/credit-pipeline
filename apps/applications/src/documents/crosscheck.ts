@@ -294,14 +294,6 @@ export function planAppFromRow(row: {
 	};
 }
 
-export type PlanKind =
-	| "id"
-	| "business_registration"
-	| "bank_statement"
-	| "payslip"
-	| "financial_statements"
-	| "other";
-
 export interface PlanFile {
 	file: {
 		id: string;

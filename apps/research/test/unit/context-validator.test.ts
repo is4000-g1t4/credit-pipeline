@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import type { CandidateSnapshot } from "../../src/context-tools.js";
 import { validateContextOutput, type ContextValidationInput } from "../../src/context-validator.js";
+import { candidateSnapshot, seenEvidence } from "../fixtures.js";
 
 const AS_OF = "2026-01-15";
 const HISTORY_MONTHS = 6;
@@ -32,29 +33,11 @@ interface TestOutput {
 }
 
 function snapshot(over: Partial<CandidateSnapshot> = {}): CandidateSnapshot {
-	return {
-		localId: "c1",
-		type: "negative_balance",
-		periodStart: "2025-12-30",
-		periodEnd: "2026-01-15",
-		metric: "negative_eod_days",
-		observed: 3,
-		expected: 0,
-		confidence: "high",
-		status: "review",
-		policyVersion: "context-metrics-v1",
-		accountScope: "all",
-		evidenceIds: ["tx-1", "tx-2"],
-		...over,
-	};
+	return candidateSnapshot(over);
 }
 
 function seen(): Map<string, Set<string>> {
-	return new Map([
-		["tx-1", new Set(["transaction"])],
-		["tx-2", new Set(["transaction"])],
-		["c1", new Set(["metric"])],
-	]);
+	return seenEvidence();
 }
 
 function signal(over: Partial<TestSignal> = {}): TestSignal {

@@ -7,8 +7,8 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { agentRuns, createDb, researchAccessGrants, researchAuditLog } from "@credit/db/research";
 import { createLogger, resolveInternalUser } from "@credit/service-kit";
-import { and, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
-import { beforeEach, describe, expect, it } from "vitest";
+import { eq, inArray, sql } from "drizzle-orm";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	classifyAutoMessage,
 	bootRecovery,
@@ -22,48 +22,62 @@ import {
 import { grantResearchAccess } from "../../src/access.js";
 import { stubAgentRunner } from "../../src/agent.js";
 import { loadEnv } from "../../src/env.js";
-import { ensureRun, getRun, resumeQueuedRuns, type CaseFactsPayload } from "../../src/lifecycle.js";
+import { ensureRun, resumeQueuedRuns, type CaseFactsPayload } from "../../src/lifecycle.js";
 import { stubLanguageRepair } from "../../src/repair.js";
 import { stubSupportJudge } from "../../src/support.js";
 import {
 	caseFacts,
+	degradedObservability,
+	get,
+	post,
 	setupApp,
-	signed,
 	successFixture,
 	teardown,
 	user,
+	waitRun,
 	type TestContext,
 } from "../helper.js";
 
 process.env.LOG_LEVEL ??= "silent";
 const testLogger = createLogger("research-auto-test");
 
-// The suite shares one database. Any auto run left queued/running by an
-// earlier test (or an earlier failed suite run) would reserve budget and make
-// the cap assertions non-deterministic. Delete only test-owned in-flight rows
-// before each case; spend rows are left alone and are included in `baseline`.
-beforeEach(async () => {
+// The suite shares one database. In-flight auto rows left by an earlier
+// test (or an earlier failed suite run) would reserve budget and make the
+// cap assertions non-deterministic — but other suites' live rows are none
+// of this file's business. Snapshot the live ids before each case and
+// delete only rows this suite created afterwards.
+let liveBefore = new Set<string>();
+
+async function liveAutoIds(): Promise<Set<string>> {
 	const { db, sql: raw } = createDb(loadEnv().databaseUrl);
-	await db
-		.delete(agentRuns)
-		.where(
-			and(
-				eq(agentRuns.trigger, "auto"),
-				or(
-					inArray(agentRuns.status, ["queued", "running"]),
-					and(eq(agentRuns.contextStatus, "running"), isNotNull(agentRuns.contextStageToken)),
-				),
-			),
-		);
-	await raw.end();
+	try {
+		const rows = (await db.execute(
+			sql`SELECT id FROM agent_runs WHERE trigger = 'auto' AND (status IN ('queued', 'running') OR (context_status = 'running' AND context_stage_token IS NOT NULL))`,
+		)) as unknown as Array<{ id: string }>;
+		return new Set(rows.map((r) => r.id));
+	} finally {
+		await raw.end();
+	}
+}
+
+beforeEach(async () => {
+	liveBefore = await liveAutoIds();
 });
 
-const degraded = {
-	status: "degraded" as const,
-	hooksFor: () => ({ detach: () => {} }),
-	trackModelCall: <T>(_o: unknown, fn: () => Promise<T>): Promise<T> => fn(),
-	trackToolExecution: <T>(_o: unknown, fn: () => Promise<T>): Promise<T> => fn(),
-};
+afterEach(async () => {
+	const before = liveBefore;
+	liveBefore = new Set();
+	const { db, sql: raw } = createDb(loadEnv().databaseUrl);
+	try {
+		const rows = (await db.execute(
+			sql`SELECT id FROM agent_runs WHERE trigger = 'auto' AND (status IN ('queued', 'running') OR (context_status = 'running' AND context_stage_token IS NOT NULL))`,
+		)) as unknown as Array<{ id: string }>;
+		const fresh = rows.map((r) => r.id).filter((id) => !before.has(id));
+		if (fresh.length > 0) await db.delete(agentRuns).where(inArray(agentRuns.id, fresh));
+	} finally {
+		await raw.end();
+	}
+});
 
 /** Caps/budget lifted so shared-DB accumulation from other suites cannot flake these. */
 function autoEnv() {
@@ -100,7 +114,7 @@ function depsFor(
 		runner: stubAgentRunner({ brief: use.brief, fetched: use.fetched }),
 		judge: stubSupportJudge(),
 		repair: stubLanguageRepair(),
-		observability: degraded,
+		observability: degradedObservability,
 		fetchResearchContext,
 	};
 }
@@ -116,16 +130,6 @@ function contextFor(
 	};
 }
 
-async function waitRun(ctx: TestContext, runId: string) {
-	const deadline = Date.now() + 10_000;
-	for (;;) {
-		const run = await getRun(ctx.db, runId);
-		if (run && (run.status === "succeeded" || run.status === "failed")) return run;
-		if (Date.now() > deadline) throw new Error(`run ${runId} did not settle`);
-		await new Promise((r) => setTimeout(r, 50));
-	}
-}
-
 async function auditRows(ctx: TestContext, applicationId: string) {
 	return ctx.db
 		.select()
@@ -133,25 +137,12 @@ async function auditRows(ctx: TestContext, applicationId: string) {
 		.where(eq(researchAuditLog.applicationId, applicationId));
 }
 
-async function get(
-	ctx: TestContext,
-	path: string,
-	who: { id: string; email: string; role: "applicant" | "officer" | "service" },
-) {
-	return ctx.app.request(path, { headers: signed(ctx, who, "GET", path) });
-}
-
 async function postView(
 	ctx: TestContext,
 	path: string,
 	who: { id: string; email: string; role: "applicant" | "officer" | "service" },
 ) {
-	const body = "{}";
-	return ctx.app.request(path, {
-		method: "POST",
-		headers: { "content-type": "application/json", ...signed(ctx, who, "POST", path, {}, body) },
-		body,
-	});
+	return post(ctx, path, who, {});
 }
 
 describe("handleReviewRequested", () => {
@@ -304,12 +295,18 @@ describe("handleReviewRequested", () => {
 				})
 				.returning({ id: agentRuns.id });
 			expect(rich).toBeDefined();
-			const spendFacts = caseFacts();
-			const spend = await handleReviewRequested(
-				depsFor(ctx, contextFor(spendFacts), { autoTriggerDailyCostBudgetUsd: 1 }),
-				envelope(spendFacts.applicationId),
-			);
-			expect(spend).toEqual({ handled: "skipped", reason: "daily_cost_budget" });
+			try {
+				const spendFacts = caseFacts();
+				const spend = await handleReviewRequested(
+					depsFor(ctx, contextFor(spendFacts), { autoTriggerDailyCostBudgetUsd: 1 }),
+					envelope(spendFacts.applicationId),
+				);
+				expect(spend).toEqual({ handled: "skipped", reason: "daily_cost_budget" });
+			} finally {
+				// The seeded $99 spend counts every run: delete it so repeated
+				// suite runs do not exhaust the daily auto budget.
+				if (rich) await ctx.db.execute(sql`DELETE FROM agent_runs WHERE id = ${rich.id}`);
+			}
 		} finally {
 			await teardown(ctx);
 		}
@@ -410,7 +407,7 @@ describe("queued-run recovery (crash after insert)", () => {
 				runner: stubAgentRunner({ brief: use.brief, fetched: use.fetched }),
 				judge: stubSupportJudge(),
 				repair: stubLanguageRepair(),
-				observability: degraded,
+				observability: degradedObservability,
 			});
 			expect(started).toContain(run.id);
 			expect((await waitRun(ctx, run.id)).status).toBe("succeeded");
@@ -448,7 +445,7 @@ describe("queued-run recovery (crash after insert)", () => {
 				runner: stubAgentRunner({ brief: use.brief, fetched: use.fetched }),
 				judge: stubSupportJudge(),
 				repair: stubLanguageRepair(),
-				observability: degraded,
+				observability: degradedObservability,
 			});
 			expect(recovered).toContain(run.id);
 			expect(reaped).not.toContain(run.id);

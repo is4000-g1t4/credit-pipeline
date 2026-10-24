@@ -132,66 +132,74 @@ describe("internalOfficerDecisionSchema", () => {
 });
 
 describe("city + aiResearchConsent", () => {
+	const validApplication = {
+		type: "individual",
+		product: "personal_loan",
+		amountCents: 1_200_000,
+		termMonths: 48,
+		purpose: "test",
+		consents: [true, true, true],
+		identity: {
+			fullName: "Test Person",
+			dob: "1990-01-01",
+			nationalId: "TEST1234",
+			email: "test@example.com",
+			phone: "+1-555-0000",
+			address: "1 Test Street",
+			city: "Demo City",
+		},
+		individual: {
+			employmentStatus: "employed",
+			employerName: "Acme",
+			employmentYears: 5,
+			monthlyIncomeCents: 420_000,
+			existingDebtCents: 0,
+			bankRelationshipYears: 3,
+		},
+	};
+
 	it("requires city (2–80 chars) on new applications", () => {
-		const base = {
-			type: "individual",
-			product: "personal_loan",
-			amountCents: 1_200_000,
-			termMonths: 48,
-			purpose: "test",
-			consents: [true, true, true],
-			identity: {
-				fullName: "Test Person",
-				dob: "1990-01-01",
-				nationalId: "TEST1234",
-				email: "test@example.com",
-				phone: "+1-555-0000",
-				address: "1 Test Street",
-				city: "Demo City",
-			},
-			individual: {
-				employmentStatus: "employed",
-				employerName: "Acme",
-				employmentYears: 5,
-				monthlyIncomeCents: 420_000,
-				existingDebtCents: 0,
-				bankRelationshipYears: 3,
-			},
-		};
-		expect(applicationCreateSchema.safeParse(base).success).toBe(true);
-		const { city: _omitted, ...identityWithoutCity } = base.identity;
+		expect(applicationCreateSchema.safeParse(validApplication).success).toBe(true);
+		const { city: _omitted, ...identityWithoutCity } = validApplication.identity;
 		expect(
-			applicationCreateSchema.safeParse({ ...base, identity: identityWithoutCity }).success,
+			applicationCreateSchema.safeParse({ ...validApplication, identity: identityWithoutCity })
+				.success,
 		).toBe(false);
+		for (const city of ["x", "x".repeat(81)]) {
+			expect(
+				applicationCreateSchema.safeParse({
+					...validApplication,
+					identity: { ...validApplication.identity, city },
+				}).success,
+			).toBe(false);
+		}
+		for (const city of ["xx", "x".repeat(80)]) {
+			expect(
+				applicationCreateSchema.safeParse({
+					...validApplication,
+					identity: { ...validApplication.identity, city },
+				}).success,
+			).toBe(true);
+		}
 	});
 
 	it("defaults aiResearchConsent to false and keeps the 3-consent array", () => {
-		const parsed = applicationCreateSchema.safeParse({
-			type: "individual",
-			product: "personal_loan",
-			amountCents: 1_200_000,
-			termMonths: 48,
-			purpose: "test",
-			consents: [true, true, true],
-			identity: {
-				fullName: "Test Person",
-				dob: "1990-01-01",
-				nationalId: "TEST1234",
-				email: "test@example.com",
-				phone: "+1-555-0000",
-				address: "1 Test Street",
-				city: "Demo City",
-			},
-			individual: {
-				employmentStatus: "employed",
-				employerName: "Acme",
-				employmentYears: 5,
-				monthlyIncomeCents: 420_000,
-				existingDebtCents: 0,
-				bankRelationshipYears: 3,
-			},
-		});
+		for (const consents of [
+			[true, true],
+			[true, true, true, true],
+		]) {
+			expect(applicationCreateSchema.safeParse({ ...validApplication, consents }).success).toBe(
+				false,
+			);
+		}
+		const parsed = applicationCreateSchema.safeParse(validApplication);
 		expect(parsed.success).toBe(true);
 		if (parsed.success) expect(parsed.data.aiResearchConsent).toBe(false);
+		const optedIn = applicationCreateSchema.safeParse({
+			...validApplication,
+			aiResearchConsent: true,
+		});
+		expect(optedIn.success).toBe(true);
+		if (optedIn.success) expect(optedIn.data.aiResearchConsent).toBe(true);
 	});
 });

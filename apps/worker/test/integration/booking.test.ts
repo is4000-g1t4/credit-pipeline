@@ -126,12 +126,63 @@ describe("bookLoan (integration)", () => {
 			.from(outboxEvents)
 			.where(eq(outboxEvents.dedupeKey, dedupeDecisionMade(first.decisionId)));
 		expect(decisionOutbox).toHaveLength(1);
+		// Topic/key/payload: the relay publishes exactly this envelope.
+		expect(decisionOutbox[0]).toMatchObject({
+			topic: "credit.decision.made",
+			key: applicationId,
+		});
+		expect(decisionOutbox[0]?.payload).toMatchObject({
+			type: "decision.made",
+			applicationId,
+			payload: {
+				decisionId: first.decisionId,
+				applicationId,
+				outcome: "approved",
+				decidedBy: "system",
+			},
+		});
 		const loanOutbox = await loansDb
 			.select()
 			.from(outboxEvents)
 			.where(eq(outboxEvents.dedupeKey, dedupeLoanBooked(first.loanId)));
 		expect(loanOutbox).toHaveLength(1);
+		expect(loanOutbox[0]).toMatchObject({ topic: "credit.loan.booked", key: applicationId });
+		expect(loanOutbox[0]?.payload).toMatchObject({
+			type: "loan.booked",
+			applicationId,
+			loanId: first.loanId,
+			payload: {
+				loanId: first.loanId,
+				applicationId,
+			},
+		});
 
+		const [app] = await appsDb
+			.select()
+			.from(applications)
+			.where(eq(applications.id, applicationId));
+		expect(app?.status).toBe("booked");
+	});
+
+	it("concurrent double booking converges on one decision and one loan", async () => {
+		const applicationId = await fixture();
+		const [first, second] = await Promise.all([
+			bookLoan({ applicationId, route: "auto" }),
+			bookLoan({ applicationId, route: "auto" }),
+		]);
+
+		expect(first.decisionId).toBe(second.decisionId);
+		expect(first.loanId).toBe(second.loanId);
+		const decisionRows = await appsDb
+			.select({ id: decisions.id })
+			.from(decisions)
+			.where(eq(decisions.applicationId, applicationId));
+		expect(decisionRows).toHaveLength(1);
+		const loanRows = await loansDb
+			.select({ id: loans.id })
+			.from(loans)
+			.where(eq(loans.applicationId, applicationId));
+		expect(loanRows).toHaveLength(1);
 		const [app] = await appsDb
 			.select()
 			.from(applications)

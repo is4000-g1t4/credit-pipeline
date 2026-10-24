@@ -56,8 +56,24 @@ describe("snapshots", () => {
 		expect(s.scorecardVersion).toBe("scorecard-v1");
 		expect(s.policyVersion).toBe("policy-v1.0");
 		expect(s.inputHash).toBe(hashCanonical(inputs));
-		// Timestamps live on the snapshot, never inside the hashed inputs.
-		expect(canonicalJson(inputs)).not.toContain("2026");
+	});
+
+	it("input hash ignores decidedAt", () => {
+		const inputs = { score: 777, amountCents: 1200000 };
+		const base = {
+			inputs,
+			score: 777,
+			grade: "A" as const,
+			factors: [],
+			rateBps: 650,
+			monthlyPaymentCents: 28458,
+			reasons: [],
+			actor: "system",
+		};
+		const a = buildCreditSnapshot({ ...base, decidedAt: "2026-10-19T12:00:00Z" });
+		const b = buildCreditSnapshot({ ...base, decidedAt: "2027-05-01T00:00:00Z" });
+		expect(a.inputHash).toBe(b.inputHash);
+		expect(a.inputHash).toBe(hashCanonical(inputs));
 	});
 
 	it("check-only snapshot carries checks + hash", () => {

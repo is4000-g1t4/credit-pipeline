@@ -113,6 +113,12 @@ describe("statement freshness boundaries", () => {
 		expect(statementFreshness("financial_statements", null, AS_OF)).toBe("unknown");
 	});
 
+	it("treats exactly-18m financial statements fresh and a day older stale", () => {
+		// AS_OF 2026-06-30 minus 18 months is 2024-12-30 (day-precision).
+		expect(statementFreshness("financial_statements", "2024-12-30", AS_OF)).toBe("fresh");
+		expect(statementFreshness("financial_statements", "2024-12-29", AS_OF)).toBe("stale");
+	});
+
 	it("applies no age rule to id/business_registration/payslip", () => {
 		for (const kind of ["id", "business_registration", "payslip"]) {
 			expect(statementFreshness(kind, null, AS_OF)).toBe("na");
@@ -521,6 +527,13 @@ describe("reusable evidence", () => {
 		expect(classifyCustomerDoc(mk({ scanStatus: "rejected" }), AS_OF).eligible).toBe(false);
 		expect(
 			classifyCustomerDoc(mk({ retentionUntil: new Date("2026-01-01T00:00:00Z") }), AS_OF),
+		).toEqual({ eligible: false, reason: "expired" });
+		// A purged blob is expired even with a future retentionUntil.
+		expect(
+			classifyCustomerDoc(
+				mk({ retentionUntil: new Date("2027-01-01T00:00:00Z"), blobPurgedAt: new Date() }),
+				AS_OF,
+			),
 		).toEqual({ eligible: false, reason: "expired" });
 		expect(classifyCustomerDoc(mk({ periodEnd: null, documentDate: null }), AS_OF)).toEqual({
 			eligible: false,

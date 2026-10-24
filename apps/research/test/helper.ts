@@ -18,10 +18,10 @@ import { stubAgentRunner, type FetchedEvidence } from "../src/agent.js";
 import { createApp } from "../src/app.js";
 import { stubContextRunner } from "../src/context-agent.js";
 import { loadEnv } from "../src/env.js";
-import { resetObservability } from "../src/observability.js";
+import { getRun, type CaseFactsPayload } from "../src/lifecycle.js";
+import { resetObservability, type Observability } from "../src/observability.js";
 import { stubLanguageRepair } from "../src/repair.js";
 import { stubSupportJudge } from "../src/support.js";
-import type { CaseFactsPayload } from "../src/lifecycle.js";
 
 process.env.LOG_LEVEL ??= "silent";
 
@@ -51,6 +51,49 @@ export const APPLICANT: TestUser = {
 
 export function user(role: "applicant" | "officer" | "service"): TestUser {
 	return { id: randomUUID(), email: `svc-${randomUUID()}@example.com`, role };
+}
+
+/** Hermetic observability double: executes, never dials OTLP. */
+export const degradedObservability: Observability = {
+	status: "degraded",
+	hooksFor: () => ({ detach: () => {} }),
+	trackModelCall: (_opts, fn) => fn(),
+	trackToolExecution: (_opts, fn) => fn(),
+};
+
+/** Signed POST against the in-process app, as the P1b gateway would send. */
+export async function post(
+	ctx: TestContext,
+	path: string,
+	who: TestUser,
+	payload: unknown,
+): Promise<Response> {
+	const body = JSON.stringify(payload);
+	return ctx.app.request(path, {
+		method: "POST",
+		headers: { "content-type": "application/json", ...signed(ctx, who, "POST", path, {}, body) },
+		body,
+	});
+}
+
+/** Signed GET against the in-process app. */
+export async function get(ctx: TestContext, path: string, who: TestUser): Promise<Response> {
+	return ctx.app.request(path, { headers: signed(ctx, who, "GET", path) });
+}
+
+/** Poll a background run until terminal (succeeded/failed). */
+export async function waitRun(
+	ctx: TestContext,
+	runId: string,
+	timeoutMs = 15_000,
+): Promise<NonNullable<Awaited<ReturnType<typeof getRun>>>> {
+	const deadline = Date.now() + timeoutMs;
+	for (;;) {
+		const run = await getRun(ctx.db, runId);
+		if (run && (run.status === "succeeded" || run.status === "failed")) return run;
+		if (Date.now() > deadline) throw new Error(`run ${runId} did not settle`);
+		await new Promise((r) => setTimeout(r, 50));
+	}
 }
 
 /** Signed internal headers for `app.request`, as the P1b gateway would send. */
@@ -187,12 +230,7 @@ export function setupApp(
 		runner: overrides.runner ?? stubAgentRunner({ brief: use.brief, fetched: use.fetched }),
 		judge: overrides.judge ?? stubSupportJudge(),
 		repair: overrides.repair ?? stubLanguageRepair(),
-		observability: overrides.observability ?? {
-			status: "degraded",
-			hooksFor: () => ({ detach: () => {} }),
-			trackModelCall: (_opts, fn) => fn(),
-			trackToolExecution: (_opts, fn) => fn(),
-		},
+		observability: overrides.observability ?? degradedObservability,
 		// Context is disabled unless the test enables it; the throwing
 		// default proves the stage never runs then.
 		contextRunner:

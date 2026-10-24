@@ -370,6 +370,48 @@ Response `200`:
 
 The feed holds the 20 most recent events from the portfolio read model.
 
+## Policy
+
+Officer only. All endpoints proxy to the policy service (`:4006`). Applicants
+get 403 on every `/api/policy/*` route. The gateway applies a per-officer rate
+limit (10/min, 429 `RATE_LIMITED`) and a 75 s upstream timeout.
+
+| Method and path                                  | Purpose                                                           |
+| ------------------------------------------------ | ----------------------------------------------------------------- |
+| `POST /api/policy/ask`                           | Cited answer from the approved policy corpus (navigator)          |
+| `GET /api/policy/sections/:versionId/:sectionId` | One approved section for the citation drawer (`?token=` required) |
+| `POST /api/policy/versions/:id/submit`           | Submit a draft version for approval (policy admin only)           |
+| `POST /api/policy/versions/:id/approve`          | Approve a submitted version (policy admin only, no self-approval) |
+| `POST /api/policy/versions/:id/retire`           | Retire an approved version (policy admin only)                    |
+
+Ask body:
+
+```json
+{
+	"question": "What is the minimum DSCR for an SME term loan?",
+	"product": "sme_term_loan",
+	"jurisdiction": "SG"
+}
+```
+
+`product` is `personal_loan` or `sme_term_loan`; `jurisdiction` is an optional
+two-letter code (defaults to `SG`). Success `200` carries `status`
+(`succeeded`, `no_match`, `out_of_scope`, `identifier_blocked`,
+`budget_exceeded`, `failed`, `needs_policy_owner`), `segments`, `citations`
+(section id + version id + verifiable quote, never PII), and `limitations`.
+Questions containing direct identifiers are refused as `identifier_blocked`
+without logging the question text.
+
+Rules:
+
+- Feature disabled (`POLICY_ASSIST_ENABLED=false`): every policy route returns 503 `POLICY_DISABLED` and the UI hides.
+- Section reads need the signed `?token=` issued with a citation; bad tokens, drafts, and out-of-range versions return 404 `NOT_FOUND`.
+- Version writes need a policy admin (`policy_owner` with a case grant, or `compliance`): other officers get 403. `submit` on a non-draft returns 409 `NOT_DRAFT`; `approve` needs a prior `submit` (409 `NOT_SUBMITTED`), rejects self-approval (403 `SELF_APPROVAL`) and backdated `effectiveFrom` (422 `BACKDATED`).
+
+The automatic case-policy review has no officer route: when `POLICY_ASSIST_ENABLED=true`,
+research calls `POST /internal/policy/explain-case` server-side and accepted
+citations appear in the case page Policy review section.
+
 ## Health
 
 | Method and path   | Access | Purpose                              |
@@ -427,6 +469,7 @@ Response `200`:
 | `DECISION_REJECTED`        | 422      | Workflow rejected the decision terms                                                                                                                                                         |
 | `CONSENT_REQUIRED`         | 403      | AI research consent missing                                                                                                                                                                  |
 | `RESEARCH_DISABLED`        | 404      | Agentic research feature flag off                                                                                                                                                            |
+| `POLICY_DISABLED`          | 503      | Policy assist flag off; retry with the flag on or decide without policy                                                                                                                      |
 | `RUN_NOT_SUCCEEDED`        | 409      | Finding reviewed before its run succeeded                                                                                                                                                    |
 | `RESEARCH_UNAVAILABLE`     | 503      | Research bundle unfetchable; retry or decide without research                                                                                                                                |
 | `RESEARCH_SELECTION_STALE` | 409      | Selection no longer resolves; re-review or decide without                                                                                                                                    |

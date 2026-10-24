@@ -8,7 +8,9 @@ import {
 	monitoringWorkflowName,
 	OFFICER_DECISION_UPDATE,
 	TASK_QUEUE,
-	type ResearchBundle,
+	type MonitoringCounts,
+	type OfficerDecisionInput,
+	type OfficerDecisionResult,
 } from "@credit/core";
 import {
 	Client,
@@ -18,30 +20,7 @@ import {
 	WorkflowNotFoundError,
 } from "@temporalio/client";
 
-export interface OfficerDecisionInput {
-	requestId: string;
-	outcome: "approve" | "decline";
-	approvedAmountCents?: number;
-	termMonths?: number;
-	reasonCode?: "OFFICER_JUDGEMENT" | "INSUFFICIENT_EVIDENCE" | "POLICY_EXCEPTION";
-	notes?: string;
-	officerUserId?: string;
-	/** Server-built frozen bundle (review resolves the public selection to
-	 * this; the selection itself never travels here). */
-	research?: ResearchBundle;
-}
-
-export interface OfficerDecisionResult {
-	outcome: "booked" | "declined";
-	decisionId: string;
-	loanId: string | null;
-}
-
-export interface MonitoringCounts {
-	markedOverdue: number;
-	alertsCreated: number;
-	loansUpdated: number;
-}
+export type { MonitoringCounts, OfficerDecisionInput, OfficerDecisionResult };
 
 export interface WorkflowGateway {
 	startApplication(applicationId: string): Promise<void>;

@@ -2,6 +2,7 @@
 // (applicationId, accountId, from, to) so callers cannot widen the window.
 // `off` is the row offset; routes additionally cap pages per account.
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { isUuid } from "../ids.js";
 
 export interface ContextCursor {
 	app: string;
@@ -11,7 +12,6 @@ export interface ContextCursor {
 	off: number;
 }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export function encodeCursor(secret: string, cursor: ContextCursor): string {
@@ -37,9 +37,9 @@ export function decodeCursor(secret: string, token: string): ContextCursor | nul
 		>;
 		if (
 			typeof parsed["app"] !== "string" ||
-			!UUID_RE.test(parsed["app"]) ||
+			!isUuid(parsed["app"]) ||
 			typeof parsed["acct"] !== "string" ||
-			!UUID_RE.test(parsed["acct"]) ||
+			!isUuid(parsed["acct"]) ||
 			typeof parsed["from"] !== "string" ||
 			!DAY_RE.test(parsed["from"]) ||
 			typeof parsed["to"] !== "string" ||

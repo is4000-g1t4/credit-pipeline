@@ -20,6 +20,7 @@ import { claimAssignedOfficer, resolveDocumentAccess } from "./access.js";
 import { createChaseDraft, getLatestCrosscheck, runDocumentCrosscheck } from "./crosscheck.js";
 import { LockTimeout, parseKind } from "./pipeline.js";
 import { contentDispositionFor } from "./storage.js";
+import { isUuid, UUID_RE } from "../ids.js";
 import {
 	getCustomerProfile,
 	reuseCustomerDocuments,
@@ -27,8 +28,6 @@ import {
 } from "../customer/index.js";
 import { effectiveAsOf } from "../customer/requirements.js";
 import { DocumentService, type DocumentsConfig, type DocumentFileRow } from "./service.js";
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const chaseDraftSchema = z
 	.object({
@@ -119,7 +118,7 @@ export function documentRoutes(deps: DocumentRouteDeps): ServiceApp {
 		var: { user: { id: string; role: string } };
 	}) => {
 		const applicationId = c.req.param("id");
-		if (!UUID_RE.test(applicationId)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(applicationId)) throw new HttpError(404, "NOT_FOUND", "not found");
 		if (!config.featureEnabled) throw new HttpError(404, "NOT_FOUND", "not found");
 		const resolved = await resolveDocumentAccess(db, applicationId, c.var.user);
 		if (!resolved) {
@@ -160,7 +159,7 @@ export function documentRoutes(deps: DocumentRouteDeps): ServiceApp {
 		var: { user: { id: string; role: string } };
 	}) => {
 		const applicationId = c.req.param("id");
-		if (!UUID_RE.test(applicationId)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(applicationId)) throw new HttpError(404, "NOT_FOUND", "not found");
 		if (!config.featureEnabled) throw new HttpError(404, "NOT_FOUND", "not found");
 		const resolved = await resolveDocumentAccess(db, applicationId, c.var.user);
 		if (!resolved) {
@@ -216,7 +215,7 @@ export function documentRoutes(deps: DocumentRouteDeps): ServiceApp {
 		const me = c.var.user;
 		const { applicationId } = await gateOfficer(c);
 		const crosscheckId = c.req.param("crosscheckId");
-		if (!UUID_RE.test(crosscheckId)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(crosscheckId)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const parsed = chaseDraftSchema.safeParse(await readJson(c));
 		if (!parsed.success) {
 			throw new HttpError(400, "VALIDATION_ERROR", "invalid chase draft", zodFields(parsed.error));
@@ -329,7 +328,7 @@ export function documentRoutes(deps: DocumentRouteDeps): ServiceApp {
 		const me = c.var.user;
 		const { applicationId } = await gate(c);
 		const fileId = c.req.param("fileId");
-		if (!UUID_RE.test(fileId)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(fileId)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const file = await service.getFile(applicationId, fileId);
 		if (!file) throw new HttpError(404, "NOT_FOUND", "not found");
 		const pages = await service.getPages(file.id);
@@ -350,7 +349,7 @@ export function documentRoutes(deps: DocumentRouteDeps): ServiceApp {
 		const me = c.var.user;
 		const { applicationId } = await gate(c);
 		const fileId = c.req.param("fileId");
-		if (!UUID_RE.test(fileId)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(fileId)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const file = await service.getFile(applicationId, fileId);
 		if (!file) throw new HttpError(404, "NOT_FOUND", "not found");
 		if (file.kind === "id") throw new HttpError(409, "NO_TEXT", "id documents carry no page text");
@@ -375,7 +374,7 @@ export function documentRoutes(deps: DocumentRouteDeps): ServiceApp {
 		const me = c.var.user;
 		const { applicationId } = await gate(c);
 		const fileId = c.req.param("fileId");
-		if (!UUID_RE.test(fileId)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(fileId)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const file = await service.getFile(applicationId, fileId);
 		if (!file) throw new HttpError(404, "NOT_FOUND", "not found");
 		const bytes = await service.openOriginal(file);
@@ -399,7 +398,7 @@ export function documentRoutes(deps: DocumentRouteDeps): ServiceApp {
 		const me = c.var.user;
 		const { applicationId } = await gate(c);
 		const fileId = c.req.param("fileId");
-		if (!UUID_RE.test(fileId)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(fileId)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const { file } = await service.retryOcr({ applicationId, fileId, userId: me.id });
 		noStore(c);
 		logger.info({ documentFileId: file.id }, "document retry-ocr");
@@ -413,7 +412,7 @@ export function documentRoutes(deps: DocumentRouteDeps): ServiceApp {
 	app.post("/api/applications/:id/documents/claim", async (c) => {
 		const me = c.var.user;
 		const applicationId = c.req.param("id");
-		if (!UUID_RE.test(applicationId)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(applicationId)) throw new HttpError(404, "NOT_FOUND", "not found");
 		if (!config.featureEnabled) throw new HttpError(404, "NOT_FOUND", "not found");
 		if (me.role !== "officer") throw new HttpError(404, "NOT_FOUND", "not found");
 		// T17: drafts are owner-only — officers cannot claim or read a draft.

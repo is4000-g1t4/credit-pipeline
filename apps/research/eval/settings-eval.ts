@@ -212,6 +212,8 @@ function runContext(
 				});
 			let validation = validate(raw.output);
 			let repaired = false;
+			let repairIn = 0;
+			let repairOut = 0;
 			if (!validation.ok) {
 				repaired = true;
 				const fixed = await runner.repairContext({
@@ -225,10 +227,15 @@ function runContext(
 					snapshots: raw.snapshots,
 					seenEvidence: raw.seenEvidence,
 				});
+				repairIn += fixed.usage.inputTokens;
+				repairOut += fixed.usage.outputTokens;
 				validation = validate(fixed.output);
 			}
 			const durationMs = Date.now() - started;
-			const costUsd = projectCostUsd(raw.usage.inputTokens, raw.usage.outputTokens);
+			// Single ledger: initial tokens plus the repair attempt.
+			const inputTokens = raw.usage.inputTokens + repairIn;
+			const outputTokens = raw.usage.outputTokens + repairOut;
+			const costUsd = projectCostUsd(inputTokens, outputTokens);
 			const limitationsText = [...validation.dataGaps, ...validation.limitations]
 				.join(" ")
 				.toLowerCase();
@@ -257,8 +264,8 @@ function runContext(
 				// Total attempts: bounded preflight + model loop (see
 				// CONTEXT_AGENT_PREFLIGHT_TOOL_CALLS / MAX_TOOL_CALLS).
 				toolCalls: raw.usage.toolCalls,
-				inputTokens: raw.usage.inputTokens,
-				outputTokens: raw.usage.outputTokens,
+				inputTokens,
+				outputTokens,
 				costUsd,
 				durationMs,
 				error: null,
@@ -295,8 +302,17 @@ const WEB_URL_B = "https://www.bbc.co.uk/news/acme-leeds";
 const WEB_RAW_A = `Published 2025-06-01.\nheader\n${WEB_QUOTE_A}\nfooter `.repeat(20);
 const WEB_RAW_B = `Published 2025-05-01.\nintro\n${WEB_QUOTE_B}\nmore text here `.repeat(20);
 
+const WEB_ENTITY = "Acme Ltd";
+const webTavilyMisses: string[] = [];
+
 const fakeTavily: TavilyClient = {
-	async search() {
+	async search(query) {
+		// The agent must name the entity it is researching: an unnamed
+		// query returns nothing and records a miss (isolation probe).
+		if (!query.toLowerCase().includes(WEB_ENTITY.toLowerCase())) {
+			webTavilyMisses.push(query);
+			return [];
+		}
 		return [
 			{ url: WEB_URL_A, title: "Acme Ltd filings", publishedDate: "2025-06-01" },
 			{ url: WEB_URL_B, title: "Acme opens warehouse", publishedDate: "2025-05-01" },
@@ -611,8 +627,29 @@ async function runWebEval(): Promise<void> {
 		);
 	}
 	printWeb(rows);
-	const best = [...rows].sort((a, b) => b.score - a.score)[0];
-	console.log("best web config by score:", best);
+	const byConfig = new Map<string, WebRow[]>();
+	for (const r of rows) {
+		const list = byConfig.get(r.config) ?? [];
+		list.push(r);
+		byConfig.set(r.config, list);
+	}
+	// Rank by mean of attempts (median breaks ties): a single lucky attempt
+	// must not crown a config.
+	const ranked = [...byConfig.entries()]
+		.map(([config, list]) => {
+			const scores = list.map((r) => r.score);
+			return {
+				config,
+				mean: average(list),
+				median: median(scores),
+				runs: list.length,
+			};
+		})
+		.sort((a, b) => b.mean - a.mean || b.median - a.median);
+	console.log("web configs by mean score:", ranked);
+	const best = ranked[0];
+	console.log("best web config by mean score:", best);
+	console.log(`web tavily isolation misses: ${webTavilyMisses.length}`);
 	mkdirSync(OUT_DIR, { recursive: true });
 	writeFileSync(
 		resolve(OUT_DIR, `web-${new Date().toISOString().replace(/[:.]/g, "-")}.json`),
@@ -621,6 +658,7 @@ async function runWebEval(): Promise<void> {
 				configs: webConfigs,
 				rows,
 				repeats,
+				tavilyMisses: webTavilyMisses,
 				note: "n=1 per config by default; directional only, does not exercise the production validator",
 			},
 			null,

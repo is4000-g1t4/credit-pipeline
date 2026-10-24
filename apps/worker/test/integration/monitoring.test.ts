@@ -2,6 +2,12 @@
 // installment past due, one pre-existing overdue gap (reconcile path), one
 // future control. First run marks + alerts both; second run is a no-op.
 // Application/user ids are synthetic uuids (no cross-DB rows needed).
+//
+// Dev-worker race: a locally running worker shares this compose DB and its
+// monitoring sweep may mark our fixtures before our first call (the sweep
+// is idempotent, so the end state is identical). The test polls the sweep
+// until our loan converges and asserts the per-loan end state — global
+// counts are shared with any dev worker and are not asserted exactly.
 
 import { randomUUID } from "node:crypto";
 import { ewsAlerts, installments, loans } from "@credit/db/loans";
@@ -10,7 +16,7 @@ import { asc, eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { runMonitoring } from "../../src/activities/monitoring.js";
 import { closeDb } from "../../src/db.js";
-import { isoDay, testLoansDb } from "./helpers.js";
+import { isoDay, testLoansDb, waitFor } from "./helpers.js";
 
 const { db, sql } = testLoansDb();
 
@@ -94,12 +100,16 @@ afterAll(async () => {
 describe("runMonitoring (integration)", () => {
 	it("marks overdue, alerts both gaps, recomputes the loan; rerun no-ops", async () => {
 		const today = isoDay(0);
-		const first = await runMonitoring({ todayUtc: today });
-		// Global counts include any other loans in the shared compose DB —
-		// assert lower bounds here and exact per-loan deltas below.
-		expect(first.markedOverdue).toBeGreaterThanOrEqual(1);
-		expect(first.alertsCreated).toBeGreaterThanOrEqual(2);
-		expect(first.loansUpdated).toBeGreaterThanOrEqual(1);
+		// Poll the sweep until our fixtures converge — whoever runs the
+		// marking (us or a dev worker), the idempotent end state matches.
+		await waitFor("sweep marks fixtures", async () => {
+			await runMonitoring({ todayUtc: today });
+			const states = await db
+				.select({ status: installments.status })
+				.from(installments)
+				.where(eq(installments.loanId, loanId));
+			return states.filter((s) => s.status === "overdue").length === 2;
+		});
 
 		const alerts = await db.select().from(ewsAlerts).where(eq(ewsAlerts.loanId, loanId));
 		expect(alerts).toHaveLength(2);

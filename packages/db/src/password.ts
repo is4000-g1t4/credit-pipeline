@@ -40,11 +40,16 @@ export async function verifyPassword(password: string, stored: string): Promise<
 	const rNum = Number(rr);
 	const pNum = Number(pp);
 	if (![nNum, rNum, pNum].every(Number.isInteger)) return false;
-	const actual = await scryptAsync(password, salt, KEYLEN, {
-		N: nNum,
-		r: rNum,
-		p: pNum,
-		maxmem: 64 * 1024 * 1024,
-	});
+	let actual: Buffer;
+	try {
+		actual = await scryptAsync(password, salt, KEYLEN, {
+			N: nNum,
+			r: rNum,
+			p: pNum,
+			maxmem: 64 * 1024 * 1024,
+		});
+	} catch {
+		return false; // out-of-range N/r/p (ERR_CRYPTO_INVALID_SCRYPT_PARAMS)
+	}
 	return actual.length === expected.length && timingSafeEqual(actual, expected);
 }

@@ -32,6 +32,7 @@ import {
 	runCustomerRetention,
 } from "../../src/customer/retention.js";
 import { configFromEnv } from "../../src/documents/service.js";
+import { openAndVerifyBlob } from "../../src/documents/storage.js";
 import { runDocumentMaintenanceOnce } from "../../src/documents/retention.js";
 import { loadEnv } from "../../src/env.js";
 import { createUser, type TestContext } from "../helper.js";
@@ -281,6 +282,21 @@ describe("runCustomerRetention", () => {
 			.where(eq(documentFiles.applicationId, appId));
 		expect(copies).toHaveLength(1);
 		expect(copies[0].status).toBe("ready");
+		// The sweep purged only the customer blob: the reused app copy still
+		// exists under the app root and decrypts (hash-verified).
+		const appPlaintext = await openAndVerifyBlob({
+			root: ctx.appDir,
+			storageKey: copies[0].storageKey as string,
+			nonceB64: copies[0].encryptionNonce as string,
+			tagB64: copies[0].encryptionTag as string,
+			fileId: copies[0].id,
+			applicationId: appId,
+			cryptoVersion: copies[0].cryptoVersion,
+			keyId: copies[0].keyId,
+			keys: new Map([["v1", Buffer.from(ENCRYPTION_KEY, "base64")]]),
+			expectedSha256: copies[0].sha256,
+		});
+		expect(appPlaintext.length).toBeGreaterThan(0);
 	});
 
 	it("leaves a retry marker when the blob purge fails", async () => {

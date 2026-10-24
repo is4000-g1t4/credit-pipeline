@@ -1,8 +1,8 @@
 # Credit policy service (T03/T04)
 
 Owns the credit-policy register, pgvector index, officer navigator, and the
-automatic case-policy review route. See
-`.scratch/specs/t03-t04-policy-corpus-and-navigator.md`.
+automatic case-policy review route. Corpus: the reviewed Markdown under
+`policies/credit/`; evals: `eval/ANSWER-RESULTS.md` and `eval/RESULTS.md`.
 
 ## Local setup
 

@@ -13,8 +13,16 @@
 //   /api/dashboard*     → portfolio service (officer only)
 //   /api/policy*        → policy service (officer only, per-actor limit,
 //                         policy upstream timeout)
-import { randomUUID } from "node:crypto";
-import { errorBody, HttpError, MAX_UPLOAD_BYTES, signInternalHeaders } from "@credit/service-kit";
+import {
+	errorBody,
+	HttpError,
+	installErrorHandlers,
+	internalFetch,
+	JSON_BODY_LIMIT,
+	MAX_UPLOAD_BYTES,
+	requestLogger,
+	type ServiceApp,
+} from "@credit/service-kit";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { createMiddleware } from "hono/factory";
@@ -30,17 +38,30 @@ import {
 	UPSTREAM_TIMEOUT_MS,
 } from "./proxy.js";
 
-const MAX_JSON_BYTES = 100_000;
-
 /** T01 document upload: 10 MB file + multipart overhead (SPEC-t01-t02 §3).
  * Every other /api/* route keeps the 100 KB JSON bound. */
 const isDocumentUpload = (method: string, path: string): boolean =>
 	method === "POST" && /^\/api\/applications\/[^/]+\/documents$/.test(path);
 
-/** UUID path segments (application/run/officer ids) — redacted in logs. */
-const UUID_SEGMENT_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
-
 type Variables = GatewayVariables;
+
+/** Submit guard (FR-11.4): applicants only, 5/min/user, Idempotency-Key
+ * required. Runs after `user`; preserves the 403 → 429 → 400 order. */
+const applicantSubmit = (deps: GatewayDeps) =>
+	createMiddleware<{ Variables: Variables }>(async (c, next) => {
+		const me = c.var.user;
+		if (me.role !== "applicant") {
+			throw new HttpError(403, "FORBIDDEN", "applicants only");
+		}
+		if (!deps.submitLimiter.check(me.id)) {
+			throw new HttpError(429, "RATE_LIMITED", "too many submissions");
+		}
+		const key = c.req.header("Idempotency-Key")?.trim();
+		if (!key) {
+			throw new HttpError(400, "MISSING_IDEMPOTENCY_KEY", "Idempotency-Key header is required");
+		}
+		await next();
+	});
 
 const requireDemoOfficer = (deps: GatewayDeps) =>
 	createMiddleware<{ Variables: Variables }>(async (c, next) => {
@@ -53,28 +74,9 @@ const requireDemoOfficer = (deps: GatewayDeps) =>
 export function createApp(deps: GatewayDeps): Hono<{ Variables: Variables }> {
 	const app = new Hono<{ Variables: Variables }>();
 
-	app.use("*", async (c, next) => {
-		const start = Date.now();
-		const requestId = c.req.header("x-request-id") ?? randomUUID();
-		c.set("requestId", requestId);
-		c.header("x-request-id", requestId);
-		try {
-			await next();
-		} finally {
-			deps.logger.info(
-				{
-					requestId,
-					method: c.req.method,
-					// Paths carry application/run/officer UUIDs — log the
-					// shape, never the ids.
-					path: c.req.path.replace(UUID_SEGMENT_RE, ":id"),
-					status: c.res.status,
-					ms: Date.now() - start,
-				},
-				"request",
-			);
-		}
-	});
+	// Shared request logging (id/method/redacted-path/ms only — never
+	// bodies, queries, or PII).
+	app.use("*", requestLogger(deps.logger));
 
 	// Production origin allow-list (FR-11.6): same-origin Vite proxy only.
 	// Skipped outside production so tests and local curl stay simple.
@@ -88,7 +90,7 @@ export function createApp(deps: GatewayDeps): Hono<{ Variables: Variables }> {
 	});
 
 	app.use("/api/*", async (c, next) => {
-		const maxSize = isDocumentUpload(c.req.method, c.req.path) ? MAX_UPLOAD_BYTES : MAX_JSON_BYTES;
+		const maxSize = isDocumentUpload(c.req.method, c.req.path) ? MAX_UPLOAD_BYTES : JSON_BODY_LIMIT;
 		return bodyLimit({
 			maxSize,
 			onError: (ctx) => ctx.json(errorBody("BODY_TOO_LARGE", "request body too large"), 413),
@@ -100,22 +102,12 @@ export function createApp(deps: GatewayDeps): Hono<{ Variables: Variables }> {
 
 	const user = requireUser(deps);
 	const officer = requireOfficer(deps);
+	const submit = applicantSubmit(deps);
 	const demo = requireDemoOfficer(deps);
 
 	// Submit rate limit (FR-11.4): 5/min/user, enforced before proxying.
-	app.post("/api/applications", user, async (c) => {
-		const me = c.var.user;
-		if (me.role !== "applicant") {
-			throw new HttpError(403, "FORBIDDEN", "applicants only");
-		}
-		if (!deps.submitLimiter.check(me.id)) {
-			throw new HttpError(429, "RATE_LIMITED", "too many submissions");
-		}
-		const key = c.req.header("Idempotency-Key")?.trim();
-		if (!key) {
-			throw new HttpError(400, "MISSING_IDEMPOTENCY_KEY", "Idempotency-Key header is required");
-		}
-		return proxyTo(c, deps, me, {
+	app.post("/api/applications", user, submit, async (c) => {
+		return proxyTo(c, deps, c.var.user, {
 			baseUrl: deps.env.applicationsUrl,
 			path: "/api/applications",
 		});
@@ -124,44 +116,22 @@ export function createApp(deps: GatewayDeps): Hono<{ Variables: Variables }> {
 	// T17 intake (SPEC-t17-t18 §2.3): draft create + submit ride the submit
 	// limiter and the long timeout (submit starts the workflow); the
 	// checklist, consent, and customer reads proxy with the normal bound.
-	app.post("/api/applications/drafts", user, async (c) => {
-		const me = c.var.user;
-		if (me.role !== "applicant") {
-			throw new HttpError(403, "FORBIDDEN", "applicants only");
-		}
-		if (!deps.submitLimiter.check(me.id)) {
-			throw new HttpError(429, "RATE_LIMITED", "too many submissions");
-		}
-		const key = c.req.header("Idempotency-Key")?.trim();
-		if (!key) {
-			throw new HttpError(400, "MISSING_IDEMPOTENCY_KEY", "Idempotency-Key header is required");
-		}
+	app.post("/api/applications/drafts", user, submit, async (c) => {
 		return proxyTo(
 			c,
 			deps,
-			me,
+			c.var.user,
 			{ baseUrl: deps.env.applicationsUrl, path: "/api/applications/drafts" },
 			LONG_UPSTREAM_TIMEOUT_MS,
 		);
 	});
 
-	app.post("/api/applications/:id/submit", user, async (c) => {
-		const me = c.var.user;
-		if (me.role !== "applicant") {
-			throw new HttpError(403, "FORBIDDEN", "applicants only");
-		}
-		if (!deps.submitLimiter.check(me.id)) {
-			throw new HttpError(429, "RATE_LIMITED", "too many submissions");
-		}
-		const key = c.req.header("Idempotency-Key")?.trim();
-		if (!key) {
-			throw new HttpError(400, "MISSING_IDEMPOTENCY_KEY", "Idempotency-Key header is required");
-		}
+	app.post("/api/applications/:id/submit", user, submit, async (c) => {
 		const path = new URL(c.req.url).pathname;
 		return proxyTo(
 			c,
 			deps,
-			me,
+			c.var.user,
 			{ baseUrl: deps.env.applicationsUrl, path },
 			LONG_UPSTREAM_TIMEOUT_MS,
 		);
@@ -214,21 +184,14 @@ export function createApp(deps: GatewayDeps): Hono<{ Variables: Variables }> {
 			throw new HttpError(502, "BAD_GATEWAY", "upstream service unavailable");
 		}
 		try {
-			const fetchImpl = deps.fetchImpl ?? fetch;
+			// Same signed identity the proxy path uses, with the 5s bound —
+			// internalFetch maps transport failures to the 502 path below.
 			const loanPath = `/internal/loans/by-application/${id}`;
-			const loanRes = await fetchImpl(`${deps.env.loansUrl.replace(/\/$/, "")}${loanPath}`, {
-				method: "GET",
-				headers: {
-					...signInternalHeaders(deps.env.internalSecret, {
-						userId: me.id,
-						role: me.role,
-						email: me.email,
-						method: "GET",
-						path: loanPath,
-						requestId,
-					}),
-				},
-				signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+			const loanRes = await internalFetch(deps.env.loansUrl, loanPath, me, {
+				secret: deps.env.internalSecret,
+				fetchImpl: deps.fetchImpl,
+				requestId,
+				timeoutMs: UPSTREAM_TIMEOUT_MS,
 			});
 			if (loanRes.ok) {
 				const loanBody = (await loanRes.json()) as {
@@ -322,14 +285,11 @@ export function createApp(deps: GatewayDeps): Hono<{ Variables: Variables }> {
 		);
 	});
 
-	app.notFound((c) => c.json(errorBody("NOT_FOUND", "not found"), 404));
-	app.onError((err, c) => {
-		if (err instanceof HttpError) {
-			return c.json(errorBody(err.code, err.message, err.fields), err.status as 400);
-		}
-		deps.logger.error({ err }, "unhandled error");
-		return c.json(errorBody("INTERNAL_ERROR", "internal error"), 500);
-	});
+	// Typed error envelope (no stacks); the health shape, cookie auth, and
+	// origin check above stay gateway-specific. The cast bridges
+	// GatewayVariables (cookie session) to the signed identity shape —
+	// the handlers only touch the status/code/message envelope.
+	installErrorHandlers(app as unknown as ServiceApp, deps.logger);
 
 	return app;
 }

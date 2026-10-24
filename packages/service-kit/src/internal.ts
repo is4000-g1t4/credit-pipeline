@@ -192,6 +192,19 @@ export const requireService = createMiddleware<{ Variables: ServiceVariables }>(
 	if (me.role !== "service") throw new HttpError(403, "FORBIDDEN", "service role required");
 	await next();
 });
+/** Guards routes one role may call: 401 without a signed user, 403 on
+ * role mismatch. The default message names the role (`officer` →
+ * "officer role required"); pass `message` to override it. */
+export const requireRole = (role: InternalRole, message?: string) =>
+	createMiddleware<{ Variables: ServiceVariables }>(async (c, next) => {
+		const me = c.var.user;
+		if (!me) throw new HttpError(401, "UNAUTHENTICATED", "login required");
+		if (me.role !== role) throw new HttpError(403, "FORBIDDEN", message ?? `${role} role required`);
+		await next();
+	});
+
+/** Officer-only routes (review queues, approvals, case reads). */
+export const requireOfficer = requireRole("officer");
 /** Guards `/api/*` + `/internal/*`; exports the resolved user on context. */
 export const requireInternal = (secret: string) =>
 	createMiddleware<{ Variables: ServiceVariables }>(async (c, next) => {

@@ -8,6 +8,8 @@ import {
 	Api,
 	getCase,
 	gotoHydrated,
+	smeApplication,
+	submitApplication,
 	uiLogin,
 	uiLogout,
 	waitStatus,
@@ -19,39 +21,33 @@ test("Tomás refer path: SME submit → queue → approve $50k → booked", asyn
 	await applicant.login("tomas@cafe-aurora.example");
 	await uiLogin(page, "tomas@cafe-aurora.example");
 
-	// --- Step 1: $60,000/60m SME term loan. ---
-	await gotoHydrated(page, "/apply");
-	await page.locator("#field-borrower-type").selectOption("sme");
-	await page.locator("#field-amount-usd").fill("60000");
-	await page.locator("#field-term-months").fill("60");
-	await page.locator("#field-purpose").fill("Café expansion");
-	await page.getByRole("button", { name: "Continue" }).click();
-
-	// --- Step 2: identity + SME block (§5.1 Tomás vector). ---
-	await page.locator("#field-full-name").fill("Tomas Aurora");
-	await page.locator("#field-date-of-birth").fill("1985-03-20");
-	await page.locator("#field-national-id").fill("TOMAS42X1");
-	await page.locator("#field-phone").fill("+1-555-0200");
-	await page.locator("#field-address").fill("2 Café Street");
-	await page.locator("#field-city").fill("Demo City");
-	await page.locator("#field-company-name").fill("Café Aurora");
-	await page.locator("#field-registration-no").fill("CAFEAUR1");
-	await page.locator("#field-industry").selectOption("hospitality");
-	await page.locator("#field-years-trading").fill("4");
-	await page.locator("#field-employees").fill("9");
-	await page.locator("#field-annual-revenue").fill("610000");
-	await page.locator("#field-monthly-fcf").fill("3800");
-	await page.locator("#field-debt-service").fill("300");
-	await page.getByRole("button", { name: "Continue" }).click();
-
-	// --- Step 3: consents + submit → /applications/:id. ---
-	await page.getByLabel("Credit check consent").check();
-	await page.getByLabel("Data processing consent").check();
-	await page.getByLabel("Terms consent").check();
-	await page.getByRole("button", { name: "Submit application" }).click();
-	await page.waitForURL(/\/applications\/.+/);
-	const appId = page.url().split("/").pop() ?? "";
-	expect(appId).toMatch(/^[0-9a-f-]{36}$/);
+	const appId = await submitApplication(
+		page,
+		smeApplication({
+			amountCents: 6_000_000,
+			termMonths: 60,
+			purpose: "Café expansion",
+			identity: {
+				fullName: "Tomas Aurora",
+				dob: "1985-03-20",
+				nationalId: "TOMAS42X1",
+				email: "tomas@cafe-aurora.example",
+				phone: "+1-555-0200",
+				address: "2 Café Street",
+				city: "Demo City",
+			},
+			sme: {
+				companyName: "Café Aurora",
+				registrationNumber: "CAFEAUR1",
+				industry: "hospitality",
+				yearsTrading: 4,
+				employees: 9,
+				annualRevenueCents: 61_000_000,
+				monthlyFcfCents: 380_000,
+				existingDebtServiceCents: 30_000,
+			},
+		}),
+	);
 
 	// Referred, with amount + SECTOR_REVIEW reasons (API state proof).
 	const pending = await waitStatus(applicant, appId, "pending_review");

@@ -8,9 +8,9 @@ dotenv.config({
 	path: fileURLToPath(new URL("../../../.env", import.meta.url)),
 });
 
-import { randomUUID } from "node:crypto";
 import { createDb } from "@credit/db";
-import { createLogger, signInternalHeaders } from "@credit/service-kit";
+import { createLogger } from "@credit/service-kit";
+import { jsonResponse, signedInternalHeaders, testUser } from "@credit/service-kit/test";
 import { createApp } from "../src/app.js";
 import { loadEnv } from "../src/env.js";
 
@@ -39,13 +39,6 @@ export interface TestContext {
 	secret: string;
 }
 
-function jsonResponse(status: number, body: unknown): Response {
-	return new Response(JSON.stringify(body), {
-		status,
-		headers: { "content-type": "application/json" },
-	});
-}
-
 export function setupApp(): TestContext {
 	const env = loadEnv();
 	const { db, sql } = createDb(env.databaseUrl);
@@ -64,10 +57,10 @@ export function setupApp(): TestContext {
 		const path = new URL(raw).pathname;
 		if (path === "/internal/stats") {
 			return raw.includes("4001") || raw.includes("applications")
-				? jsonResponse(200, ctx.stats.applications)
-				: jsonResponse(200, ctx.stats.loans);
+				? jsonResponse(ctx.stats.applications, 200)
+				: jsonResponse(ctx.stats.loans, 200);
 		}
-		return jsonResponse(404, { error: "not found" });
+		return jsonResponse({ error: "not found" }, 404);
 	}) as typeof fetch;
 	ctx.app = createApp({
 		db,
@@ -80,7 +73,8 @@ export function setupApp(): TestContext {
 }
 
 export function createUser(role: "applicant" | "officer" = "applicant"): TestUser {
-	return { id: randomUUID(), email: `svc-${randomUUID()}@example.com`, role };
+	const base = testUser(role);
+	return { id: base.id, email: base.email, role };
 }
 
 /** Signed internal headers for `app.request`, as the P1b gateway would send. */
@@ -91,14 +85,7 @@ export function signed(
 	path: string,
 	body?: string,
 ): Record<string, string> {
-	return signInternalHeaders(ctx.secret, {
-		userId: user.id,
-		role: user.role,
-		email: user.email,
-		method,
-		path,
-		body,
-	});
+	return signedInternalHeaders(ctx.secret, user, method, path, { body });
 }
 
 export async function teardown(ctx: TestContext): Promise<void> {

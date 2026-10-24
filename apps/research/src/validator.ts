@@ -1,7 +1,11 @@
 // Blocking validator, pure functions (§6.4). Server assigns UUIDs, computes
 // snapshot hashes, and discards the model's self-reported confidence.
-import { createHash } from "node:crypto";
+import { locateQuote, sha256Hex } from "@credit/core";
 import { z } from "zod";
+
+// Re-exported so existing importers (routes, run, eval, tests) keep working
+// from this module; the implementations live in @credit/core.
+export { locateQuote, sha256Hex };
 
 // --- Model output schema (§6.3) ---
 
@@ -90,62 +94,6 @@ export interface Snapshot {
 	quoteEnd: number;
 	snapshotHash: string;
 	rawContentSha256: string;
-}
-
-export function sha256Hex(text: string): string {
-	return createHash("sha256").update(text, "utf8").digest("hex");
-}
-
-/**
- * Locate a quote in fetched text. Models routinely copy a hard-wrapped source
- * with spaces where the page has newlines; exact-only matching would drop a
- * valid citation. Try exact first, then a whitespace-normalized match and
- * return the canonical slice so persisted offsets remain exact.
- */
-export function locateQuote(
-	text: string,
-	quote: string,
-): { quote: string; quoteStart: number; quoteEnd: number } | null {
-	const exact = text.indexOf(quote);
-	if (exact >= 0) return { quote, quoteStart: exact, quoteEnd: exact + quote.length };
-	const normalize = (value: string): { text: string; map: number[] } => {
-		const chars: string[] = [];
-		const map: number[] = [];
-		let lastSpace = false;
-		for (let i = 0; i < value.length; i++) {
-			const ch = value[i] as string;
-			if (/\s/.test(ch)) {
-				if (!lastSpace && chars.length > 0) {
-					chars.push(" ");
-					map.push(i);
-					lastSpace = true;
-				}
-			} else {
-				chars.push(ch);
-				map.push(i);
-				lastSpace = false;
-			}
-		}
-		if (chars[chars.length - 1] === " ") {
-			chars.pop();
-			map.pop();
-		}
-		return { text: chars.join(""), map };
-	};
-	const haystack = normalize(text);
-	const needle = normalize(quote.trim());
-	if (needle.text.length === 0) return null;
-	const hit = haystack.text.indexOf(needle.text);
-	if (hit < 0) return null;
-	const start = haystack.map[hit];
-	const end = haystack.map[hit + needle.text.length - 1];
-	if (start === undefined || end === undefined) return null;
-	const canonical = text.slice(start, end + 1);
-	// Whitespace normalization is for hard wraps, not for stitching separate
-	// bullets, table rows, or paragraphs into one quote.
-	if (/\n\s*\n/.test(canonical)) return null;
-	if (/\n\s*(?:[-*+|#]|\d+\.)\s/.test(canonical)) return null;
-	return { quote: canonical, quoteStart: start, quoteEnd: end + 1 };
 }
 
 /** Deterministic window (≤20 KB) around the quote; offsets are string

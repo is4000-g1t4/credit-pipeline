@@ -20,7 +20,7 @@ import { expect, test } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Api, ApiError, gotoHydrated, uiLogin, uiLogout } from "./helpers.js";
+import { Api, ApiError, gotoHydrated, smeApplication, uiLogin, uiLogout } from "./helpers.js";
 
 const FIXTURE = resolve(dirname(fileURLToPath(import.meta.url)), "fixtures/mismatch.pdf");
 
@@ -42,16 +42,11 @@ interface Detail {
 	};
 }
 
-function smePayload(email: string): Record<string, unknown> {
-	return {
-		type: "sme",
-		product: "sme_term_loan",
+function smePayload(email: string) {
+	return smeApplication({
 		amountCents: 6_000_000,
 		termMonths: 60,
 		purpose: "documents e2e",
-		consents: [true, true, true],
-		// No documentProcessingConsent here: the test grants it through the
-		// applicant UI (legacy opt-in path).
 		identity: {
 			fullName: "Tomas Aurora",
 			dob: "1985-03-20",
@@ -71,7 +66,9 @@ function smePayload(email: string): Record<string, unknown> {
 			monthlyFcfCents: 380_000,
 			existingDebtServiceCents: 30_000,
 		},
-	};
+	});
+	// No documentProcessingConsent here: the test grants it through the
+	// applicant UI (legacy opt-in path).
 }
 
 test("documents: consent → upload → claim → crosscheck → draft chase (no send)", async ({

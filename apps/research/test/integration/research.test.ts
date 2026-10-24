@@ -25,7 +25,12 @@ import {
 	ensureRun,
 	finalizeFailure,
 	getRun,
+	heartbeatContextStage,
+	heartbeatRun,
+	reapContextStages,
 	reapStaleRuns,
+	claimContextStage,
+	initContextStage,
 	type CaseFactsPayload,
 } from "../../src/lifecycle.js";
 import { executeRun } from "../../src/run.js";
@@ -36,6 +41,9 @@ import { sha256Hex } from "../../src/validator.js";
 import {
 	APPLICANT,
 	caseFacts,
+	degradedObservability,
+	get,
+	post,
 	setupApp,
 	signed,
 	successFixture,
@@ -44,25 +52,7 @@ import {
 	type TestContext,
 	type TestUser,
 } from "../helper.js";
-import { claimOfficerAccess } from "../../src/access.js";
-
-async function post(
-	ctx: TestContext,
-	path: string,
-	who: TestUser,
-	payload: unknown,
-): Promise<Response> {
-	const body = JSON.stringify(payload);
-	return ctx.app.request(path, {
-		method: "POST",
-		headers: { "content-type": "application/json", ...signed(ctx, who, "POST", path, {}, body) },
-		body,
-	});
-}
-
-async function get(ctx: TestContext, path: string, who: TestUser): Promise<Response> {
-	return ctx.app.request(path, { headers: signed(ctx, who, "GET", path) });
-}
+import { claimOfficerAccess, grantResearchAccess } from "../../src/access.js";
 
 function ensurePayload(facts: CaseFactsPayload): Record<string, unknown> {
 	return {
@@ -391,12 +381,7 @@ describe("run token + reaper (lifecycle)", () => {
 					runner: stubAgentRunner({ brief: use.brief, fetched: use.fetched }),
 					judge: stubSupportJudge(),
 					repair: stubLanguageRepair(),
-					observability: {
-						status: "degraded",
-						hooksFor: () => ({ detach: () => {} }),
-						trackModelCall: (_opts, fn) => fn(),
-						trackToolExecution: (_opts, fn) => fn(),
-					},
+					observability: degradedObservability,
 				},
 				run.id,
 				run.runToken as string,
@@ -449,6 +434,64 @@ describe("run token + reaper (lifecycle)", () => {
 			}
 			expect(byId.get(live.id)?.status).toBe("running");
 			expect(await reapStaleRuns(ctx.db)).toEqual([]);
+		} finally {
+			await teardown(ctx);
+		}
+	});
+
+	it("a heartbeat run is not reaped: backdated then refreshed beats the reaper", async () => {
+		const ctx = setupApp();
+		try {
+			const env = { ...loadEnv(), agentsEnabled: true };
+			const facts = caseFacts();
+			const { run } = await ensureRun(ctx.db, env, {
+				applicationId: facts.applicationId,
+				requestedBy: randomUUID(),
+				caseFacts: facts,
+				aiResearchConsent: true,
+			});
+			const token = run.runToken as string;
+			expect(await claimRun(ctx.db, run.id, token)).toBe(true);
+			// Silence the heartbeat past the 90s reaper threshold, then let
+			// the live worker beat again: the reaper must not select it.
+			await ctx.db.execute(
+				sql`UPDATE agent_runs SET heartbeat_at = now() - INTERVAL '91 seconds' WHERE id = ${run.id}`,
+			);
+			await heartbeatRun(ctx.db, run.id, token);
+			expect(await reapStaleRuns(ctx.db)).not.toContain(run.id);
+			expect((await getRun(ctx.db, run.id))?.status).toBe("running");
+		} finally {
+			await teardown(ctx);
+		}
+	});
+
+	it("a heartbeat context stage is not reaped: backdated then refreshed beats the reaper", async () => {
+		const ctx = setupApp();
+		try {
+			const env = { ...loadEnv(), agentsEnabled: true, contextEnabled: true };
+			const facts = caseFacts();
+			const { run } = await ensureRun(ctx.db, env, {
+				applicationId: facts.applicationId,
+				requestedBy: randomUUID(),
+				caseFacts: facts,
+				aiResearchConsent: true,
+			});
+			const token = run.runToken as string;
+			expect(await claimRun(ctx.db, run.id, token)).toBe(true);
+			expect(await initContextStage(ctx.db, env, run.id, token, "queued")).toBe(true);
+			const stageToken = await claimContextStage(ctx.db, env, run.id, token, {
+				promptVersion: "context-v1",
+				model: "test-context-model",
+			});
+			expect(stageToken).not.toBe(null);
+			// Silence the stage heartbeat past the 90s reaper threshold,
+			// then let the live stage beat again.
+			await ctx.db.execute(
+				sql`UPDATE agent_runs SET context_heartbeat_at = now() - INTERVAL '91 seconds' WHERE id = ${run.id}`,
+			);
+			await heartbeatContextStage(ctx.db, run.id, stageToken as string);
+			expect(await reapContextStages(ctx.db)).not.toContain(run.id);
+			expect((await getRun(ctx.db, run.id))?.contextStatus).toBe("running");
 		} finally {
 			await teardown(ctx);
 		}
@@ -560,6 +603,15 @@ describe("app-scoped views, reviews, and bundle", () => {
 			const { runId, findings } = await settledRun(ctx, factsA);
 			await settledRun(ctx, factsB);
 
+			// The caller holds a grant on application B: the 404s below can
+			// only come from the run/application mismatch, never from access.
+			await grantResearchAccess(ctx.db, {
+				applicationId: factsB.applicationId,
+				userId: officer.id,
+				accessRole: "compliance",
+				grantedBy: randomUUID(),
+				granterRole: "service",
+			});
 			const crossBundle = await get(
 				ctx,
 				`/internal/research/applications/${factsB.applicationId}/runs/${runId}/bundle`,
@@ -664,12 +716,7 @@ describe("app-scoped views, reviews, and bundle", () => {
 					runner: stubAgentRunner({ brief: use.brief, fetched: use.fetched }),
 					judge: stubSupportJudge(),
 					repair: stubLanguageRepair(),
-					observability: {
-						status: "degraded",
-						hooksFor: () => ({ detach: () => {} }),
-						trackModelCall: (_opts, fn) => fn(),
-						trackToolExecution: (_opts, fn) => fn(),
-					},
+					observability: degradedObservability,
 				},
 				run.id,
 				token,
@@ -738,12 +785,7 @@ describe("app-scoped views, reviews, and bundle", () => {
 					runner: reapingRunner,
 					judge: stubSupportJudge(),
 					repair: stubLanguageRepair(),
-					observability: {
-						status: "degraded",
-						hooksFor: () => ({ detach: () => {} }),
-						trackModelCall: (_opts, fn) => fn(),
-						trackToolExecution: (_opts, fn) => fn(),
-					},
+					observability: degradedObservability,
 				},
 				run.id,
 				token,
@@ -777,13 +819,15 @@ describe("app-scoped views, reviews, and bundle", () => {
 			const officer = user("officer");
 			const env = { ...loadEnv(), agentsEnabled: true };
 			const facts = caseFacts();
-			// Queued run: no succeeded bundle yet.
+			// Queued run: no succeeded bundle yet. Claim access first so the
+			// 404 below proves the non-succeeded status, not the access check.
 			const { run } = await ensureRun(ctx.db, env, {
 				applicationId: facts.applicationId,
 				requestedBy: randomUUID(),
 				caseFacts: facts,
 				aiResearchConsent: true,
 			});
+			await claimOfficerAccess(ctx.db, facts.applicationId, officer.id);
 			const queued = await get(
 				ctx,
 				`/internal/research/applications/${facts.applicationId}/runs/${run.id}/bundle`,
@@ -1223,12 +1267,6 @@ describe("failure boundary + judge budget (Wave 2.5)", () => {
 		const ctx = setupApp();
 		try {
 			const env = { ...loadEnv(), agentsEnabled: true };
-			const degraded = {
-				status: "degraded" as const,
-				hooksFor: () => ({ detach: () => {} }),
-				trackModelCall: <T>(_opts: unknown, fn: () => Promise<T>): Promise<T> => fn(),
-				trackToolExecution: <T>(_opts: unknown, fn: () => Promise<T>): Promise<T> => fn(),
-			};
 			const facts = caseFacts();
 			const { run } = await ensureRun(ctx.db, env, {
 				applicationId: facts.applicationId,
@@ -1245,7 +1283,7 @@ describe("failure boundary + judge budget (Wave 2.5)", () => {
 						runner: stubAgentRunner({ brief: null, fetched: [] }),
 						judge: stubSupportJudge(),
 						repair: stubLanguageRepair(),
-						observability: degraded,
+						observability: degradedObservability,
 					},
 					run.id,
 					"not-a-token",
@@ -1270,7 +1308,7 @@ describe("failure boundary + judge budget (Wave 2.5)", () => {
 						runner: stubAgentRunner({ brief: null, fetched: [], throw: new Error("boom") }),
 						judge: stubSupportJudge(),
 						repair: stubLanguageRepair(),
-						observability: degraded,
+						observability: degradedObservability,
 					},
 					second.run.id,
 					second.run.runToken as string,
@@ -1305,12 +1343,7 @@ describe("failure boundary + judge budget (Wave 2.5)", () => {
 					runner: stubAgentRunner({ brief: use.brief, fetched: use.fetched }),
 					judge: stubSupportJudge(),
 					repair: stubLanguageRepair(),
-					observability: {
-						status: "degraded",
-						hooksFor: () => ({ detach: () => {} }),
-						trackModelCall: (_opts, fn) => fn(),
-						trackToolExecution: (_opts, fn) => fn(),
-					},
+					observability: degradedObservability,
 				},
 				run.id,
 				run.runToken as string,
@@ -1351,12 +1384,7 @@ describe("failure boundary + judge budget (Wave 2.5)", () => {
 					runner: stubAgentRunner({ brief: use.brief, fetched: use.fetched }),
 					judge: stubSupportJudge(),
 					repair: stubLanguageRepair(),
-					observability: {
-						status: "degraded",
-						hooksFor: () => ({ detach: () => {} }),
-						trackModelCall: (_opts, fn) => fn(),
-						trackToolExecution: (_opts, fn) => fn(),
-					},
+					observability: degradedObservability,
 				},
 				run.id,
 				run.runToken as string,
@@ -1422,12 +1450,7 @@ describe("failure boundary + judge budget (Wave 2.5)", () => {
 					}),
 					judge: stubSupportJudge(),
 					repair: stubLanguageRepair(),
-					observability: {
-						status: "degraded",
-						hooksFor: () => ({ detach: () => {} }),
-						trackModelCall: (_opts, fn) => fn(),
-						trackToolExecution: (_opts, fn) => fn(),
-					},
+					observability: degradedObservability,
 				},
 				run.id,
 				run.runToken as string,
@@ -1746,6 +1769,125 @@ describe("correctness boundaries (Wave A)", () => {
 			expect(latest.findings).toHaveLength(0);
 			expect(latest.validation?.discarded).toHaveLength(1);
 			expect(latest.brief?.summary).toBe("No supported findings remained after validation.");
+		} finally {
+			await teardown(ctx);
+		}
+	});
+
+	it("drops evidence redirected to another registrable domain, citation_valid < 1", async () => {
+		const quote = "Acme Ltd filed accounts for the year ending March 2025 on time.";
+		const requestedUrl = "https://find-and-update.company-information.service.gov.uk/company/9";
+		const returnedUrl = "https://acme-mirror.example.com/company/9";
+		const ctx = setupApp({
+			brief: {
+				summary: "One finding.",
+				findings: [
+					{
+						claim: quote,
+						category: "registry",
+						whyItMatters: "Context for the application.",
+						allegationStatus: "unknown",
+						entityMatch: {
+							identifierType: "name_city",
+							value: "Acme Ltd, Leeds",
+							confidence: "medium",
+						},
+						evidenceLocalIds: ["ev-1"],
+					},
+				],
+				evidence: [
+					{
+						localId: "ev-1",
+						url: requestedUrl,
+						title: "Filings",
+						publisher: "Companies House",
+						publishedAt: null,
+						quote,
+					},
+				],
+				contradictions: [],
+				unknowns: [],
+				questionsForOfficer: [],
+			},
+			fetched: [
+				{
+					requestedUrl,
+					returnedUrl,
+					title: "Filings",
+					searchPublishedDate: null,
+					rawContent: `page\n${quote}\nmore`,
+				},
+			],
+		});
+		try {
+			const officer = user("officer");
+			const facts = caseFacts();
+			await post(ctx, "/internal/research/runs/ensure", officer, ensurePayload(facts));
+			const latest = await waitLatest(ctx, facts.applicationId, officer);
+			// The redirect left the allowlist: evidence dropped, the citing
+			// finding discarded, and the citation score reflects the drop.
+			expect(latest.run.status).toBe("succeeded");
+			expect(latest.evidence).toHaveLength(0);
+			expect(latest.findings).toHaveLength(0);
+			expect(latest.validation?.scores.citation_valid).toBeLessThan(1);
+		} finally {
+			await teardown(ctx);
+		}
+	});
+
+	it("drops evidence whose final URL is private, citation_valid < 1", async () => {
+		const quote = "Acme Ltd filed accounts for the year ending March 2025 on time.";
+		const url = "http://10.0.0.5/x";
+		const ctx = setupApp({
+			brief: {
+				summary: "One finding.",
+				findings: [
+					{
+						claim: quote,
+						category: "registry",
+						whyItMatters: "Context for the application.",
+						allegationStatus: "unknown",
+						entityMatch: {
+							identifierType: "name_city",
+							value: "Acme Ltd, Leeds",
+							confidence: "medium",
+						},
+						evidenceLocalIds: ["ev-1"],
+					},
+				],
+				evidence: [
+					{
+						localId: "ev-1",
+						url,
+						title: "Filings",
+						publisher: "Companies House",
+						publishedAt: null,
+						quote,
+					},
+				],
+				contradictions: [],
+				unknowns: [],
+				questionsForOfficer: [],
+			},
+			fetched: [
+				{
+					requestedUrl: url,
+					returnedUrl: url,
+					title: "Filings",
+					searchPublishedDate: null,
+					rawContent: `page\n${quote}\nmore`,
+				},
+			],
+		});
+		try {
+			const officer = user("officer");
+			const facts = caseFacts();
+			await post(ctx, "/internal/research/runs/ensure", officer, ensurePayload(facts));
+			const latest = await waitLatest(ctx, facts.applicationId, officer);
+			expect(latest.run.status).toBe("succeeded");
+			expect(latest.evidence).toHaveLength(0);
+			expect(latest.findings).toHaveLength(0);
+			expect(latest.validation?.scores.citation_valid).toBeLessThan(1);
 		} finally {
 			await teardown(ctx);
 		}

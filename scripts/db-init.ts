@@ -1,4 +1,4 @@
-// pnpm db:init — creates the four service databases (plus the Temporal
+// pnpm db:init — creates the six service databases (plus the Temporal
 // pair, belt-and-braces) if missing, so existing clusters/volumes
 // self-provision without wiping data. Runs after db:wait, before migrate.
 import { fileURLToPath } from "node:url";

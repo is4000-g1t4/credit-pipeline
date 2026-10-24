@@ -5,96 +5,29 @@ import {
 	validateNavigatorAnswer,
 	type RetrievedSection,
 } from "../src/answer.js";
-import { policyCaseContextSchema, signalRef, type PolicyCaseContext } from "../src/case-context.js";
+import { policyCaseContextSchema, signalRef } from "../src/case-context.js";
 import { signCaseToken, verifyCaseToken } from "../src/case-token.js";
 import { parsePolicyMarkdown } from "../src/markdown.js";
-
-const markdown = `---
-policy_key: POL-CR-001
-title: Credit Underwriting Policy
-domain: credit
-policy_family: underwriting
-product_scope: all
-jurisdiction: SG
-version: v1
-owner_email: policy.owner@example.com
-effective_from: 2026-01-01
----
-
-## 1 Purpose {#1}
-
-This policy sets the credit underwriting requirements.
-
-## 4.2 Affordability {#4.2}
-
-DSCR must be at least 1.25x for SME term loans. Exceptions require documented approval by the credit committee.
-`;
-
-const retrieved: RetrievedSection[] = [
-	{
-		policyId: "p1",
-		policyVersionId: "11111111-1111-4111-8111-111111111111",
-		policyKey: "POL-CR-001",
-		title: "Credit Underwriting Policy",
-		sectionId: "4.2",
-		heading: "4.2 Affordability",
-		version: "v1",
-		effectiveFrom: "2026-01-01",
-		effectiveTo: null,
-		body: "DSCR must be at least 1.25x for SME term loans. Exceptions require documented approval by the credit committee.",
-		policyFamily: "underwriting",
-		productScope: "all",
-		jurisdiction: "SG",
-	},
-];
-
-const baseContext = (): PolicyCaseContext => ({
-	applicationId: "22222222-2222-4222-8222-222222222222",
-	runId: "33333333-3333-4333-8333-333333333333",
-	authorisingActorId: "44444444-4444-4444-8444-444444444444",
-	authorisingActorRole: "service",
-	asOf: "2026-06-30",
-	type: "sme",
-	product: "sme_term_loan",
-	amountBand: "50k_250k",
-	termBand: "12_36m",
-	signals: [
-		{
-			ref: signalRef({
-				type: "negative_balance",
-				metric: "negative_eod_days",
-				periodStart: "2026-01-01",
-				periodEnd: "2026-06-30",
-				accountScope: "account_1",
-			}),
-			type: "negative_balance",
-			metric: "negative_eod_days",
-			periodStart: "2026-01-01",
-			periodEnd: "2026-06-30",
-			accountScope: "account_1",
-			status: "review",
-			confidence: "high",
-		},
-	],
-	documentFindings: [{ field: "company_name", status: "mismatch", confidence: "medium", index: 0 }],
-});
+import { baseContext, policyMarkdown, retrieved } from "./helper.js";
 
 describe("policy markdown", () => {
 	it("parses frontmatter and anchored sections", () => {
-		const parsed = parsePolicyMarkdown(markdown);
+		const parsed = parsePolicyMarkdown(policyMarkdown);
 		expect(parsed.frontmatter.policy_key).toBe("POL-CR-001");
 		expect(parsed.sections).toHaveLength(2);
 		expect(parsed.sections[1]?.sectionId).toBe("4.2");
 		expect(parsed.sections[1]?.body).toContain("DSCR");
 	});
 	it("rejects duplicate anchors", () => {
-		expect(() => parsePolicyMarkdown(markdown.replace("{#4.2}", "{#1}"))).toThrow(
+		expect(() => parsePolicyMarkdown(policyMarkdown.replace("{#4.2}", "{#1}"))).toThrow(
 			/duplicate section id/,
 		);
 	});
 	it("rejects an unanchored section heading", () => {
 		expect(() =>
-			parsePolicyMarkdown(markdown.replace("## 4.2 Affordability {#4.2}", "## 4.2 Affordability")),
+			parsePolicyMarkdown(
+				policyMarkdown.replace("## 4.2 Affordability {#4.2}", "## 4.2 Affordability"),
+			),
 		).toThrow(/no anchored sections|unanchored/);
 	});
 });
@@ -206,7 +139,7 @@ describe("navigator citation validation", () => {
 		expect(result.answer.limitations).toEqual(["The corpus is silent on this point."]);
 	});
 	it("rejects applicant PII in a policy body", () => {
-		const withPii = markdown.replace(
+		const withPii = policyMarkdown.replace(
 			"DSCR must be at least 1.25x for SME term loans.",
 			"Contact alice@example.com for the DSCR rule.",
 		);
@@ -421,5 +354,32 @@ describe("case answer validation", () => {
 		expect(result.ok).toBe(true);
 		expect(result.answer.items).toHaveLength(1);
 		expect(result.answer.items[0]?.ref).toBe(context.signals[0]!.ref);
+	});
+	it("rejects a valid quote bound to the wrong section or policy", () => {
+		const context = baseContext();
+		const opts = {
+			secret: "citation-secret",
+			asOf: context.asOf,
+			queryId: "66666666-6666-4666-8666-666666666666",
+		};
+		for (const citations of [
+			[{ policyKey: "POL-CR-001", sectionId: "9.9", quote: "DSCR must be at least 1.25x" }],
+			[{ policyKey: "POL-CR-999", sectionId: "4.2", quote: "DSCR must be at least 1.25x" }],
+		]) {
+			expect(
+				validateNavigatorAnswer(
+					{
+						status: "succeeded",
+						segments: [
+							{ text: "SME term loans require DSCR of at least 1.25x.", citationIndexes: [0] },
+						],
+						citations,
+						limitations: [],
+					},
+					retrieved,
+					opts,
+				).ok,
+			).toBe(false);
+		}
 	});
 });

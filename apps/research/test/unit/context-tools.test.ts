@@ -19,7 +19,7 @@ const TEST_AS_OF = "2026-01-15";
 function toolsFor(
 	responses: Record<string, { status?: number; body?: unknown; raw?: string }>,
 	maxCalls = 8,
-	opts: { applicantUserId?: string; asOfDate?: string } = {},
+	opts: { asOfDate?: string } = {},
 ) {
 	const env = loadEnv();
 	const seen: Array<{ url: string; headers: Record<string, string> }> = [];
@@ -39,7 +39,6 @@ function toolsFor(
 		applicationId: APP_ID,
 		caseFacts: { type: "sme", aiResearchConsent: true, purpose: "must never surface" },
 		externalSummary: null,
-		applicantUserId: opts.applicantUserId,
 		asOfDate: opts.asOfDate ?? TEST_AS_OF,
 		maxCalls,
 		fetchImpl,
@@ -303,7 +302,6 @@ describe("officer-context tools", () => {
 				},
 			},
 			8,
-			{ applicantUserId },
 		);
 		expect(await tools.getLoans()).toEqual({ loans: [{ id: "loan-1", status: "active" }] });
 		// Fresh consent-gated lookup first, never the cached id alone.

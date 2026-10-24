@@ -1,10 +1,20 @@
 // Dual-secret auth: `/api/*` uses `apiSecret`, `/internal/*` uses
 // `internalSecret` (each defaulting to `secret`). A wrong secret on either
 // prefix is rejected; each secret is accepted only on its own prefix.
+import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { beforeEach, describe, expect, it } from "vitest";
+import { GatewayError } from "../src/gateway.js";
+import { HttpError } from "../src/http.js";
 import { clearReplayCache, signInternalHeaders } from "../src/internal.js";
-import { createService, type ServiceApp } from "../src/service.js";
+import {
+	createService,
+	installErrorHandlers,
+	JSON_BODY_LIMIT,
+	requestLogger,
+	UUID_SEGMENT_RE,
+	type ServiceApp,
+} from "../src/service.js";
 import type { Logger } from "../src/logger.js";
 
 const API_SECRET = "api-secret-1234567890abcdef12345678";
@@ -85,5 +95,67 @@ describe("createService dual secrets", () => {
 			headers: signed(API_SECRET, "/internal/ping"),
 		});
 		expect(internal.status).toBe(200);
+	});
+});
+
+describe("extracted middleware", () => {
+	it("redacts UUID path segments and echoes the request id", async () => {
+		const seen: Array<Record<string, unknown>> = [];
+		const logger = {
+			info: (obj: Record<string, unknown>) => {
+				seen.push(obj);
+			},
+			error: () => {},
+		} as unknown as Logger;
+		const app: ServiceApp = new Hono();
+		app.use("*", requestLogger(logger));
+		app.get("/api/loans/:id", (c) => c.json({ ok: true }));
+		const id = randomUUID();
+		const res = await app.request(`/api/loans/${id}`, { headers: { "x-request-id": "req-1" } });
+		expect(res.status).toBe(200);
+		expect(res.headers.get("x-request-id")).toBe("req-1");
+		expect(seen).toHaveLength(1);
+		expect(seen[0]).toMatchObject({
+			requestId: "req-1",
+			method: "GET",
+			path: "/api/loans/:id",
+			status: 200,
+		});
+		expect(typeof seen[0]?.["ms"]).toBe("number");
+	});
+
+	it("exposes the shared JSON limit and UUID pattern", () => {
+		expect(JSON_BODY_LIMIT).toBe(100_000);
+		expect("loan 1525c4a6-b02c-4e87-a1e5-95b0bbcd567c here".replace(UUID_SEGMENT_RE, ":id")).toBe(
+			"loan :id here",
+		);
+	});
+
+	it("maps 404/HttpError/GatewayError and 500s unknown errors", async () => {
+		const app: ServiceApp = new Hono();
+		installErrorHandlers(app, silentLogger);
+		app.get("/http", () => {
+			throw new HttpError(403, "FORBIDDEN", "nope");
+		});
+		app.get("/gateway", () => {
+			throw new GatewayError(502, "BAD_GATEWAY", "down");
+		});
+		app.get("/boom", () => {
+			throw new Error("boom");
+		});
+		const missing = await app.request("/nope");
+		expect(missing.status).toBe(404);
+		expect(await missing.json()).toEqual({ error: { code: "NOT_FOUND", message: "not found" } });
+		const http = await app.request("/http");
+		expect(http.status).toBe(403);
+		expect(await http.json()).toEqual({ error: { code: "FORBIDDEN", message: "nope" } });
+		const gateway = await app.request("/gateway");
+		expect(gateway.status).toBe(502);
+		expect(await gateway.json()).toEqual({ error: { code: "BAD_GATEWAY", message: "down" } });
+		const boom = await app.request("/boom");
+		expect(boom.status).toBe(500);
+		expect(await boom.json()).toEqual({
+			error: { code: "INTERNAL_ERROR", message: "internal error" },
+		});
 	});
 });

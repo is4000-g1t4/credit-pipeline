@@ -1,40 +1,26 @@
 import { z } from "zod";
+import {
+	DOCUMENT_FIELDS,
+	DOCUMENT_STATUSES,
+	SIGNAL_METRICS,
+	SIGNAL_TYPES,
+	type SignalMetric,
+	type SignalType,
+} from "@credit/core";
 
-/** T18 signal vocabulary. Keep in lockstep with apps/research/src/context-validator.ts
- * and apps/applications/src/context/metrics.ts; a mismatch would silently drop
- * real signals at the policy boundary. */
-export const POLICY_SIGNAL_TYPES = [
-	"negative_balance",
-	"revenue_concentration",
-	"round_trip",
-	"cash_deposit_share",
-	"declared_vs_observed_cashflow",
-	"returned_payment",
-	"insufficient_data",
-] as const;
+/** T18 signal vocabulary. The tuples live in @credit/core (single source of
+ * truth, shared with research context-validator and applications metrics);
+ * the POLICY_* names stay for existing importers. */
+export const POLICY_SIGNAL_TYPES = SIGNAL_TYPES;
 
-export const POLICY_SIGNAL_METRICS = [
-	"negative_eod_days",
-	"top_inflow_share",
-	"round_trip_pairs",
-	"cash_inflow_share",
-	"monthly_fcf_variance",
-	"returned_count",
-	"usable_rows",
-] as const;
+export const POLICY_SIGNAL_METRICS = SIGNAL_METRICS;
 
-export const POLICY_DOCUMENT_FIELDS = [
-	"company_name",
-	"registration_number",
-	"account_holder_name",
-	"applicant_name",
-	"other",
-] as const;
+export const POLICY_DOCUMENT_FIELDS = DOCUMENT_FIELDS;
 
-export const POLICY_DOCUMENT_STATUSES = ["mismatch", "needs_chase"] as const;
+export const POLICY_DOCUMENT_STATUSES = DOCUMENT_STATUSES;
 
-export type PolicySignalType = (typeof POLICY_SIGNAL_TYPES)[number];
-export type PolicySignalMetric = (typeof POLICY_SIGNAL_METRICS)[number];
+export type PolicySignalType = SignalType;
+export type PolicySignalMetric = SignalMetric;
 
 const signalType = z.enum(POLICY_SIGNAL_TYPES);
 const signalMetric = z.enum(POLICY_SIGNAL_METRICS);

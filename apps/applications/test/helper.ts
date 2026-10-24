@@ -7,11 +7,15 @@ dotenv.config({
 	path: fileURLToPath(new URL("../../../.env", import.meta.url)),
 });
 
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { createDb } from "@credit/db";
 import { createLogger, signInternalHeaders } from "@credit/service-kit";
 import { stubGateway, type FakeGateway } from "@credit/service-kit/test";
 import { createApp } from "../src/app.js";
+import type { CustomerConfig } from "../src/customer/service.js";
+import type { OcrAdapter } from "../src/documents/ocr.js";
+import type { ScannerAdapter } from "../src/documents/scanner.js";
+import type { DocumentsConfig } from "../src/documents/service.js";
 import { loadEnv } from "../src/env.js";
 
 process.env.LOG_LEVEL ??= "silent";
@@ -30,16 +34,40 @@ export interface TestContext {
 	secret: string;
 }
 
-export function setupApp(): TestContext {
+export interface SetupOpts {
+	documents?: {
+		config?: Partial<DocumentsConfig>;
+		scanner?: ScannerAdapter;
+		ocr?: OcrAdapter;
+	};
+	customer?: {
+		config?: Partial<CustomerConfig>;
+		demoMode?: boolean;
+		demoAsOf?: Date;
+	};
+	/** App blob root shorthand (lands in documents.config.storageDir unless set there). */
+	storageDir?: string;
+}
+
+export function setupApp(opts: SetupOpts = {}): TestContext {
 	const env = loadEnv();
 	const { db, sql } = createDb(env.databaseUrl);
 	const gateway = stubGateway();
+	const documents =
+		opts.documents || opts.storageDir
+			? {
+					...opts.documents,
+					config: { storageDir: opts.storageDir, ...opts.documents?.config },
+				}
+			: undefined;
 	const app = createApp({
 		db,
 		sql,
 		env,
 		gateway,
 		logger: createLogger("applications-test"),
+		documents,
+		customer: opts.customer,
 	});
 	return { app, db, sql, gateway, secret: env.internalSecret };
 }
@@ -107,4 +135,59 @@ export function individualPayload(email: string, amountCents = 1200000): Record<
 
 export async function teardown(ctx: TestContext): Promise<void> {
 	await ctx.sql.end();
+}
+
+/** Random-tagged minimal PDF (magic bytes + salt so identical tags still differ). */
+export function pdfBytes(tag: string): Buffer {
+	return Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.from(tag), randomBytes(64)]);
+}
+
+export interface MultipartField {
+	name: string;
+	filename?: string;
+	contentType?: string;
+	data: Buffer | string;
+}
+
+/** Multipart builder for the document upload route (`file` + `kind`). */
+export function multipart(boundary: string, fields: MultipartField[]): Buffer {
+	const chunks: Buffer[] = [];
+	for (const f of fields) {
+		chunks.push(Buffer.from(`--${boundary}\r\n`, "utf8"));
+		if (f.filename) {
+			chunks.push(
+				Buffer.from(
+					`Content-Disposition: form-data; name="${f.name}"; filename="${f.filename}"\r\n` +
+						`Content-Type: ${f.contentType ?? "application/octet-stream"}\r\n\r\n`,
+					"utf8",
+				),
+			);
+		} else {
+			chunks.push(Buffer.from(`Content-Disposition: form-data; name="${f.name}"\r\n\r\n`, "utf8"));
+		}
+		chunks.push(typeof f.data === "string" ? Buffer.from(f.data, "utf8") : f.data);
+		chunks.push(Buffer.from("\r\n", "utf8"));
+	}
+	chunks.push(Buffer.from(`--${boundary}--\r\n`, "utf8"));
+	return Buffer.concat(chunks);
+}
+
+/** Signed JSON POST with an Idempotency-Key (default random). Returns the raw
+ * response — callers assert the status they expect. */
+export async function postApplication(
+	ctx: TestContext,
+	user: TestUser,
+	path: string,
+	payload: unknown,
+	key: string = randomUUID(),
+): Promise<Response> {
+	const body = JSON.stringify(payload);
+	return ctx.app.request(path, {
+		method: "POST",
+		headers: {
+			"content-type": "application/json",
+			...signed(ctx, user, "POST", path, { "Idempotency-Key": key }, body),
+		},
+		body,
+	});
 }

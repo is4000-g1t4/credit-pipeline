@@ -12,6 +12,36 @@ export class ApiError extends Error {
 	}
 }
 
+/** Build the typed error for a non-2xx JSON body; unknown shapes fall
+ * back to REQUEST_FAILED with the status in the message. */
+function parseApiError(res: Response, data?: unknown): ApiError {
+	const err = (
+		data as {
+			error?: {
+				code?: string;
+				message?: string;
+				fields?: Record<string, string[]>;
+			};
+		} | null
+	)?.error;
+	return new ApiError(
+		res.status,
+		err?.code ?? "REQUEST_FAILED",
+		err?.message ?? `request failed (${res.status})`,
+		err?.fields,
+	);
+}
+
+/** 404 → null ("not present yet"); every other error throws. */
+async function nullOn404<T>(fn: () => Promise<T>): Promise<T | null> {
+	try {
+		return await fn();
+	} catch (err) {
+		if (err instanceof ApiError && err.status === 404) return null;
+		throw err;
+	}
+}
+
 export async function api<T>(
 	path: string,
 	opts?: { method?: string; body?: unknown; headers?: Record<string, string> },
@@ -33,21 +63,7 @@ export async function api<T>(
 		throw new ApiError(res.status, "BAD_RESPONSE", `request failed (${res.status})`);
 	}
 	if (!res.ok) {
-		const err = (
-			data as {
-				error?: {
-					code?: string;
-					message?: string;
-					fields?: Record<string, string[]>;
-				};
-			}
-		)?.error;
-		throw new ApiError(
-			res.status,
-			err?.code ?? "REQUEST_FAILED",
-			err?.message ?? `request failed (${res.status})`,
-			err?.fields,
-		);
+		throw parseApiError(res, data);
 	}
 	return data as T;
 }
@@ -749,7 +765,6 @@ export async function uploadDocument(
 		credentials: "include",
 		body: form,
 	});
-	if (res.status === 204) return { file: undefined as unknown as DocumentFile };
 	let data: unknown = null;
 	try {
 		data = await res.json();
@@ -757,12 +772,7 @@ export async function uploadDocument(
 		throw new ApiError(res.status, "BAD_RESPONSE", `request failed (${res.status})`);
 	}
 	if (!res.ok) {
-		const err = (data as { error?: { code?: string; message?: string } })?.error;
-		throw new ApiError(
-			res.status,
-			err?.code ?? "REQUEST_FAILED",
-			err?.message ?? `request failed (${res.status})`,
-		);
+		throw parseApiError(res, data);
 	}
 	return data as { file: DocumentFile };
 }
@@ -772,13 +782,10 @@ export function fetchDocumentPages(applicationId: string, fileId: string): Promi
 }
 
 /** 404 → null ("no crosscheck yet"); every other error throws. */
-export async function fetchCrosscheck(applicationId: string): Promise<DocumentCrosscheck | null> {
-	try {
-		return await api<DocumentCrosscheck>(`/api/applications/${applicationId}/documents/crosscheck`);
-	} catch (err) {
-		if (err instanceof ApiError && err.status === 404) return null;
-		throw err;
-	}
+export function fetchCrosscheck(applicationId: string): Promise<DocumentCrosscheck | null> {
+	return nullOn404(() =>
+		api<DocumentCrosscheck>(`/api/applications/${applicationId}/documents/crosscheck`),
+	);
 }
 
 export function runCrosscheck(applicationId: string): Promise<DocumentCrosscheck> {
@@ -880,13 +887,8 @@ export interface CustomerProfileResponse {
 }
 
 /** 404 (no profile — legacy demo users) → null; every other error throws. */
-export async function fetchCustomerProfile(): Promise<CustomerProfileResponse | null> {
-	try {
-		return await api<CustomerProfileResponse>("/api/customer/profile");
-	} catch (err) {
-		if (err instanceof ApiError && err.status === 404) return null;
-		throw err;
-	}
+export function fetchCustomerProfile(): Promise<CustomerProfileResponse | null> {
+	return nullOn404(() => api<CustomerProfileResponse>("/api/customer/profile"));
 }
 
 export interface RequirementsResponse {
@@ -962,16 +964,14 @@ export async function downloadDocument(
 		credentials: "include",
 	});
 	if (!res.ok) {
-		let code = "REQUEST_FAILED";
-		let message = `request failed (${res.status})`;
+		let data: unknown;
 		try {
-			const data = (await res.json()) as { error?: { code?: string; message?: string } };
-			code = data.error?.code ?? code;
-			message = data.error?.message ?? message;
+			data = await res.json();
 		} catch {
-			// Binary error body — keep the status-based message.
+			// Binary error body — parseApiError falls back to the status message.
+			data = undefined;
 		}
-		throw new ApiError(res.status, code, message);
+		throw parseApiError(res, data);
 	}
 	const blob = await res.blob();
 	const disposition = res.headers.get("content-disposition") ?? "";

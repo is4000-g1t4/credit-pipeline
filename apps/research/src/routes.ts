@@ -18,15 +18,14 @@ import {
 import {
 	HttpError,
 	readJson,
+	requireOfficer,
 	requireService,
 	zodFields,
 	type Logger,
 	type ServiceApp,
-	type ServiceVariables,
 } from "@credit/service-kit";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { Hono } from "hono";
-import { createMiddleware } from "hono/factory";
 import { z } from "zod";
 import { caseFactsSchema } from "@credit/core";
 import {
@@ -54,13 +53,12 @@ import {
 	type RunRow,
 } from "./lifecycle.js";
 import type { Observability } from "./observability.js";
-import { executeContextRetry, executeRun, fetchContextConsentOverHttp } from "./run.js";
+import { contextConsentProbe, executeContextRetry, executeRun } from "./run.js";
 import type { LanguageRepair } from "./repair.js";
 import type { PolicyRunner } from "./policy-stage.js";
 import type { SupportJudge } from "./support.js";
 import { sha256Hex } from "./validator.js";
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+import { isUuid } from "./ids.js";
 
 const ensureSchema = z
 	.object({
@@ -107,13 +105,6 @@ export interface ResearchRouteDeps {
 	policyRunner?: PolicyRunner;
 }
 
-const requireOfficer = createMiddleware<{ Variables: ServiceVariables }>(async (c, next) => {
-	const me = c.var.user;
-	if (!me) throw new HttpError(401, "UNAUTHENTICATED", "login required");
-	if (me.role !== "officer") throw new HttpError(403, "FORBIDDEN", "officer role required");
-	await next();
-});
-
 const iso = (d: Date | null): string | null => d?.toISOString() ?? null;
 
 /** UTC minute bucket for the per-officer/run/minute view dedupe key. */
@@ -122,7 +113,7 @@ export function viewMinuteBucket(d: Date = new Date()): Date {
 }
 
 async function scopedRun(db: Db, applicationId: string, runId: string): Promise<RunRow> {
-	if (!UUID_RE.test(applicationId) || !UUID_RE.test(runId)) {
+	if (!isUuid(applicationId) || !isUuid(runId)) {
 		throw new HttpError(404, "NOT_FOUND", "not found");
 	}
 	const run = await getRun(db, runId);
@@ -224,7 +215,7 @@ export function researchRoutes(deps: ResearchRouteDeps): ServiceApp {
 
 	app.get("/internal/research/applications/:applicationId/latest", requireOfficer, async (c) => {
 		const applicationId = c.req.param("applicationId");
-		if (!UUID_RE.test(applicationId)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(applicationId)) throw new HttpError(404, "NOT_FOUND", "not found");
 		// T11: an auto run carries no officer grant — the first officer to
 		// open it claims the case here; any later officer gets 404.
 		await requireOrClaimResearchAccess(db, applicationId, c.var.user.id, c.var.user.role);
@@ -244,13 +235,7 @@ export function researchRoutes(deps: ResearchRouteDeps): ServiceApp {
 		// stored brief skip the probe (nothing to hide, no audit noise).
 		let includeContext = true;
 		if (run.contextBrief !== null || run.policyBrief !== null) {
-			const probe =
-				deps.fetchContextConsent ?? ((id: string) => fetchContextConsentOverHttp(env, id));
-			try {
-				includeContext = await probe(applicationId);
-			} catch {
-				includeContext = false;
-			}
+			includeContext = await contextConsentProbe(deps, env)(applicationId);
 			if (!includeContext) {
 				await auditResearch(db, {
 					applicationId,
@@ -371,14 +356,7 @@ export function researchRoutes(deps: ResearchRouteDeps): ServiceApp {
 			// the contact like latest does (read when consent allows, denied
 			// when withdrawn — the bundle itself carries no context bytes).
 			if (run.contextBrief !== null) {
-				const probe =
-					deps.fetchContextConsent ?? ((id: string) => fetchContextConsentOverHttp(env, id));
-				let allowed = false;
-				try {
-					allowed = await probe(run.applicationId);
-				} catch {
-					allowed = false;
-				}
+				const allowed = await contextConsentProbe(deps, env)(run.applicationId);
 				await auditResearch(db, {
 					applicationId: run.applicationId,
 					runId: run.id,
@@ -417,7 +395,7 @@ export function researchRoutes(deps: ResearchRouteDeps): ServiceApp {
 			const me = c.var.user;
 			const applicationId = c.req.param("applicationId");
 			const findingId = c.req.param("findingId");
-			if (!UUID_RE.test(applicationId) || !UUID_RE.test(findingId)) {
+			if (!isUuid(applicationId) || !isUuid(findingId)) {
 				throw new HttpError(404, "NOT_FOUND", "not found");
 			}
 			const parsed = reviewSchema.safeParse(await readJson(c));
@@ -481,7 +459,7 @@ export function researchRoutes(deps: ResearchRouteDeps): ServiceApp {
 			const me = c.var.user;
 			const applicationId = c.req.param("applicationId");
 			const signalId = c.req.param("signalId");
-			if (!UUID_RE.test(applicationId) || !UUID_RE.test(signalId)) {
+			if (!isUuid(applicationId) || !isUuid(signalId)) {
 				throw new HttpError(404, "NOT_FOUND", "not found");
 			}
 			const parsed = reviewSchema.safeParse(await readJson(c));
@@ -502,16 +480,8 @@ export function researchRoutes(deps: ResearchRouteDeps): ServiceApp {
 			await requireResearchAccess(db, applicationId, me.id, me.role);
 			// Withdrawn consent rejects reviews of prior context too: the
 			// officer cannot act on signals they may no longer read.
-			const consentProbe =
-				deps.fetchContextConsent ?? ((id: string) => fetchContextConsentOverHttp(env, id));
-			const probeConsent = async (): Promise<boolean> => {
-				try {
-					return await consentProbe(applicationId);
-				} catch {
-					return false;
-				}
-			};
-			if (!(await probeConsent())) {
+			const probeConsent = contextConsentProbe(deps, env);
+			if (!(await probeConsent(applicationId))) {
 				await auditResearch(db, {
 					applicationId,
 					runId: run.id,
@@ -550,7 +520,7 @@ export function researchRoutes(deps: ResearchRouteDeps): ServiceApp {
 					// (consent + stage version): a withdrawal racing the
 					// pre-check above aborts the review instead of acting on
 					// unreadable context.
-					if (!(await probeConsent())) {
+					if (!(await probeConsent(applicationId))) {
 						withdrawnInTx = true;
 						throw new HttpError(
 							403,
@@ -637,7 +607,7 @@ export function researchRoutes(deps: ResearchRouteDeps): ServiceApp {
 		async (c) => {
 			const me = c.var.user;
 			const applicationId = c.req.param("applicationId");
-			if (!UUID_RE.test(applicationId)) throw new HttpError(404, "NOT_FOUND", "not found");
+			if (!isUuid(applicationId)) throw new HttpError(404, "NOT_FOUND", "not found");
 			const { purgedRuns, purgedSignals } = await withTx(db, async (tx) => {
 				// Terminal stages first: the live update below moves
 				// queued/running rows into `skipped`, so it must run second
@@ -723,9 +693,7 @@ export function researchRoutes(deps: ResearchRouteDeps): ServiceApp {
 			if (!env.contextEnabled) {
 				throw new HttpError(409, "CONTEXT_DISABLED", "context analysis is disabled");
 			}
-			const probe =
-				deps.fetchContextConsent ?? ((id: string) => fetchContextConsentOverHttp(env, id));
-			if (!(await probe(applicationId))) {
+			if (!(await contextConsentProbe(deps, env)(applicationId))) {
 				throw new HttpError(
 					403,
 					"CONTEXT_CONSENT_REQUIRED",
@@ -819,7 +787,7 @@ export function researchRoutes(deps: ResearchRouteDeps): ServiceApp {
 	// ids/codes/reasons only, never case facts, quotes, or applicant data.
 	app.get("/internal/research/applications/:applicationId/audit", requireOfficer, async (c) => {
 		const applicationId = c.req.param("applicationId");
-		if (!UUID_RE.test(applicationId)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!isUuid(applicationId)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const rows = (await db.execute(
 			sql`SELECT action, actor_role, run_id, metadata, created_at FROM research_audit_log
 				WHERE application_id = ${applicationId} AND action IN ('auto.skip', 'auto.ensure', 'auto.duplicate')
@@ -893,7 +861,7 @@ export function researchRoutes(deps: ResearchRouteDeps): ServiceApp {
 		async (c) => {
 			const me = c.var.user;
 			const applicationId = c.req.param("applicationId");
-			if (!UUID_RE.test(applicationId)) throw new HttpError(404, "NOT_FOUND", "not found");
+			if (!isUuid(applicationId)) throw new HttpError(404, "NOT_FOUND", "not found");
 			const parsed = grantSchema.safeParse(await readJson(c));
 			if (!parsed.success) {
 				throw new HttpError(422, "VALIDATION_ERROR", "invalid grant", zodFields(parsed.error));
@@ -928,7 +896,7 @@ export function researchRoutes(deps: ResearchRouteDeps): ServiceApp {
 		async (c) => {
 			const me = c.var.user;
 			const applicationId = c.req.param("applicationId");
-			if (!UUID_RE.test(applicationId)) throw new HttpError(404, "NOT_FOUND", "not found");
+			if (!isUuid(applicationId)) throw new HttpError(404, "NOT_FOUND", "not found");
 			const parsed = revokeSchema.safeParse(await readJson(c));
 			if (!parsed.success) {
 				throw new HttpError(422, "VALIDATION_ERROR", "invalid revoke", zodFields(parsed.error));

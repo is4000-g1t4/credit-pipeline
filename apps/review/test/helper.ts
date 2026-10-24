@@ -9,8 +9,14 @@ dotenv.config({
 });
 
 import { randomUUID } from "node:crypto";
-import { createLogger, signInternalHeaders } from "@credit/service-kit";
-import { stubGateway, type FakeGateway } from "@credit/service-kit/test";
+import { createLogger } from "@credit/service-kit";
+import {
+	jsonResponse,
+	signedInternalHeaders,
+	stubGateway,
+	testUser,
+	type FakeGateway,
+} from "@credit/service-kit/test";
 import { createApp } from "../src/app.js";
 import { loadEnv } from "../src/env.js";
 
@@ -71,13 +77,6 @@ export interface TestContext {
 	internal: InternalStub;
 	research: ResearchStub;
 	secret: string;
-}
-
-function jsonResponse(status: number, body: unknown): Response {
-	return new Response(JSON.stringify(body), {
-		status,
-		headers: { "content-type": "application/json" },
-	});
 }
 
 function defaultCaseFacts(applicationId: string): Record<string, unknown> {
@@ -145,27 +144,27 @@ export function setupApp(opts: SetupOptions = {}): TestContext {
 		const path = new URL(raw).pathname;
 		const method = (init?.method ?? "GET").toUpperCase();
 		internal.calls.push(path);
-		if (path === "/internal/review/queue") return jsonResponse(200, internal.queue);
+		if (path === "/internal/review/queue") return jsonResponse(internal.queue, 200);
 		let match = path.match(/^\/internal\/applications\/([^/]+)\/decision$/);
 		if (match) {
-			if (internal.missing.has(match[1])) return jsonResponse(404, { error: "not found" });
+			if (internal.missing.has(match[1])) return jsonResponse({ error: "not found" }, 404);
 			return jsonResponse(
-				200,
 				internal.decisions.get(match[1]) ?? { status: "pending_review", decision: null },
+				200,
 			);
 		}
 		match = path.match(/^\/internal\/loans\/by-application\/([^/]+)$/);
 		if (match) {
 			const loan = internal.loans.get(match[1]);
-			return loan ? jsonResponse(200, loan) : jsonResponse(404, { error: "not found" });
+			return loan ? jsonResponse(loan, 200) : jsonResponse({ error: "not found" }, 404);
 		}
 		match = path.match(/^\/internal\/applications\/([^/]+)\/case-facts$/);
 		if (match) {
 			const id = match[1];
 			if (internal.missing.has(id) || research.caseFactsMissing.has(id)) {
-				return jsonResponse(404, { error: { code: "NOT_FOUND", message: "not found" } });
+				return jsonResponse({ error: { code: "NOT_FOUND", message: "not found" } }, 404);
 			}
-			return jsonResponse(200, research.caseFacts.get(id) ?? defaultCaseFacts(id));
+			return jsonResponse(research.caseFacts.get(id) ?? defaultCaseFacts(id), 200);
 		}
 		if (path.startsWith("/internal/research/")) {
 			research.calls.push(`${method} ${path}`);
@@ -176,68 +175,83 @@ export function setupApp(opts: SetupOptions = {}): TestContext {
 				};
 				const active = research.activeRuns.get(body.applicationId);
 				if (active) {
-					return jsonResponse(202, {
-						run: { id: active.runId, applicationId: body.applicationId, status: active.status },
-						inserted: false,
-					});
+					return jsonResponse(
+						{
+							run: { id: active.runId, applicationId: body.applicationId, status: active.status },
+							inserted: false,
+						},
+						202,
+					);
 				}
 				research.ensureBodies.push(body);
 				const runId = randomUUID();
 				research.runs.set(runId, { applicationId: body.applicationId, status: "queued" });
 				research.activeRuns.set(body.applicationId, { runId, status: "queued" });
-				return jsonResponse(202, {
-					run: { id: runId, applicationId: body.applicationId, status: "queued" },
-					inserted: true,
-				});
+				return jsonResponse(
+					{
+						run: { id: runId, applicationId: body.applicationId, status: "queued" },
+						inserted: true,
+					},
+					202,
+				);
 			}
 			match = path.match(/^\/internal\/research\/applications\/([^/]+)\/latest$/);
 			if (match && method === "GET") {
 				const aggregate = research.aggregates.get(match[1]);
 				return aggregate === undefined
-					? jsonResponse(404, { error: { code: "NOT_FOUND", message: "no research run" } })
-					: jsonResponse(200, aggregate);
+					? jsonResponse({ error: { code: "NOT_FOUND", message: "no research run" } }, 404)
+					: jsonResponse(aggregate, 200);
 			}
 			match = path.match(/^\/internal\/research\/applications\/([^/]+)\/audit$/);
 			if (match && method === "GET") {
 				const appId = match[1];
 				const entries = research.audits.get(appId);
 				if (entries !== undefined) {
-					return jsonResponse(200, { applicationId: appId, entries });
+					return jsonResponse({ applicationId: appId, entries }, 200);
 				}
 				// Real research contract with no auto history: no run at
 				// all → 200 empty (no claim); a run the caller cannot see →
 				// audited 404.
 				const hasRun = [...research.runs.values()].some((r) => r.applicationId === appId);
 				return hasRun
-					? jsonResponse(404, { error: { code: "NOT_FOUND", message: "not found" } })
-					: jsonResponse(200, { applicationId: appId, entries: [] });
+					? jsonResponse({ error: { code: "NOT_FOUND", message: "not found" } }, 404)
+					: jsonResponse({ applicationId: appId, entries: [] }, 200);
 			}
 			match = path.match(/^\/internal\/research\/applications\/([^/]+)\/runs\/([^/]+)\/view$/);
 			if (match && method === "POST") {
 				const run = research.runs.get(match[2]);
 				if (!run || run.applicationId !== match[1]) {
-					return jsonResponse(404, { error: { code: "NOT_FOUND", message: "not found" } });
+					return jsonResponse({ error: { code: "NOT_FOUND", message: "not found" } }, 404);
 				}
-				return jsonResponse(200, {
-					runId: match[2],
-					viewedAt: new Date().toISOString(),
-					deduped: false,
-				});
+				return jsonResponse(
+					{
+						runId: match[2],
+						viewedAt: new Date().toISOString(),
+						deduped: false,
+					},
+					200,
+				);
 			}
 			match = path.match(/^\/internal\/research\/applications\/([^/]+)\/runs\/([^/]+)\/bundle$/);
 			if (match && method === "GET") {
 				const run = research.runs.get(match[2]);
 				if (!run || run.applicationId !== match[1] || run.status !== "succeeded") {
-					return jsonResponse(404, {
-						error: { code: "NOT_FOUND", message: "no succeeded research bundle" },
-					});
+					return jsonResponse(
+						{
+							error: { code: "NOT_FOUND", message: "no succeeded research bundle" },
+						},
+						404,
+					);
 				}
 				const bundle = research.bundles.get(match[2]);
 				return bundle === undefined
-					? jsonResponse(404, {
-							error: { code: "NOT_FOUND", message: "no succeeded research bundle" },
-						})
-					: jsonResponse(200, { bundle });
+					? jsonResponse(
+							{
+								error: { code: "NOT_FOUND", message: "no succeeded research bundle" },
+							},
+							404,
+						)
+					: jsonResponse({ bundle }, 200);
 			}
 			match = path.match(
 				/^\/internal\/research\/applications\/([^/]+)\/findings\/([^/]+)\/review$/,
@@ -245,15 +259,18 @@ export function setupApp(opts: SetupOptions = {}): TestContext {
 			if (match && method === "POST") {
 				const finding = research.findings.get(match[2]);
 				if (!finding || finding.applicationId !== match[1]) {
-					return jsonResponse(404, { error: { code: "NOT_FOUND", message: "not found" } });
+					return jsonResponse({ error: { code: "NOT_FOUND", message: "not found" } }, 404);
 				}
 				if (finding.status !== "succeeded") {
-					return jsonResponse(409, {
-						error: { code: "RUN_NOT_SUCCEEDED", message: "run is not succeeded" },
-					});
+					return jsonResponse(
+						{
+							error: { code: "RUN_NOT_SUCCEEDED", message: "run is not succeeded" },
+						},
+						409,
+					);
 				}
 				const body = JSON.parse(String(init?.body ?? "{}")) as { action: string };
-				return jsonResponse(201, { id: randomUUID(), findingId: match[2], action: body.action });
+				return jsonResponse({ id: randomUUID(), findingId: match[2], action: body.action }, 201);
 			}
 			match = path.match(
 				/^\/internal\/research\/applications\/([^/]+)\/runs\/([^/]+)\/context\/retry$/,
@@ -261,18 +278,24 @@ export function setupApp(opts: SetupOptions = {}): TestContext {
 			if (match && method === "POST") {
 				const run = research.runs.get(match[2]);
 				if (!run || run.applicationId !== match[1]) {
-					return jsonResponse(404, { error: { code: "NOT_FOUND", message: "not found" } });
+					return jsonResponse({ error: { code: "NOT_FOUND", message: "not found" } }, 404);
 				}
 				if (research.retryBlocked.has(match[2])) {
-					return jsonResponse(409, {
-						error: { code: "RETRY_UNAVAILABLE", message: "context retry is not available" },
-					});
+					return jsonResponse(
+						{
+							error: { code: "RETRY_UNAVAILABLE", message: "context retry is not available" },
+						},
+						409,
+					);
 				}
-				return jsonResponse(202, {
-					runId: match[2],
-					contextStageToken: randomUUID(),
-					contextStageVersion: 2,
-				});
+				return jsonResponse(
+					{
+						runId: match[2],
+						contextStageToken: randomUUID(),
+						contextStageVersion: 2,
+					},
+					202,
+				);
 			}
 			match = path.match(
 				/^\/internal\/research\/applications\/([^/]+)\/context\/signals\/([^/]+)\/review$/,
@@ -280,23 +303,29 @@ export function setupApp(opts: SetupOptions = {}): TestContext {
 			if (match && method === "POST") {
 				const signal = research.signals.get(match[2]);
 				if (!signal || signal.applicationId !== match[1]) {
-					return jsonResponse(404, { error: { code: "NOT_FOUND", message: "not found" } });
+					return jsonResponse({ error: { code: "NOT_FOUND", message: "not found" } }, 404);
 				}
 				if (signal.superseded) {
-					return jsonResponse(409, {
-						error: { code: "SIGNAL_SUPERSEDED", message: "signal was superseded" },
-					});
+					return jsonResponse(
+						{
+							error: { code: "SIGNAL_SUPERSEDED", message: "signal was superseded" },
+						},
+						409,
+					);
 				}
 				const body = JSON.parse(String(init?.body ?? "{}")) as { action: string };
-				return jsonResponse(201, {
-					id: randomUUID(),
-					signalId: match[2],
-					action: body.action,
-					signal: { id: match[2], reviewStatus: body.action },
-				});
+				return jsonResponse(
+					{
+						id: randomUUID(),
+						signalId: match[2],
+						action: body.action,
+						signal: { id: match[2], reviewStatus: body.action },
+					},
+					201,
+				);
 			}
 		}
-		return jsonResponse(404, { error: "not found" });
+		return jsonResponse({ error: "not found" }, 404);
 	}) as typeof fetch;
 	const app = createApp({
 		env,
@@ -308,7 +337,8 @@ export function setupApp(opts: SetupOptions = {}): TestContext {
 }
 
 export function createUser(role: "applicant" | "officer" = "applicant"): TestUser {
-	return { id: randomUUID(), email: `svc-${randomUUID()}@example.com`, role };
+	const base = testUser(role);
+	return { id: base.id, email: base.email, role };
 }
 
 /** Signed internal headers for `app.request`, as the P1b gateway would send. */
@@ -320,15 +350,5 @@ export function signed(
 	extra: Record<string, string> = {},
 	body?: string,
 ): Record<string, string> {
-	return {
-		...signInternalHeaders(ctx.secret, {
-			userId: user.id,
-			role: user.role,
-			email: user.email,
-			method,
-			path,
-			body,
-		}),
-		...extra,
-	};
+	return signedInternalHeaders(ctx.secret, user, method, path, { body, extra });
 }

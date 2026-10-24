@@ -1,5 +1,5 @@
 import type { PolicyCaseContext } from "./case-context.js";
-import type { AnswerCitation, CaseAnswer, NavigatorAnswer, RetrievedSection } from "./answer.js";
+import type { AnswerCitation, RetrievedSection } from "./answer.js";
 
 export interface ActiveIndex {
 	indexVersion: string;
@@ -157,22 +157,4 @@ export interface AnswererUsage {
 export interface AnswererResult {
 	output: unknown;
 	usage: AnswererUsage;
-}
-
-export interface PolicyResult {
-	status:
-		| "succeeded"
-		| "no_match"
-		| "needs_policy_owner"
-		| "out_of_scope"
-		| "identifier_blocked"
-		| "budget_exceeded"
-		| "failed";
-	segments?: NavigatorAnswer["segments"];
-	citations?: AnswerCitation[];
-	items?: CaseAnswer["items"];
-	summary?: string;
-	limitations?: string[];
-	usage?: { inputTokens: number; outputTokens: number; costUsd: number; model: string };
-	errorCode?: string;
 }

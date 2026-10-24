@@ -124,7 +124,6 @@ describe("pricing", () => {
 		expect(rateBps("A", "sme_term_loan")).toBe(740);
 		expect(rateBps("B", "sme_term_loan")).toBe(840);
 		expect(rateBps("E", "sme_term_loan")).toBe(1340);
-		expect(rateBps("E", "sme_term_loan")).toBeLessThanOrEqual(2400);
 	});
 });
 

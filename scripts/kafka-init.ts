@@ -3,17 +3,10 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import { Kafka } from "kafkajs";
+import { TOPICS } from "@credit/core";
 
 // SPEC FR-10.1: topics provisioned by `pnpm kafka:init` (3 partitions, RF 1).
-const TOPICS = [
-	"credit.application.submitted",
-	"credit.decision.made",
-	"credit.review.requested",
-	"credit.review.expired",
-	"credit.loan.booked",
-	"credit.payment.posted",
-	"credit.ews.alert",
-];
+const TOPIC_NAMES = Object.values(TOPICS);
 
 const brokers = (process.env.KAFKA_BROKERS ?? "localhost:9092")
 	.split(",")
@@ -36,7 +29,7 @@ for (;;) {
 
 try {
 	const existing = new Set(await admin.listTopics());
-	const missing = TOPICS.filter((t) => !existing.has(t));
+	const missing = TOPIC_NAMES.filter((t) => !existing.has(t));
 	if (missing.length === 0) {
 		console.log("kafka:init: all 7 topics already exist (no-op)");
 	} else {

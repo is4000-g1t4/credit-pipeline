@@ -8,7 +8,8 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const API_BASE = "http://127.0.0.1:3001";
+import { API_BASE } from "./helpers.js";
+
 export const WEB_BASE = "http://127.0.0.1:3000";
 export const PID_FILE = resolve(dirname(fileURLToPath(import.meta.url)), ".e2e-pids.json");
 const LOG_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "logs");

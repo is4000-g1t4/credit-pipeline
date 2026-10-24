@@ -6,15 +6,14 @@
 import { ewsAlerts, installments, loans, payments, withTx, type Db } from "@credit/db/loans";
 import {
 	HttpError,
+	internalFetch,
+	requireOfficer,
 	requireService,
-	signInternalHeaders,
 	writeAudit,
 	type ServiceApp,
-	type ServiceVariables,
 } from "@credit/service-kit";
 import { and, count, desc, eq, inArray, lte } from "drizzle-orm";
 import { Hono } from "hono";
-import { createMiddleware } from "hono/factory";
 import type { LoansEnv } from "../env.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -43,14 +42,9 @@ export interface LoansRouteDeps {
 	fetchImpl?: (url: string, init: RequestInit) => Promise<Response>;
 }
 
-export const requireOfficerRole = createMiddleware<{ Variables: ServiceVariables }>(
-	async (c, next) => {
-		const me = c.var.user;
-		if (!me) throw new HttpError(401, "UNAUTHENTICATED", "login required");
-		if (me.role !== "officer") throw new HttpError(403, "FORBIDDEN", "officer role required");
-		await next();
-	},
-);
+/** Officer-only routes (review queues, approvals, case reads) — the shared
+ * service-kit gate (401 without a signed user, 403 on role mismatch). */
+export const requireOfficerRole = requireOfficer;
 
 export function loansRoutes(deps: LoansRouteDeps): ServiceApp {
 	const app: ServiceApp = new Hono();
@@ -225,19 +219,22 @@ export function loansRoutes(deps: LoansRouteDeps): ServiceApp {
 		// from the caller. Any failure (network, timeout, non-OK, shape
 		// drift) fails closed with no loan query.
 		const bindPath = `/internal/applications/${applicationId}/research-context`;
-		const bindHeaders = signInternalHeaders(env.internalSecret, {
-			userId: me.id,
-			role: "service",
-			email: me.email,
-			method: "GET",
-			path: bindPath,
-		});
 		let bindRes: Response;
 		try {
-			bindRes = await fetchImpl(`${env.applicationsUrl}${bindPath}`, {
-				headers: bindHeaders,
-				signal: AbortSignal.timeout(5_000),
-			});
+			bindRes = await internalFetch(
+				env.applicationsUrl,
+				bindPath,
+				// The applications internal route is service-only: sign the
+				// caller's id/email with the service role (never forward the
+				// officer's role to a service gate).
+				{ id: me.id, email: me.email, role: "service" },
+				{
+					secret: env.internalSecret,
+					fetchImpl: (async (url, init) =>
+						fetchImpl(String(url), init as RequestInit)) as typeof fetch,
+					timeoutMs: 5_000,
+				},
+			);
 		} catch {
 			throw new HttpError(503, "APPLICATIONS_UNAVAILABLE", "application context is unavailable");
 		}

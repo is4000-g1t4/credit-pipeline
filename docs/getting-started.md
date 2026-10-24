@@ -15,7 +15,7 @@ pnpm setup
 pnpm dev
 ```
 
-`pnpm setup` waits for Postgres, creates databases, creates Kafka topics, migrates, and seeds demo users. `pnpm dev` starts the gateway (`:3001`), five services (`:4001`-`:4005`), the worker, and the web app (`:3000`).
+`pnpm setup` waits for Postgres, creates databases, creates Kafka topics, migrates, and seeds demo users. `pnpm dev` starts the gateway (`:3001`), six services (`:4001`-`:4006`), the worker, and the web app (`:3000`).
 
 ## 2. Check health
 
@@ -71,7 +71,7 @@ pnpm demo:check
 pnpm demo:monitor
 ```
 
-`pnpm test:e2e` runs five Playwright specs (`maria`, `tomas`, `sam`, `monitoring`, `research`) against `http://127.0.0.1:3000`. Its global setup always starts a worker, reuses a healthy gateway, services, and web when up (it starts only what is down), and stops only the processes it started. It needs Docker Compose running. Install the browser once with `pnpm exec playwright install chromium`.
+`pnpm test:e2e` runs seven Playwright specs (`maria`, `tomas`, `sam`, `monitoring`, `research`, `documents`, `breadtalk`) against `http://127.0.0.1:3000`. Its global setup always starts a worker, reuses a healthy gateway, services, and web when up (it starts only what is down), and stops only the processes it started. It needs Docker Compose running. Install the browser once with `pnpm exec playwright install chromium`.
 
 ## 6. Recover a half-run demo
 
@@ -85,7 +85,7 @@ pnpm setup
 
 This wipes databases and Kafka. If you upgrade Postgres 17 data to Postgres 18, stop the stack (`docker compose down`), delete the volume (`docker volume rm project_pgdata`), then `up` and `pnpm setup`. Warning: this deletes all local database and Temporal data.
 
-If a crashed run leaves a stale dev server, find the listener on ports 3000, 3001, or 4001-4005 and stop that process only. Never stop all Node processes. Full symptom tables live in `operations/troubleshooting.md`.
+If a crashed run leaves a stale dev server, find the listener on ports 3000, 3001, or 4001-4006 and stop that process only. Never stop all Node processes. Full symptom tables live in `operations/troubleshooting.md`.
 
 ## 7. Demo users
 

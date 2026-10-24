@@ -20,7 +20,7 @@ import { rm } from "node:fs/promises";
 import { promisify } from "node:util";
 import { Kafka } from "kafkajs";
 import { createDb } from "@credit/db/applications";
-import { DEMO_RESET_VOLUMES } from "@credit/core";
+import { DEMO_RESET_VOLUMES, TOPICS } from "@credit/core";
 import { cliFlags, requireEnv } from "./lib/env.js";
 import { assertFixtureClock, loadManifest } from "./lib/manifest.js";
 import { assertResetVolumeOwnership, planDemoReset, withRemovableVolumes } from "./lib/reset.js";
@@ -126,15 +126,7 @@ async function main(): Promise<void> {
 	await admin.connect();
 	try {
 		const metadata = await admin.fetchTopicMetadata();
-		const expected = [
-			"credit.application.submitted",
-			"credit.decision.made",
-			"credit.review.requested",
-			"credit.review.expired",
-			"credit.loan.booked",
-			"credit.payment.posted",
-			"credit.ews.alert",
-		];
+		const expected = Object.values(TOPICS);
 		for (const topic of expected) {
 			const found = metadata.topics.find((t) => t.name === topic);
 			if (!found) throw new Error(`demo:reset: topic missing after reset: ${topic}`);
@@ -144,7 +136,7 @@ async function main(): Promise<void> {
 				);
 			}
 		}
-		console.log("demo:reset: 7 topics present with 3 partitions");
+		console.log(`demo:reset: ${expected.length} topics present with 3 partitions`);
 	} finally {
 		await admin.disconnect();
 	}

@@ -8,7 +8,6 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createDb } from "@credit/db";
 import { dedupeApplicationSubmitted } from "@credit/core";
 import {
 	applicationProfileConfirmations,
@@ -27,14 +26,9 @@ import {
 	policyEvaluations,
 	scores,
 } from "@credit/db/applications";
-import { createLogger } from "@credit/service-kit";
-import { stubGateway } from "@credit/service-kit/test";
 import { and, eq, inArray, like, notInArray, sql as drizzleSql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createApp } from "../../src/app.js";
 import { openCustomerDocument, type CustomerConfig } from "../../src/customer/service.js";
-import { configFromEnv } from "../../src/documents/service.js";
-import { loadEnv } from "../../src/env.js";
 import {
 	ensureDemoCase,
 	isFixtureDraftTouched,
@@ -45,7 +39,7 @@ import { loadManifest } from "../../../../scripts/lib/manifest.js";
 import { refreshDemoEvidence } from "../../../../scripts/lib/refresh.js";
 import { seedDemo } from "../../../../scripts/lib/seed.js";
 import { verifyDemo } from "../../../../scripts/lib/verify.js";
-import { signed, type TestContext, type TestUser } from "../helper.js";
+import { setupApp, postApplication, type TestContext, type TestUser } from "../helper.js";
 
 process.env.LOG_LEVEL ??= "silent";
 
@@ -64,16 +58,6 @@ let customerDir: string;
 const users = memoryUserDirectory();
 
 function setupDemo(): DemoContext {
-	const env = loadEnv();
-	const { db, sql } = createDb(env.databaseUrl);
-	const gateway = stubGateway();
-	const config = {
-		...configFromEnv(env),
-		featureEnabled: true,
-		storageDir: (globalThis as { d2aAppDir?: string }).d2aAppDir ?? "",
-		encryptionKey: ENCRYPTION_KEY,
-		keyId: "v1",
-	};
 	const customerConfig: CustomerConfig = {
 		storageDir: (globalThis as { d2aCustomerDir?: string }).d2aCustomerDir ?? "",
 		encryptionKey: ENCRYPTION_KEY,
@@ -82,21 +66,15 @@ function setupDemo(): DemoContext {
 		retentionDays: 90,
 		lockTimeoutMs: 5000,
 	};
-	const app = createApp({
-		db,
-		sql,
-		env,
-		gateway,
-		logger: createLogger("applications-d2a-test"),
-		documents: { config },
+	const ctx = setupApp({
+		storageDir: (globalThis as { d2aAppDir?: string }).d2aAppDir ?? "",
+		documents: {
+			config: { featureEnabled: true, encryptionKey: ENCRYPTION_KEY, keyId: "v1" },
+		},
 		customer: { config: customerConfig, demoMode: true, demoAsOf: DEMO_AS_OF },
 	});
 	return {
-		app,
-		db,
-		sql,
-		gateway,
-		secret: env.internalSecret,
+		...ctx,
 		customerConfig,
 		appDocConfig: {
 			storageDir: (globalThis as { d2aAppDir?: string }).d2aAppDir ?? "",
@@ -184,15 +162,7 @@ async function expectVerify(
 }
 
 async function postSubmit(user: TestUser, appId: string, key: string): Promise<Response> {
-	const path = `/api/applications/${appId}/submit`;
-	return ctx.app.request(path, {
-		method: "POST",
-		headers: {
-			"content-type": "application/json",
-			...signed(ctx, user, "POST", path, { "Idempotency-Key": key }, "{}"),
-		},
-		body: "{}",
-	});
+	return postApplication(ctx, user, `/api/applications/${appId}/submit`, {}, key);
 }
 
 async function postReuse(
@@ -200,15 +170,8 @@ async function postReuse(
 	appId: string,
 	customerDocumentIds: string[],
 ): Promise<Response> {
-	const path = `/api/applications/${appId}/documents/reuse`;
-	const body = JSON.stringify({ customerDocumentIds });
-	return ctx.app.request(path, {
-		method: "POST",
-		headers: {
-			"content-type": "application/json",
-			...signed(ctx, user, "POST", path, {}, body),
-		},
-		body,
+	return postApplication(ctx, user, `/api/applications/${appId}/documents/reuse`, {
+		customerDocumentIds,
 	});
 }
 
@@ -228,6 +191,36 @@ async function customerDocIds(email: string, fixtureKeys: string[]): Promise<str
 		if (!doc) throw new Error(`missing customer doc ${key}`);
 		return doc.id;
 	});
+}
+
+/** Full breadtalk lifecycle to submitted, converging whatever state earlier
+ * tests (or a `-t` filter) left behind — this file passes standalone. */
+async function ensureSubmittedBreadtalk(): Promise<string> {
+	await seedAll();
+	const outcome = await makeCase("breadtalk");
+	const [row] = await ctx.db
+		.select()
+		.from(applications)
+		.where(eq(applications.fixtureKey, "case-breadtalk"))
+		.limit(1);
+	if (row.status !== "submitted") {
+		await refreshDemoEvidence(manifest, "breadtalk", {
+			appDb: ctx.db,
+			users,
+			customerConfig: ctx.customerConfig,
+			asOf: DEMO_AS_OF,
+		});
+		const user = applicant("breadtalk@example.com");
+		const freshIds = await customerDocIds("breadtalk@example.com", [
+			"bank_statement_fresh",
+			"financial_statements_fresh",
+		]);
+		const reuse = await postReuse(user, outcome.draftId, freshIds);
+		expect([200, 201]).toContain(reuse.status);
+		const submitted = await postSubmit(user, outcome.draftId, randomUUID());
+		expect(submitted.status).toBe(200);
+	}
+	return outcome.draftId;
 }
 
 beforeAll(async () => {
@@ -708,13 +701,11 @@ describe("breadtalk draft lifecycle", () => {
 		expect(sparseRerun.created).toBe(false);
 		expect(sparseRerun.attached).toEqual([]);
 
-		// Submitted drafts are never resurrected (breadtalk submitted above).
+		// Submitted drafts are never resurrected — submitted here, not by an
+		// earlier test, so this case passes standalone.
+		const submittedId = await ensureSubmittedBreadtalk();
 		const submitted = (
-			await ctx.db
-				.select()
-				.from(applications)
-				.where(eq(applications.fixtureKey, "case-breadtalk"))
-				.limit(1)
+			await ctx.db.select().from(applications).where(eq(applications.id, submittedId)).limit(1)
 		)[0];
 		expect(submitted.status).toBe("submitted");
 		expect(

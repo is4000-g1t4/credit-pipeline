@@ -1,73 +1,17 @@
 // Language-repair unit tests: fake OpenAI client, no network.
-import type OpenAI from "openai";
 import { describe, expect, it } from "vitest";
 import {
 	createLlmLanguageRepair,
 	RepairRejectedError,
 	stubLanguageRepair,
 } from "../../src/repair.js";
-import type { ModelBrief } from "../../src/validator.js";
-
-function modelBrief(): ModelBrief {
-	return {
-		summary: "Registry shows timely filings; the loan terms look fine.",
-		findings: [
-			{
-				claim: "Acme Ltd filed accounts for the year ending March 2025 on time.",
-				category: "registry",
-				whyItMatters: "Timely filing supports approval.",
-				allegationStatus: "unknown",
-				entityMatch: {
-					identifierType: "name_city",
-					value: "Acme Ltd, Leeds",
-					confidence: "medium",
-				},
-				evidenceLocalIds: ["ev-1"],
-			},
-		],
-		evidence: [
-			{
-				localId: "ev-1",
-				url: "https://find-and-update.company-information.service.gov.uk/company/123",
-				title: "Filings",
-				publisher: "Companies House",
-				publishedAt: "2025-06-01",
-				quote: "Acme Ltd filed accounts for the year ending March 2025 on time.",
-			},
-		],
-		contradictions: [],
-		unknowns: ["No adverse media found in the searched sources."],
-		questionsForOfficer: [],
-	};
-}
-
-interface RecordedCall {
-	params: Record<string, unknown>;
-}
-
-function fakeOpenai(reply: unknown, recorded: RecordedCall[]): OpenAI {
-	return {
-		chat: {
-			completions: {
-				create: async (params: Record<string, unknown>) => {
-					recorded.push({ params });
-					return {
-						choices: [
-							{ message: { content: typeof reply === "string" ? reply : JSON.stringify(reply) } },
-						],
-						usage: { prompt_tokens: 10, completion_tokens: 5 },
-					};
-				},
-			},
-		},
-	} as unknown as OpenAI;
-}
+import { fakeOpenAi, modelBrief, type RecordedCall } from "../fixtures.js";
 
 describe("createLlmLanguageRepair", () => {
 	it("rewrites only summary/claim/whyItMatters and preserves everything else", async () => {
 		const recorded: RecordedCall[] = [];
 		const repair = createLlmLanguageRepair(
-			fakeOpenai(
+			fakeOpenAi(
 				{
 					summary: "Registry shows timely filings in the public record.",
 					findings: [
@@ -102,7 +46,7 @@ describe("createLlmLanguageRepair", () => {
 	it("rejects a reply that changes the finding count", async () => {
 		const recorded: RecordedCall[] = [];
 		const repair = createLlmLanguageRepair(
-			fakeOpenai({ summary: "Clean.", findings: [] }, recorded),
+			fakeOpenAi({ summary: "Clean.", findings: [] }, recorded),
 			"deepseek/deepseek-v4.1-flash-1017",
 		);
 		await expect(repair(modelBrief())).rejects.toBeInstanceOf(RepairRejectedError);
@@ -111,7 +55,7 @@ describe("createLlmLanguageRepair", () => {
 	it("rejects invalid JSON", async () => {
 		const recorded: RecordedCall[] = [];
 		const repair = createLlmLanguageRepair(
-			fakeOpenai("not json", recorded),
+			fakeOpenAi("not json", recorded),
 			"deepseek/deepseek-v4.1-flash-1017",
 		);
 		await expect(repair(modelBrief())).rejects.toBeInstanceOf(RepairRejectedError);

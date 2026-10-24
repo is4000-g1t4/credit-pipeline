@@ -7,7 +7,6 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createDb } from "@credit/db";
 import {
 	applications,
 	auditLog,
@@ -19,11 +18,11 @@ import {
 	documentPages,
 	outboxEvents,
 } from "@credit/db/applications";
-import { createLogger } from "@credit/service-kit";
-import { stubGateway } from "@credit/service-kit/test";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../../src/app.js";
+import { bodySha256Hex, createLogger, resolveInternalUser } from "@credit/service-kit";
+import { stubGateway } from "@credit/service-kit/test";
 import {
 	createCustomerDocument,
 	openCustomerDocument,
@@ -36,6 +35,9 @@ import { loadEnv } from "../../src/env.js";
 import {
 	createUser,
 	individualPayload,
+	multipart,
+	postApplication,
+	setupApp,
 	signed,
 	type TestContext,
 	type TestUser,
@@ -77,16 +79,6 @@ let appDir: string;
 let customerDir: string;
 
 function setupCustomer(): CustomerContext {
-	const env = loadEnv();
-	const { db, sql } = createDb(env.databaseUrl);
-	const gateway = stubGateway();
-	const config = {
-		...configFromEnv(env),
-		featureEnabled: true,
-		storageDir: (globalThis as { t17AppDir?: string }).t17AppDir ?? "",
-		encryptionKey: ENCRYPTION_KEY,
-		keyId: "v1",
-	};
 	const customerConfig: CustomerConfig = {
 		storageDir: (globalThis as { t17CustomerDir?: string }).t17CustomerDir ?? "",
 		encryptionKey: ENCRYPTION_KEY,
@@ -95,16 +87,16 @@ function setupCustomer(): CustomerContext {
 		retentionDays: 90,
 		lockTimeoutMs: 5000,
 	};
-	const app = createApp({
-		db,
-		sql,
-		env,
-		gateway,
-		logger: createLogger("applications-t17-test"),
-		documents: { config, scanner: cleanScanner, ocr: readyOcr },
+	const ctx = setupApp({
+		storageDir: (globalThis as { t17AppDir?: string }).t17AppDir ?? "",
+		documents: {
+			config: { featureEnabled: true, encryptionKey: ENCRYPTION_KEY, keyId: "v1" },
+			scanner: cleanScanner,
+			ocr: readyOcr,
+		},
 		customer: { config: customerConfig, demoMode: true, demoAsOf: DEMO_AS_OF },
 	});
-	return { app, db, sql, gateway, secret: env.internalSecret, customerConfig };
+	return { ...ctx, customerConfig };
 }
 
 beforeAll(async () => {
@@ -136,42 +128,15 @@ function confirmAll(): Array<{ field: string; valueHash: string }> {
 }
 
 async function postDraft(user: TestUser, payload: unknown, key: string): Promise<Response> {
-	const path = "/api/applications/drafts";
-	const body = JSON.stringify(payload);
-	return ctx.app.request(path, {
-		method: "POST",
-		headers: {
-			"content-type": "application/json",
-			...signed(ctx, user, "POST", path, { "Idempotency-Key": key }, body),
-		},
-		body,
-	});
+	return postApplication(ctx, user, "/api/applications/drafts", payload, key);
 }
 
 async function postSubmit(user: TestUser, appId: string, key: string): Promise<Response> {
-	const path = `/api/applications/${appId}/submit`;
-	const body = "{}";
-	return ctx.app.request(path, {
-		method: "POST",
-		headers: {
-			"content-type": "application/json",
-			...signed(ctx, user, "POST", path, { "Idempotency-Key": key }, body),
-		},
-		body,
-	});
+	return postApplication(ctx, user, `/api/applications/${appId}/submit`, {}, key);
 }
 
 async function postDirect(user: TestUser, payload: unknown, key: string): Promise<Response> {
-	const path = "/api/applications";
-	const body = JSON.stringify(payload);
-	return ctx.app.request(path, {
-		method: "POST",
-		headers: {
-			"content-type": "application/json",
-			...signed(ctx, user, "POST", path, { "Idempotency-Key": key }, body),
-		},
-		body,
-	});
+	return postApplication(ctx, user, "/api/applications", payload, key);
 }
 
 async function seedProfile(
@@ -237,31 +202,6 @@ async function outboxFor(appId: string): Promise<unknown[]> {
 		const payload = r.payload as { payload?: { applicationId?: string } };
 		return payload?.payload?.applicationId === appId;
 	});
-}
-
-function multipart(
-	boundary: string,
-	fields: Array<{ name: string; filename?: string; contentType?: string; data: Buffer | string }>,
-): Buffer {
-	const chunks: Buffer[] = [];
-	for (const f of fields) {
-		chunks.push(Buffer.from(`--${boundary}\r\n`, "utf8"));
-		if (f.filename) {
-			chunks.push(
-				Buffer.from(
-					`Content-Disposition: form-data; name="${f.name}"; filename="${f.filename}"\r\n` +
-						`Content-Type: ${f.contentType ?? "application/octet-stream"}\r\n\r\n`,
-					"utf8",
-				),
-			);
-		} else {
-			chunks.push(Buffer.from(`Content-Disposition: form-data; name="${f.name}"\r\n\r\n`, "utf8"));
-		}
-		chunks.push(typeof f.data === "string" ? Buffer.from(f.data, "utf8") : f.data);
-		chunks.push(Buffer.from("\r\n", "utf8"));
-	}
-	chunks.push(Buffer.from(`--${boundary}--\r\n`, "utf8"));
-	return Buffer.concat(chunks);
 }
 
 async function uploadDoc(
@@ -710,16 +650,33 @@ describe("customer reads and context consent", () => {
 
 	it("calls the research purge callback on withdrawal (service HMAC, best-effort)", async () => {
 		const { createServer } = await import("node:http");
-		const seen: Array<{ path: string; role: string | null }> = [];
+		const seen: Array<{ path: string; role: string | null; verified: boolean }> = [];
 		const server: import("node:http").Server = createServer((req, res) => {
 			let body = "";
 			req.on("data", (chunk) => {
 				body += chunk;
 			});
 			req.on("end", () => {
+				const headers = req.headers as Record<string, string | string[] | undefined>;
+				const one = (v: string | string[] | undefined): string =>
+					Array.isArray(v) ? (v[0] ?? "") : (v ?? "");
+				const user = resolveInternalUser(ctx.secret, {
+					method: req.method ?? "POST",
+					path: (req.url ?? "").split("?")[0],
+					userId: one(headers["x-user-id"]),
+					role: one(headers["x-user-role"]),
+					email: one(headers["x-user-email"]),
+					ts: one(headers["x-internal-ts"]),
+					signature: one(headers["x-internal-signature"]),
+					bodyHash: one(headers["x-body-sha256"]),
+					requestId: one(headers["x-request-id"]),
+				});
 				seen.push({
 					path: req.url ?? "",
 					role: (req.headers["x-user-role"] as string | undefined) ?? null,
+					// Real verification: service signature over the exact bytes.
+					verified:
+						user?.role === "service" && bodySha256Hex(body) === one(headers["x-body-sha256"]),
 				});
 				res.writeHead(200, { "content-type": "application/json" }).end("{}");
 			});
@@ -792,6 +749,7 @@ describe("customer reads and context consent", () => {
 			expect(seen).toHaveLength(1);
 			expect(seen[0].path).toBe(`/internal/research/applications/${id}/context/purge`);
 			expect(seen[0].role).toBe("service");
+			expect(seen[0].verified).toBe(true);
 		} finally {
 			await new Promise<void>((resolve) => server.close(() => resolve()));
 		}

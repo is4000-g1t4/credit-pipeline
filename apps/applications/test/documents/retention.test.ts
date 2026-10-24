@@ -4,11 +4,8 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import {
-	purgeBlob,
-	retentionBlockedBy,
-	startDocumentMaintenance,
-} from "../../src/documents/retention.js";
+import { retentionBlockedBy, startDocumentMaintenance } from "../../src/documents/retention.js";
+import { purgeBlob } from "../../src/documents/storage.js";
 
 describe("retentionBlockedBy", () => {
 	it("empty holds never block", () => {

@@ -38,49 +38,28 @@ import { stubSupportJudge } from "../../src/support.js";
 import { TavilyError } from "../../src/tavily.js";
 import {
 	caseFacts,
+	degradedObservability,
+	get,
+	post,
 	setupApp,
-	signed,
 	successFixture,
 	teardown,
 	user,
+	waitRun,
 	type TestContext,
 	type TestUser,
 } from "../helper.js";
+import { candidateSnapshot, seenEvidence } from "../fixtures.js";
 
 process.env.LOG_LEVEL ??= "silent";
 const testLogger = createLogger("research-context-test");
 
-const degraded = {
-	status: "degraded" as const,
-	hooksFor: () => ({ detach: () => {} }),
-	trackModelCall: <T>(_o: unknown, fn: () => Promise<T>): Promise<T> => fn(),
-	trackToolExecution: <T>(_o: unknown, fn: () => Promise<T>): Promise<T> => fn(),
-};
-
 function contextSnapshots(): CandidateSnapshot[] {
-	return [
-		{
-			localId: "c1",
-			type: "negative_balance",
-			periodStart: "2025-12-30",
-			periodEnd: "2026-01-15",
-			metric: "negative_eod_days",
-			observed: 3,
-			expected: 0,
-			confidence: "high",
-			status: "review",
-			policyVersion: "context-metrics-v1",
-			accountScope: "all",
-			evidenceIds: ["tx-1"],
-		},
-	];
+	return [candidateSnapshot()];
 }
 
 function contextSeen(): Map<string, Set<string>> {
-	return new Map([
-		["tx-1", new Set(["transaction"])],
-		["c1", new Set(["metric"])],
-	]);
+	return seenEvidence();
 }
 
 function contextOutput(): Record<string, unknown> {
@@ -138,24 +117,6 @@ function setupContext(
 		}),
 		fetchContextConsent: async () => opts.consent ?? true,
 	});
-}
-
-async function post(
-	ctx: TestContext,
-	path: string,
-	who: TestUser,
-	payload: unknown,
-): Promise<Response> {
-	const body = JSON.stringify(payload);
-	return ctx.app.request(path, {
-		method: "POST",
-		headers: { "content-type": "application/json", ...signed(ctx, who, "POST", path, {}, body) },
-		body,
-	});
-}
-
-async function get(ctx: TestContext, path: string, who: TestUser): Promise<Response> {
-	return ctx.app.request(path, { headers: signed(ctx, who, "GET", path) });
 }
 
 interface LatestContext {
@@ -1242,16 +1203,6 @@ describe("context in auto-trigger", () => {
 		};
 	}
 
-	async function waitRun(ctx: TestContext, runId: string) {
-		const deadline = Date.now() + 15_000;
-		for (;;) {
-			const run = await getRun(ctx.db, runId);
-			if (run && (run.status === "succeeded" || run.status === "failed")) return run;
-			if (Date.now() > deadline) throw new Error(`run ${runId} did not settle`);
-			await new Promise((r) => setTimeout(r, 50));
-		}
-	}
-
 	it("runs one context stage per referral; redelivery makes zero new calls", async () => {
 		const use = successFixture();
 		const ctx = setupApp(use, {
@@ -1292,7 +1243,7 @@ describe("context in auto-trigger", () => {
 				runner: stubAgentRunner({ brief: use.brief, fetched: use.fetched }),
 				judge: stubSupportJudge(),
 				repair: stubLanguageRepair(),
-				observability: degraded,
+				observability: degradedObservability,
 				contextRunner,
 				fetchResearchContext,
 				fetchContextConsent: async () => true,
@@ -1324,7 +1275,7 @@ describe("context in auto-trigger", () => {
 				runner: stubAgentRunner({ brief: null, fetched: [] }),
 				judge: stubSupportJudge(),
 				repair: stubLanguageRepair(),
-				observability: degraded,
+				observability: degradedObservability,
 				fetchResearchContext: async (_applicationId: string) => ({
 					ok: true,
 					caseFacts: facts,

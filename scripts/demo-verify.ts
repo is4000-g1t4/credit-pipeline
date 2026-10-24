@@ -4,7 +4,6 @@
 // effects, and T02/T11 expectations. Prints PASS/FAIL per check; exits
 // non-zero on any failure. Never content/PII beyond ids and codes.
 import { createDb } from "@credit/db/applications";
-import * as authSchema from "@credit/db/auth";
 import { createDb as createResearchDb } from "@credit/db/research";
 import { assertFixtureClock, assertManifest, loadManifest } from "./lib/manifest.js";
 import { cliCustomerConfig, cliFlags, dbUserDirectory, requireEnv } from "./lib/env.js";
@@ -26,7 +25,7 @@ const manifest = loadManifest();
 assertFixtureClock(manifest.demoAsOf, process.env.DEMO_AS_OF);
 assertManifest(manifest);
 
-const auth = createDb(requireEnv("AUTH_DATABASE_URL"), authSchema);
+const auth = createDb(requireEnv("AUTH_DATABASE_URL"));
 const { db: appDb, sql } = createDb(requireEnv("APPLICATIONS_DATABASE_URL"));
 const researchUrl = process.env.RESEARCH_DATABASE_URL;
 const research = researchUrl ? createResearchDb(researchUrl) : null;

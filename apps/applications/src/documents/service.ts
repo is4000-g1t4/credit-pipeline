@@ -39,6 +39,7 @@ import {
 	isUniqueViolation,
 	LockTimeout,
 	mapUploadError,
+	mimeForType,
 	OcrSemaphore,
 	parseKind,
 	UploadRateLimiter,
@@ -46,8 +47,9 @@ import {
 	type DetectedType,
 	type DocumentKind,
 } from "./pipeline.js";
-import { createImageOcrAdapter, createPdfOcrAdapter, OcrFailed, type OcrAdapter } from "./ocr.js";
+import { createOcrAdapter, OcrFailed, type OcrAdapter } from "./ocr.js";
 import { resolveScanner, ScannerUnavailable, type ScannerAdapter } from "./scanner.js";
+import { lockApplication } from "./access.js";
 import {
 	deleteBlob,
 	ensureStorageDir,
@@ -220,21 +222,6 @@ export class DocumentService {
 		};
 	}
 
-	/** Advisory lock shared by upload/retry/crosscheck/retention/holds/
-	 * consent (SPEC §7). Bounded: lock_timeout → 409 LOCK_TIMEOUT. */
-	private async lockApplication(tx: Tx, applicationId: string): Promise<void> {
-		const ms = Math.max(1, Math.floor(this.deps.config.lockTimeoutMs));
-		await tx.execute(sql.raw(`SET LOCAL lock_timeout = ${ms}`));
-		try {
-			await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${applicationId}))`);
-		} catch (err) {
-			if (typeof err === "object" && err !== null && (err as { code?: string }).code === "55P03") {
-				throw new LockTimeout();
-			}
-			throw err;
-		}
-	}
-
 	private async findDuplicate(
 		db: Db | Tx,
 		applicationId: string,
@@ -296,7 +283,7 @@ export class DocumentService {
 		let inserted: DocumentFileRow;
 		try {
 			inserted = await withTx(db, async (tx) => {
-				await this.lockApplication(tx, opts.applicationId);
+				await lockApplication(tx, opts.applicationId, this.deps.config.lockTimeoutMs);
 				const apps = await tx
 					.select()
 					.from(applications)
@@ -600,8 +587,7 @@ export class DocumentService {
 				ocrStatus,
 				textLayerRisk: extraction?.textLayerRisk ?? false,
 				originalFilename: this.sanitizedFilename(input.originalFilename),
-				mimeType:
-					detected === "pdf" ? "application/pdf" : detected === "png" ? "image/png" : "image/jpeg",
+				mimeType: mimeForType(detected),
 				sizeBytes: bytes.length,
 				sha256,
 				storageKey,
@@ -762,7 +748,7 @@ export class DocumentService {
 			}));
 			const pageCount = extraction.pageCount ?? pages.length;
 			const updated = await withTx(db, async (tx) => {
-				await this.lockApplication(tx, input.applicationId);
+				await lockApplication(tx, input.applicationId, this.deps.config.lockTimeoutMs);
 				const apps = await tx
 					.select()
 					.from(applications)
@@ -985,13 +971,6 @@ export function buildDocumentService(
 	}
 	const ocr =
 		overrides.ocr ??
-		(() => {
-			const pdf = createPdfOcrAdapter();
-			const image = createImageOcrAdapter({
-				dataDir: config.ocrDataDir,
-				timeoutMs: config.ocrTimeoutMs,
-			});
-			return { extractPdf: pdf.extractPdf, extractImage: image.extractImage } satisfies OcrAdapter;
-		})();
+		createOcrAdapter({ dataDir: config.ocrDataDir, timeoutMs: config.ocrTimeoutMs });
 	return new DocumentService({ db, config, scanner, ocr });
 }

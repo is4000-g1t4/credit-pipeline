@@ -70,6 +70,18 @@ describe("amortization", () => {
 		checkInvariants(schedule, 1200000);
 	});
 
+	it("Dec-31 anchor rolls into Jan then clamps Feb", () => {
+		expect(dueDateForInstallment(2026, 12, 31, 1)).toBe("2027-01-31");
+		expect(dueDateForInstallment(2026, 12, 31, 2)).toBe("2027-02-28");
+	});
+
+	it("48-month schedule ends 48 months out", () => {
+		const schedule = buildSchedule(1200000, 650, 48, "2026-03-15");
+		expect(schedule).toHaveLength(48);
+		expect(schedule.at(-1)?.dueDate).toBe("2030-03-15");
+		checkInvariants(schedule, 1200000);
+	});
+
 	it("installment numbers are 1-based and sequential", () => {
 		const schedule = buildSchedule(500000, 650, 12, "2026-06-15");
 		expect(schedule.map((i) => i.number)).toEqual(Array.from({ length: 12 }, (_, k) => k + 1));

@@ -80,6 +80,31 @@ describe("POST /api/review/:id/decision", () => {
 			loanId: "l-book",
 		});
 		expect(c.gateway.decisionCalls.at(-1)?.applicationId).toBe(appId);
+		// The full forwarded payload: public fields verbatim plus the
+		// server-resolved officer identity — nothing else.
+		expect(c.gateway.decisionCalls.at(-1)?.input).toEqual({
+			requestId: approveBody.requestId,
+			outcome: "approve",
+			officerUserId: officer.id,
+		});
+
+		// Optional terms ride through untouched.
+		const fullId = randomUUID();
+		const fullBody = {
+			requestId: fullId,
+			outcome: "approve",
+			approvedAmountCents: 500000,
+			termMonths: 24,
+			reasonCode: "OFFICER_JUDGEMENT",
+			notes: "counter-offer",
+		};
+		const fullPath = `/api/review/${fullId}/decision`;
+		const full = await postDecision(c, fullPath, officer, fullBody);
+		expect(full.status).toBe(200);
+		expect(c.gateway.decisionCalls.at(-1)?.input).toEqual({
+			...fullBody,
+			officerUserId: officer.id,
+		});
 
 		c.gateway.decisionError = new GatewayError(409, "DECISION_CONFLICT", "already decided");
 		const appId2 = randomUUID();
