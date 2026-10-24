@@ -42,12 +42,11 @@ export const researchServerSchema = {
 	AGENT_MAX_SOURCES: z.coerce.number().int().min(1).max(20).default(6),
 	AGENT_MAX_FETCHES: z.coerce.number().int().min(1).max(20).default(4),
 	AGENT_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(600_000).default(90_000),
-	// Web-agent model controls. Defaults come from eval/settings-eval.ts:
-	// 0.1 produced no forbidden hit in the n=1 fixture run (directional);
-	// 2000 output tokens fit the fixture without the 1200-token squeeze.
-	// The web eval harness does not exercise the production validator.
+	// Web-agent model controls. Defaults come from eval/brief-eval.ts and the
+	// earlier settings sweep; the brief eval exercises the production validator.
+	// 3000 output tokens fit the collision fixture without truncating JSON.
 	AGENT_TEMPERATURE: z.coerce.number().min(0).max(1).default(0.1),
-	AGENT_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(256).max(8_000).default(2_000),
+	AGENT_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(256).max(8_000).default(3_000),
 	AGENT_MAX_TOOL_CALLS: z.coerce.number().int().min(1).max(20).default(8),
 	AGENT_MAX_TURNS: z.coerce.number().int().min(2).max(24).default(12),
 	// 2.0 keeps the context-stage boot guard satisfiable now that the

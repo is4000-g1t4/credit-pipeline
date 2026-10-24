@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	isSingleClaim,
 	validateCaseAnswer,
 	validateNavigatorAnswer,
 	type RetrievedSection,
@@ -167,6 +168,25 @@ describe("navigator citation validation", () => {
 		asOf: "2026-06-30",
 		queryId: "66666666-6666-4666-8666-666666666666",
 	};
+	it("treats i.e. and e.g. as abbreviations, not sentence terminators", () => {
+		expect(
+			isSingleClaim("Principal haircuts, i.e. relief by reducing principal, are prohibited."),
+		).toBe(true);
+		expect(isSingleClaim("Use a secured facility, e.g. a mortgage, for the request.")).toBe(true);
+	});
+	it("accepts a limitation longer than 300 characters", () => {
+		const result = validateNavigatorAnswer(
+			{
+				status: "needs_policy_owner",
+				segments: [],
+				citations: [],
+				limitations: ["x".repeat(420)],
+			},
+			retrieved,
+			opts,
+		);
+		expect(result.ok).toBe(true);
+	});
 	it("accepts one claim with an exact quote", () => {
 		const result = validateNavigatorAnswer(
 			{
@@ -184,6 +204,112 @@ describe("navigator citation validation", () => {
 		);
 		expect(result.ok).toBe(true);
 		expect(result.answer.citations[0]?.drawerToken).toBeTruthy();
+	});
+	it("accepts a quote that only differs by hard-wrapped whitespace", () => {
+		const wrapped: RetrievedSection[] = [
+			{
+				...retrieved[0]!,
+				body: "SME term facilities require a DSCR of at least 1.25x, computed as\nadjusted EBITDA divided by total annual debt service.",
+			},
+		];
+		const result = validateNavigatorAnswer(
+			{
+				status: "succeeded",
+				segments: [
+					{ text: "SME term facilities require DSCR of at least 1.25x.", citationIndexes: [0] },
+				],
+				citations: [
+					{
+						policyKey: "POL-CR-001",
+						sectionId: "4.2",
+						quote:
+							"of at least 1.25x, computed as adjusted EBITDA divided by total annual debt service",
+					},
+				],
+				limitations: [],
+			},
+			wrapped,
+			opts,
+		);
+		expect(result.ok).toBe(true);
+		expect(result.answer.citations[0]?.quote).toContain("computed as\nadjusted");
+	});
+	it("still rejects a quote with words inserted inside it", () => {
+		const wrapped: RetrievedSection[] = [
+			{
+				...retrieved[0]!,
+				body: "Secured facilities may use a 1.15x floor.",
+			},
+		];
+		const result = validateNavigatorAnswer(
+			{
+				status: "succeeded",
+				segments: [
+					{ text: "Secured facilities may use a 1.15x DSCR floor.", citationIndexes: [0] },
+				],
+				citations: [
+					{
+						policyKey: "POL-CR-001",
+						sectionId: "4.2",
+						quote: "may use a 1.15x DSCR floor",
+					},
+				],
+				limitations: [],
+			},
+			wrapped,
+			opts,
+		);
+		expect(result.ok).toBe(false);
+	});
+	it("rejects a quote that stitches separate list items", () => {
+		const listed: RetrievedSection[] = [
+			{
+				...retrieved[0]!,
+				body: "Rules:\n- item one\n- item two\n- item three",
+			},
+		];
+		const result = validateNavigatorAnswer(
+			{
+				status: "succeeded",
+				segments: [{ text: "The rules include item one and item two.", citationIndexes: [0] }],
+				citations: [
+					{
+						policyKey: "POL-CR-001",
+						sectionId: "4.2",
+						quote: "item one - item two",
+					},
+				],
+				limitations: [],
+			},
+			listed,
+			opts,
+		);
+		expect(result.ok).toBe(false);
+	});
+	it("checks the canonical quote for PII after whitespace normalization", () => {
+		const phone: RetrievedSection[] = [
+			{
+				...retrieved[0]!,
+				body: "Call 6123 4567 for the credit committee.",
+			},
+		];
+		const result = validateNavigatorAnswer(
+			{
+				status: "succeeded",
+				segments: [{ text: "Call the credit committee for help.", citationIndexes: [0] }],
+				citations: [
+					{
+						policyKey: "POL-CR-001",
+						sectionId: "4.2",
+						quote: "Call 6123  4567",
+					},
+				],
+				limitations: [],
+			},
+			phone,
+			opts,
+		);
+		expect(result.ok).toBe(false);
 	});
 	it("rejects a fabricated quote, multiple claims, and PII", () => {
 		for (const output of [

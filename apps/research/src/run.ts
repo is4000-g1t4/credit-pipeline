@@ -89,7 +89,7 @@ export class CostExceededError extends Error {}
 /** Max judge pairs per finding; over-limit candidates are skipped with an
  * explicit reason (no silent global discard). Bounds total judge work. */
 const PER_FINDING_PAIR_CAP = 8;
-const VALIDATOR_VERSION = "v1";
+export const VALIDATOR_VERSION = "v1";
 
 export interface ExecDeps {
 	db: Db;
@@ -1056,7 +1056,7 @@ interface ValidatedFinding {
 	entityMatch: { identifierType: string; value: string; confidence: Confidence };
 }
 
-interface ValidatedOutput {
+export interface ValidatedOutput {
 	brief: Record<string, unknown>;
 	validation: Record<string, unknown>;
 	evidence: ProcessedEvidence[];
@@ -1142,7 +1142,7 @@ function checkRepairStructure(before: ModelBrief, after: ModelBrief): void {
 	}
 }
 
-async function validateAndBuild(opts: {
+export async function validateAndBuild(opts: {
 	brief: unknown;
 	fetched: FetchedEvidence[];
 	entity: CaseEntity;
@@ -1265,6 +1265,7 @@ async function validateAndBuild(opts: {
 		}
 		let snap: {
 			snapshotText: string;
+			quote: string;
 			quoteStart: number;
 			quoteEnd: number;
 			snapshotHash: string;
@@ -1276,14 +1277,14 @@ async function validateAndBuild(opts: {
 			droppedQuotes += 1;
 			continue;
 		}
-		if (!verifyQuote(snap.snapshotText, ev.quote, snap.quoteStart, snap.quoteEnd)) {
+		if (!verifyQuote(snap.snapshotText, snap.quote, snap.quoteStart, snap.quoteEnd)) {
 			droppedQuotes += 1;
 			continue;
 		}
 		const tier = tierForHost(verdict.host);
 		// Protected-attribute quotes are quarantined unless the documented
 		// fraud-record exception applies (official/registry tier + fraud text).
-		if (scanProtected(ev.quote).length > 0 && !piiExceptionApplies(ev.quote, [tier])) {
+		if (scanProtected(snap.quote).length > 0 && !piiExceptionApplies(snap.quote, [tier])) {
 			droppedPii += 1;
 			continue;
 		}
@@ -1311,7 +1312,7 @@ async function validateAndBuild(opts: {
 					: verdict.host,
 			publishedAt,
 			dateBasis,
-			quote: ev.quote,
+			quote: snap.quote,
 			quoteStart: snap.quoteStart,
 			quoteEnd: snap.quoteEnd,
 			snapshotText: snap.snapshotText,

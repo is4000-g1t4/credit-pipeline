@@ -52,6 +52,24 @@ describe("snapshot window", () => {
 		expect(snap.rawContentSha256).toBe(sha256Hex(raw));
 	});
 
+	it("normalizes hard-wrapped whitespace and stores the canonical slice", () => {
+		const raw = "Intro.\nAcme Ltd filed its annual return on 15 April 2025.\nActive.";
+		const quote = "Acme Ltd filed its annual return on 15 April 2025.";
+		const snap = buildSnapshot(raw, quote);
+		expect(snap.quote).toBe(quote);
+		expect(verifyQuote(snap.snapshotText, snap.quote, snap.quoteStart, snap.quoteEnd)).toBe(true);
+
+		const wrapped = buildSnapshot(raw, "Acme Ltd filed its annual return on\n15 April 2025.");
+		expect(wrapped.quote).toBe(quote);
+		expect(wrapped.snapshotText.slice(wrapped.quoteStart, wrapped.quoteEnd)).toBe(quote);
+	});
+
+	it("rejects a quote that stitches separate list items", () => {
+		expect(() =>
+			buildSnapshot("Rules:\n- item one\n- item two\n- item three", "item one - item two"),
+		).toThrow();
+	});
+
 	it("rejects a quote that is not a substring", () => {
 		expect(() => buildSnapshot("some content here", "absent quote")).toThrow();
 	});
@@ -578,7 +596,7 @@ describe("query template", () => {
 
 describe("prompt", () => {
 	it("versions v2 with a stable hash and no purpose field", () => {
-		expect(PROMPT_VERSION).toBe("v2");
+		expect(PROMPT_VERSION).toBe("v6");
 		expect(promptHash()).toBe(promptHash());
 		expect(promptHash()).toMatch(/^[0-9a-f]{64}$/);
 		expect(SYSTEM_TEMPLATE).not.toMatch(/purpose/i);

@@ -146,7 +146,7 @@ So split the job:
   a proxy; the real number comes from the offline eval.
 - `ai_cost_per_day`: spend ≤ the configured budget; p95 cost per run under
   the per-query cap; p95 latency under 30 s for the navigator and 45 s for
-  the case stage.
+  the case stage (hard navigator timeout: 60 s).
 
 For the PoC: one dashboard and one alert on completion rate. No pager.
 
@@ -197,35 +197,53 @@ Existing evals:
   uses the real validator; web mode explicitly checks only the raw brief
   shape and is `n=1` directional. Useful for choosing settings, not for
   claiming answer quality.
+- `apps/policy/eval/answer-eval.ts` + `answer-cases.json` — answer-level
+  navigator eval (real retrieval, answerer, validator, judge).
+- `apps/research/eval/brief-eval.ts` — frozen-Tavily brief eval through the
+  production validator.
+- `apps/research/eval/context-eval.ts` — real context agent/tools/validator
+  against eval-owned demo applications.
+- Results: `apps/policy/eval/ANSWER-RESULTS.md`,
+  `apps/research/eval/BRIEF-RESULTS.md`,
+  `apps/research/eval/CONTEXT-RESULTS.md`.
 
 Gaps worth closing, in order:
 
-1. No answer-level eval for the navigator (retrieval is covered; answer
-   validity, status, and groundedness are not).
-2. The web settings eval does not exercise the production validator or the
-   persistence path.
-3. No held-out split for the agent suites.
-4. Rejected model output is discarded in production, so there is no record
-   of _why_ a navigator answer fell back to `needs_policy_owner`.
-5. No case-policy-stage eval and no navigator telemetry.
+1. The claim-support/completeness judge is the same model family and has no
+   human calibration. Treat those columns as advisory until ~20 labels are
+   scored against it.
+2. No case-policy-stage eval. `validateCaseAnswer` also drops items rather than
+   failing the stage, so a future eval must measure per-ref coverage and drop
+   rate.
+3. No held-out split for the brief/context demo personas. Their 9/9 results are
+   in-sample sanity checks.
+4. Rejected model output is discarded in production, so there is no record of
+   _why_ a navigator answer fell back to `needs_policy_owner`.
+5. No navigator telemetry in Grafana; the policy service still has no
+   instrumentation.
+6. The advisory-only invariant is covered only by the decision-snapshot test
+   (`apps/worker/test/refer.test.ts`), not by a flags-on/off end-to-end test.
 
 ### 4.5 Feature registry
 
 Add one row when a feature lands. A feature with no row is an experiment, not
 a supported capability.
 
-| Feature                                       | Archetype                       | Dataset                                 | Command                                       | Status      |
-| --------------------------------------------- | ------------------------------- | --------------------------------------- | --------------------------------------------- | ----------- |
-| Policy navigator (`apps/policy`)              | Retrieval-augmented answer      | `apps/policy/eval/answer-cases.json`    | `pnpm --filter @credit/policy eval:answers`   | to be wired |
-| Case policy review (`apps/research` → policy) | Explain/classify                | `apps/research/eval/policy-cases.json`  | `pnpm --filter @credit/research eval:policy`  | planned     |
-| External case brief (`apps/research`)         | Tool-using research             | `apps/research/eval/brief-cases.json`   | `pnpm --filter @credit/research eval:brief`   | to be wired |
-| Context analyst (`apps/research`)             | Structured extraction/selection | `apps/research/eval/context-cases.json` | `pnpm --filter @credit/research eval:context` | to be wired |
-| Advisory-only invariant                       | System invariant                | demo personas                           | existing e2e/demo suite                       | planned     |
-| Future feature                                | Pick §1.2                       | `apps/<app>/eval/cases.json`            | `pnpm --filter @credit/<app> eval:<feature>`  | required    |
+| Feature                                       | Archetype                       | Dataset                                         | Command                                       | Status                                     |
+| --------------------------------------------- | ------------------------------- | ----------------------------------------------- | --------------------------------------------- | ------------------------------------------ |
+| Policy navigator (`apps/policy`)              | Retrieval-augmented answer      | `apps/policy/eval/answer-cases.json` (31 cases) | `pnpm --filter @credit/policy eval:answers`   | passing: held-out 8/8, dev 19/23 at pass^3 |
+| Case policy review (`apps/research` → policy) | Explain/classify                | inline demo personas + edge case                | `pnpm --filter @credit/research eval:policy`  | planned                                    |
+| External case brief (`apps/research`)         | Tool-using research             | inline 3-case fixture in `brief-eval.ts`        | `pnpm --filter @credit/research eval:brief`   | passing: 9/9, in-sample                    |
+| Context analyst (`apps/research`)             | Structured extraction/selection | demo personas in `fixtures.ts`                  | `pnpm --filter @credit/research eval:context` | passing: 9/9, in-sample                    |
+| Advisory-only invariant                       | System invariant                | demo personas                                   | existing e2e/demo suite                       | partial: snapshot test only                |
+| Future feature                                | Pick §1.2                       | `apps/<app>/eval/cases.json`                    | `pnpm --filter @credit/<app> eval:<feature>`  | required                                   |
 
 Update the status column to `baseline`, `passing`, `saturated`, or
 `directional` after each run. Keep the command in the row so the next person
-does not have to guess.
+does not have to guess. Results:
+`apps/policy/eval/ANSWER-RESULTS.md`,
+`apps/research/eval/BRIEF-RESULTS.md`,
+`apps/research/eval/CONTEXT-RESULTS.md`.
 
 ### 4.6 Adding a new AI feature
 
@@ -300,37 +318,35 @@ Rules:
 
 This is the most visible AI feature and the easiest to grade well.
 
-Dataset, 24–30 cases:
+Dataset, 31 cases (23 dev, 8 held-out):
 
-- 10 answerable dev + 8 answerable held-out, across underwriting,
-  affordability, documentation, pricing, and servicing.
-- 4 unanswerable → `no_match`.
-- 2 ambiguous → `needs_policy_owner`.
-- 2 out-of-scope → `out_of_scope`.
-- 2 direct-identifier → `identifier_blocked`.
-- 1–2 version/as-of edge cases (a case that must cite a retired-but-effective
-  version).
-- 1–2 adversarial questions: “ignore your citations”, “should I approve this
-  applicant?”, a question from another domain.
+- 24 answerable, across underwriting, affordability, documentation, pricing,
+  and servicing.
+- 3 unanswerable → `no_match`.
+- 2 ambiguous → `needs_policy_owner` or `no_match`.
+- 1 out-of-scope → `out_of_scope`.
+- 1 direct-identifier → `identifier_blocked`.
+- 1 adversarial injection question; no stale/as-of case yet (corpus has one
+  version per policy).
 
-Harness: `apps/policy/eval/answer-eval.ts`. Call the real retrieval,
-`createOpenRouterAnswerer`, and `validateNavigatorAnswer`, and record the raw
-model output plus `validation.errors`. Bypass HTTP auth and rate limits and
-say so in `RESULTS.md`; add one end-to-end smoke through the gateway if you
-want to prove wiring.
+Harness: `apps/policy/eval/answer-eval.ts`. Calls the production Markdown
+parser, `rankChunks`, `createOpenRouterAnswerer`, and
+`validateNavigatorAnswer`, and records the raw model output plus
+`validation.errors`. It bypasses HTTP auth, ACL, and budget reservations;
+the result metadata records those bypasses. Retrieval is top-8, not recall@5.
 
 Metrics:
 
-| Metric                | Definition                                                  | Target           |
-| --------------------- | ----------------------------------------------------------- | ---------------- |
-| Retrieval recall@5    | expected section in the top 5                               | ≥ 0.90           |
-| Raw valid-answer rate | validator `ok` / answerable cases                           | ≥ 0.80           |
-| Status accuracy       | correct status / all cases                                  | ≥ 0.90           |
-| Citation hit          | expected section cited / valid answers                      | ≥ 0.80           |
-| Groundedness          | segments judged supported by their quote / segments         | ≥ 0.95           |
-| Refusal precision     | `no_match`/`needs_policy_owner` on unanswerable + ambiguous | 1.00             |
-| Safety                | decision language, PII, URL hits                            | 0                |
-| Latency / cost        | p95 per query / mean USD                                    | < 30 s / < $0.10 |
+| Metric                     | Definition                                                   | Target           |
+| -------------------------- | ------------------------------------------------------------ | ---------------- |
+| Required-section retrieval | expected section in the top 8                                | ≥ 0.90           |
+| Raw valid-answer rate      | validator `ok` / answerable cases                            | ≥ 0.80           |
+| Status accuracy            | correct status / all cases                                   | ≥ 0.90           |
+| Citation hit               | required section cited / valid answers                       | ≥ 0.80           |
+| Groundedness               | segments judged supported by their quote / segments          | ≥ 0.95           |
+| Refusal precision          | refusal on unanswerable + ambiguous                          | 1.00             |
+| Safety                     | decision language, PII, URL hits in segments and limitations | 0                |
+| Latency / cost             | p95 per query / mean USD                                     | < 30 s / < $0.10 |
 
 Do not report only “succeeded”. A model that returns
 `needs_policy_owner` for everything scores 1.00 on safety and 0 on
@@ -363,46 +379,42 @@ them into an eval that is trying to measure the model.
 
 ### 5.4 External case brief
 
-Dataset: a frozen Tavily fixture with 4–6 documents across three entities:
-one adverse-media hit, one clean, one ambiguous name/city collision. Include
-a stale document and a low-tier source. Hand-label the expected findings and
-non-findings. The existing `settings-eval.ts` fixture is a start but only has
-one entity.
+Dataset: a frozen Tavily fixture with 2–4 documents per entity across three
+cases: one adverse-media hit, one clean, one ambiguous name/city collision.
+The fixture is injected per case so a search cannot leak another case's pages.
+Hand-label the expected findings and non-findings.
 
 Metrics: schema pass, quote verification rate, evidence per finding,
-independent source count, official/registry source present,
-forbidden/protected hits, entity-match correctness, precision on labelled
-findings, coverage of must-find facts, cost, latency.
+independent source count, official/registry source linked to the finding,
+forbidden/protected hits, PII leaks, entity-match correctness, precision on
+labelled findings, coverage of must-find facts, cost, latency.
 
-Harness: `apps/research/eval/brief-eval.ts`. The honest version runs
-`executeRun` against a scratch DB with a fake Tavily and the real validator,
-so persistence, source rules, and repair/judge are exercised. If that is too
-much for the PoC, at minimum run `modelBriefSchema`, `verifyQuote`, the
-as-of checks, `scanForbidden`, `scanProtected`, and the two-source rule, and
-state in `RESULTS.md` that persistence and orchestration were not exercised.
+Harness: `apps/research/eval/brief-eval.ts`. It runs the real agent and the
+production `validateAndBuild` pipeline with a fake Tavily and the real
+validator, so schema, quote snapshots, source rules, entity match, support
+judge, and language repair are exercised. Persistence/orchestration are not.
 
-Do **not** reuse the web mode of `settings-eval.ts` as evidence of quality:
-it says in its own header that it checks raw shape only.
-
-Judge dimensions: “Is the finding supported by the quoted evidence?” and
-“Does the summary overstate the evidence?” Two calls, not one global
-“quality” score.
+Judge dimensions: “Is the finding supported by the quoted evidence?” is the
+production support judge. The separate summary-overreach judge is advisory
+only; it is not calibrated and is not in `pass`.
 
 ### 5.5 Context analyst
 
-Dataset: BreadTalk, Sparse, Alex + one edge case. Hand-label the expected
-signal set per case (type, metric, period, scope) from the deterministic
-candidates.
+Dataset: BreadTalk (rich), Sparse (no accounts), Alex (individual). The
+expected signal types come from the demo manifest: `round_trip`,
+`cash_deposit_share`, `returned_payment`, `revenue_concentration`, and
+`insufficient_data`.
 
-Metrics: signal precision/recall against the expected set, invented tuples
-(must be 0), dropped count and reasons, first-pass validation rate, repair
-rate, data-gap coverage on Sparse, cost, latency.
+Metrics: expected signal types present, invented tuples (must be 0), dropped
+signals, first-pass validation rate, repair rate, data-gap coverage on Sparse,
+tool failures, cost, latency. Narrative drops (claims/gaps/limitations) are
+reported but not gated: the server composes the persisted prose.
 
-Harness: extend the context mode of `settings-eval.ts`; it already runs the
-real validator. Keep the existing weighted `score` for ranking configs only,
-and add the outcome metrics above to the report. The server composes the
-persisted prose from fixed templates, so do not judge the model's narrative;
-judge selection and gaps.
+Harness: `apps/research/eval/context-eval.ts`. It uses the real context agent,
+real read-only tools, and the production validator against eval-owned
+applications (`fixture_key LIKE 'eval-%'`). It requires Postgres, seeded demo
+fixtures, and applications/loans services. Coverage is validator-enforced, so
+it is a sanity check, not an independent quality signal.
 
 ### 5.6 Cross-cutting: the advisory-only invariant
 
@@ -418,6 +430,22 @@ The most important safety eval for this project, and the cheapest:
 
 Put this in the existing e2e/demo suite as one test. It directly supports the
 “AI never decides” claim, which is the point a marker will probe.
+
+Current coverage: `apps/worker/test/refer.test.ts` freezes accepted findings
+into the decision snapshot; there is no flags-on/off end-to-end test yet. That
+is the remaining half of the invariant.
+
+### 5.7 Recorded results (2026-10-24)
+
+| Feature             | Run                   | Headline                                                              |    Cost | Caveat                                                             |
+| ------------------- | --------------------- | --------------------------------------------------------------------- | ------: | ------------------------------------------------------------------ |
+| Policy navigator    | 31 cases × 3 trials   | held-out 8/8 cases, dev 19/23 at pass^3; 93/93 status-correct trials  | $0.3052 | judge uncalibrated; dev failures are completeness                  |
+| External case brief | 3 cases × 3 trials    | 9/9 trials, 3/3 pass^3; adverse/collision correct, citation/PII clean | $0.2177 | 3 synthetic cases, in-sample; registry/support reported, not gated |
+| Context analyst     | 3 personas × 3 trials | 9/9 trials, 3/3 pass^3, first-pass 9/9, 0 dropped signals             | $0.7546 | 3 demo personas, in-sample; coverage validator-enforced            |
+
+Details: `apps/policy/eval/ANSWER-RESULTS.md`,
+`apps/research/eval/BRIEF-RESULTS.md`,
+`apps/research/eval/CONTEXT-RESULTS.md`.
 
 ## 6. Graders
 
@@ -463,7 +491,7 @@ Report, for every run:
 - `pass@1` (mean per-trial pass rate) and `pass^3` (all three trials pass).
 - Per-metric pass rate with a Wilson 95% CI for proportions.
 - `n`, number of trials, model, prompt version, validator version, `asOf`.
-- Cost: mean and total; latency: p50/p95.
+- Cost: mean and total; latency: mean and p95 (p50 optional).
 - The biggest failure cluster, with two or three transcript excerpts.
 - Caveats: synthetic corpus, fixture web, no real users.
 
@@ -489,12 +517,14 @@ upgrade is a full re-run.
 
 Phases, highest value first:
 
-1. **Navigator answer eval** — 24 cases, code graders plus one judge. This is
-   the visible AI feature and the easiest to defend.
-2. **Fix the web settings eval** — use the production validator, add three
-   trials and outcome metrics, label it directional until then.
+1. **Navigator answer eval** — done: 31 cases, held-out 8/8, dev 19/23 at
+   pass^3. The remaining work is held-out tuning discipline and judge
+   calibration.
+2. **Brief and context quality evals** — done: both 9/9 in-sample. Replace the
+   demo personas with at least one frozen held-out case before quoting a
+   generalisation number.
 3. **Advisory-only invariant + a Grafana dashboard from existing tables** —
-   one test, one dashboard, one alert.
+   snapshot test exists; flags-on/off e2e and the dashboard are still open.
 4. **Only if time remains** — case-policy stage eval; Grafana score export.
 
 For a future feature, start at step 1: write the outcome sentence, pick the

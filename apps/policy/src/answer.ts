@@ -91,7 +91,7 @@ export const navigatorModelSchema = z
 		status: z.enum(["succeeded", "no_match", "needs_policy_owner"]),
 		segments: z.array(modelSegmentSchema).max(12).default([]),
 		citations: z.array(modelCitationSchema).max(12).default([]),
-		limitations: z.array(z.string().max(300)).max(8).default([]),
+		limitations: z.array(z.string().max(600)).max(8).default([]),
 	})
 	.strict();
 
@@ -112,7 +112,7 @@ export const caseModelSchema = z
 			)
 			.max(50)
 			.default([]),
-		limitations: z.array(z.string().max(300)).max(8).default([]),
+		limitations: z.array(z.string().max(600)).max(8).default([]),
 	})
 	.strict();
 
@@ -122,11 +122,13 @@ const NRIC_RE = /\b[STFGM]\d{7}[A-Z]\b/i;
 const URL_RE = /https?:\/\/|www\.[a-z0-9]/i;
 
 /** One claim per segment, one sentence terminator. Decimal points and
- * abbreviations without a following space do not count. */
+ * abbreviations without a following space do not count; common spaced
+ * abbreviations (i.e., e.g., etc.) are stripped first. */
 export function isSingleClaim(text: string): boolean {
 	const trimmed = text.trim();
 	if (trimmed.length === 0 || trimmed.length > 400) return false;
-	const terminators = trimmed.match(/[.!?](?=\s|$)/g) ?? [];
+	const cleaned = trimmed.replace(/\b(i\.e|e\.g|viz|etc)\./gi, "$1");
+	const terminators = cleaned.match(/[.!?](?=\s|$)/g) ?? [];
 	return terminators.length <= 1;
 }
 
@@ -193,6 +195,60 @@ function findRetrieved(
 	return candidates.length === 1 ? (candidates[0] as RetrievedSection) : null;
 }
 
+/** Locate a model quote in the canonical body. Policy Markdown is hard-wrapped,
+ * so a model copying a sentence often collapses a newline to a space; an exact
+ * `indexOf` would reject a perfectly good citation. Try the exact match first,
+ * then a whitespace-normalized match and return the canonical substring (with
+ * its original offsets) so stored citations remain exact.
+ */
+export function findQuote(
+	body: string,
+	quote: string,
+): { quote: string; quoteStart: number; quoteEnd: number } | null {
+	const exact = body.indexOf(quote);
+	if (exact >= 0) {
+		return { quote, quoteStart: exact, quoteEnd: exact + quote.length };
+	}
+	const normalize = (text: string): { text: string; map: number[] } => {
+		const chars: string[] = [];
+		const map: number[] = [];
+		let lastSpace = false;
+		for (let i = 0; i < text.length; i++) {
+			const ch = text[i] as string;
+			if (/\s/.test(ch)) {
+				if (!lastSpace && chars.length > 0) {
+					chars.push(" ");
+					map.push(i);
+					lastSpace = true;
+				}
+			} else {
+				chars.push(ch);
+				map.push(i);
+				lastSpace = false;
+			}
+		}
+		if (chars[chars.length - 1] === " ") {
+			chars.pop();
+			map.pop();
+		}
+		return { text: chars.join(""), map };
+	};
+	const haystack = normalize(body);
+	const needle = normalize(quote.trim());
+	if (needle.text.length < 20) return null;
+	const hit = haystack.text.indexOf(needle.text);
+	if (hit < 0) return null;
+	const start = haystack.map[hit];
+	const end = haystack.map[hit + needle.text.length - 1];
+	if (start === undefined || end === undefined) return null;
+	const canonical = body.slice(start, end + 1);
+	// Whitespace normalization is for hard wraps, not for stitching separate
+	// bullets, table rows, or paragraphs into one quote.
+	if (/\n\s*\n/.test(canonical)) return null;
+	if (/\n\s*(?:[-*+|#]|\d+\.)\s/.test(canonical)) return null;
+	return { quote: canonical, quoteStart: start, quoteEnd: end + 1 };
+}
+
 function validateSegment(
 	segment: z.infer<typeof modelSegmentSchema>,
 	citations: z.infer<typeof modelCitationSchema>[],
@@ -211,9 +267,9 @@ function validateSegment(
 		if (!raw) return null;
 		const section = findRetrieved(retrieved, raw);
 		if (!section) return null;
-		const quoteStart = section.body.indexOf(raw.quote);
-		if (quoteStart < 0) return null;
-		if (containsForbidden(raw.quote)) return null;
+		const located = findQuote(section.body, raw.quote);
+		if (!located) return null;
+		if (containsForbidden(raw.quote) || containsForbidden(located.quote)) return null;
 		out.push({
 			policyId: section.policyId,
 			policyKey: section.policyKey,
@@ -223,9 +279,9 @@ function validateSegment(
 			version: section.version,
 			effectiveFrom: section.effectiveFrom,
 			effectiveTo: section.effectiveTo,
-			quote: raw.quote,
-			quoteStart,
-			quoteEnd: quoteStart + raw.quote.length,
+			quote: located.quote,
+			quoteStart: located.quoteStart,
+			quoteEnd: located.quoteEnd,
 			contentHash: createHash("sha256").update(section.body).digest("hex"),
 			drawerToken: createDrawerToken(secret, {
 				versionId: section.policyVersionId,

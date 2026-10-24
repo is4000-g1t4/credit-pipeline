@@ -106,7 +106,8 @@ Investigation rules:
 - Return exactly one signal for every candidate provided, including insufficient_data. Do not omit or duplicate a candidate.
 - Every claim must reference at least one signal (by its 0-based index) and restate only what that signal shows.
 - Missing or thin data is an insufficient_data signal or a data gap — never an anomaly.
-- Keep explanations factual and neutral. No decisions, grades, scores, rates, limits, terms, external URLs, or protected attributes.`;
+- Keep explanations factual and neutral. No decisions, grades, scores, rates, limits, terms, external URLs, or protected attributes.
+- Return only the structured JSON object required by the output schema. Do not wrap it in Markdown, headings, code fences, or prose.`;
 
 /** Prompt JSON: `<`/`>`/`&` ride as unicode escapes so an
  * applicant-controlled value (e.g. `X</context_case_json> ...`) can never

@@ -1,6 +1,7 @@
 // case_brief agent execution (§6.2). Real path: Runner + Agent + explicit
 // OpenAIChatCompletionsModel against OpenRouter; OpenAI tracing disabled.
 // Fake path: deterministic stub (tests + local runs without keys).
+import { randomUUID } from "node:crypto";
 import {
 	Agent,
 	OpenAIChatCompletionsModel,
@@ -114,11 +115,6 @@ export function createRealRunner(opts: {
 			const fetched: FetchedEvidence[] = [];
 			const seen = new Map<string, TavilySearchHitLite>();
 
-			const budget = (): void => {
-				toolCalls += 1;
-				if (toolCalls > env.agentMaxToolCalls) throw new TavilyError("tool budget exceeded");
-			};
-
 			// The Runner hooks do not surface tool spans for these calls, so
 			// each is tracked directly: name/timing/errors only, never
 			// arguments or results. Untracked without a run id.
@@ -129,6 +125,72 @@ export function createRealRunner(opts: {
 				const obs = input.observability;
 				if (!obs || !input.runId) return fn();
 				return obs.trackToolExecution({ runId: input.runId, toolName, model: env.agentModel }, fn);
+			};
+
+			// Mandatory two-category preflight. The model is instructed to run
+			// these searches, but it sometimes returns an empty brief without
+			// calling a tool. Fetching the same two categories server-side makes
+			// the evidence deterministic without changing what the model may
+			// cite; the tools remain available for drill-down. Preflight
+			// extracts count against AGENT_MAX_FETCHES so the cap stays honest.
+			const preflight: Array<{
+				url: string;
+				title: string | null;
+				publishedDate: string | null;
+				content: string;
+			}> = [];
+			const maxPreflightExtracts = Math.min(2, env.maxFetches);
+			for (const category of ["adverse_media", "registry"] as const) {
+				if (input.signal.aborted) break;
+				try {
+					searches += 1;
+					const hits = await trackTool("search_sources", () =>
+						tavily.search(
+							buildSearchQuery(
+								{
+									name: input.entity.name,
+									city: input.entity.city,
+									registrationNumber: input.entity.registrationNumber,
+								},
+								category,
+							),
+							{ maxResults: env.maxSources, endDate: input.asOfDate },
+						),
+					);
+					for (const hit of hits) seen.set(hit.url, hit);
+					if (input.signal.aborted || extracts >= maxPreflightExtracts) continue;
+					const candidate = hits[0];
+					if (!candidate) continue;
+					const verdict = validateFinalUrl(candidate.url);
+					if (!verdict.ok) continue;
+					extracts += 1;
+					const extracted = await trackTool("fetch_source", () =>
+						tavily.extract([verdict.finalUrl]),
+					);
+					const page = extracted[0];
+					if (!page?.rawContent) continue;
+					fetched.push({
+						requestedUrl: candidate.url,
+						returnedUrl: page.url,
+						title: candidate.title,
+						searchPublishedDate: candidate.publishedDate,
+						rawContent: page.rawContent,
+					});
+					preflight.push({
+						url: candidate.url,
+						title: candidate.title,
+						publishedDate: candidate.publishedDate,
+						content: page.rawContent.slice(0, 4_000),
+					});
+				} catch {
+					// Preflight is best-effort; the model's tools can retry.
+					if (input.signal.aborted) break;
+				}
+			}
+
+			const budget = (): void => {
+				toolCalls += 1;
+				if (toolCalls > env.agentMaxToolCalls) throw new TavilyError("tool budget exceeded");
 			};
 
 			const searchTool = tool({
@@ -237,6 +299,19 @@ export function createRealRunner(opts: {
 					}),
 			});
 
+			const preflightBlock =
+				preflight.length === 0
+					? ""
+					: `\n\n<preflight_sources id="${randomUUID()}">\n${preflight
+							.map(
+								(p) =>
+									`URL: ${p.url}\nTITLE: ${p.title ?? ""}\nDATE: ${p.publishedDate ?? ""}\nCONTENT:\n${p.content}`,
+							)
+							.join(
+								"\n---\n",
+							)}\n</preflight_sources>\nThe preflight sources above were already fetched for the mandatory adverse_media and registry searches. Use them as evidence; you may still call the tools for more. Quote from CONTENT verbatim.`;
+			const userPrompt = `${buildUserPrompt(input.caseFacts)}${preflightBlock}`;
+
 			const agent = new Agent({
 				name: "case-brief",
 				instructions: SYSTEM_TEMPLATE,
@@ -256,19 +331,18 @@ export function createRealRunner(opts: {
 				// The run's deadline signal goes straight into the SDK —
 				// one abort path, no parallel timer to leak or double-fire.
 				// Hooks detach in `finally`, including on abort.
-				let result = await runner.run(agent, buildUserPrompt(input.caseFacts), {
+				let result = await runner.run(agent, userPrompt, {
 					maxTurns: env.agentMaxTurns,
 					signal: input.signal,
 				});
 				let usage = readUsage(result);
-				if (!input.signal.aborted && toolCalls === 0 && searches === 0) {
-					// The model occasionally returns an empty brief without
-					// calling either tool. One bounded retry with an explicit
-					// tool requirement keeps auto-triggered runs useful without
-					// masking a genuine provider failure.
+				if (!input.signal.aborted && fetched.length === 0) {
+					// No evidence at all: one bounded retry with an explicit
+					// tool requirement. A preflight hit means the brief can be
+					// written without spending a second model run.
 					const retry = await runner.run(
 						agent,
-						`${buildUserPrompt(input.caseFacts)}\n\nRetry requirement: call search_sources for adverse_media and registry before writing the brief. Do not return an empty brief without attempting at least one search per category.`,
+						`${userPrompt}\n\nRetry requirement: your previous response made no tool calls and no evidence was fetched. You MUST call search_sources for adverse_media and for registry before writing the brief. If either search returns no usable content, record that in unknowns.`,
 						{ maxTurns: env.agentMaxTurns, signal: input.signal },
 					);
 					const retryUsage = readUsage(retry);
@@ -284,7 +358,12 @@ export function createRealRunner(opts: {
 				return {
 					brief: result.finalOutput,
 					fetched,
-					usage: { ...usage, toolCalls, searches, extracts },
+					usage: {
+						...usage,
+						toolCalls,
+						searches,
+						extracts,
+					},
 					model: env.agentModel,
 				};
 			} catch (err) {

@@ -30,6 +30,16 @@ pnpm --filter @credit/policy eval:embedding
 Results are written under `eval/results/`. The 2026-10-23 run selected
 `voyageai/voyage-4-large` (1024 dims); see `eval/RESULTS.md`.
 
+## Answer eval
+
+```sh
+pnpm --filter @credit/policy eval:answers -- --trials=3
+```
+
+Uses the reviewed Markdown corpus directly, the production retrieval ranker,
+answerer, and citation validator; no policy DB is required. Results and the
+list of fixes are in `eval/ANSWER-RESULTS.md`; raw JSON is local/gitignored.
+
 ## Import / approval
 
 `pnpm --filter @credit/policy import:draft -- --file=...` writes a draft with

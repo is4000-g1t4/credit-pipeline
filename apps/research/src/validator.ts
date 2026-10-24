@@ -83,6 +83,9 @@ const WINDOW_BEFORE_BYTES = 4 * 1024;
 
 export interface Snapshot {
 	snapshotText: string;
+	/** Canonical quote slice from the source; differs from the model quote only
+	 * when hard-wrapped whitespace was normalized. */
+	quote: string;
 	quoteStart: number;
 	quoteEnd: number;
 	snapshotHash: string;
@@ -93,21 +96,76 @@ export function sha256Hex(text: string): string {
 	return createHash("sha256").update(text, "utf8").digest("hex");
 }
 
+/**
+ * Locate a quote in fetched text. Models routinely copy a hard-wrapped source
+ * with spaces where the page has newlines; exact-only matching would drop a
+ * valid citation. Try exact first, then a whitespace-normalized match and
+ * return the canonical slice so persisted offsets remain exact.
+ */
+export function locateQuote(
+	text: string,
+	quote: string,
+): { quote: string; quoteStart: number; quoteEnd: number } | null {
+	const exact = text.indexOf(quote);
+	if (exact >= 0) return { quote, quoteStart: exact, quoteEnd: exact + quote.length };
+	const normalize = (value: string): { text: string; map: number[] } => {
+		const chars: string[] = [];
+		const map: number[] = [];
+		let lastSpace = false;
+		for (let i = 0; i < value.length; i++) {
+			const ch = value[i] as string;
+			if (/\s/.test(ch)) {
+				if (!lastSpace && chars.length > 0) {
+					chars.push(" ");
+					map.push(i);
+					lastSpace = true;
+				}
+			} else {
+				chars.push(ch);
+				map.push(i);
+				lastSpace = false;
+			}
+		}
+		if (chars[chars.length - 1] === " ") {
+			chars.pop();
+			map.pop();
+		}
+		return { text: chars.join(""), map };
+	};
+	const haystack = normalize(text);
+	const needle = normalize(quote.trim());
+	if (needle.text.length === 0) return null;
+	const hit = haystack.text.indexOf(needle.text);
+	if (hit < 0) return null;
+	const start = haystack.map[hit];
+	const end = haystack.map[hit + needle.text.length - 1];
+	if (start === undefined || end === undefined) return null;
+	const canonical = text.slice(start, end + 1);
+	// Whitespace normalization is for hard wraps, not for stitching separate
+	// bullets, table rows, or paragraphs into one quote.
+	if (/\n\s*\n/.test(canonical)) return null;
+	if (/\n\s*(?:[-*+|#]|\d+\.)\s/.test(canonical)) return null;
+	return { quote: canonical, quoteStart: start, quoteEnd: end + 1 };
+}
+
 /** Deterministic window (≤20 KB) around the quote; offsets are string
  * indices into `snapshotText` so `slice(start, end) === quote` verifies. */
 export function buildSnapshot(rawContent: string, quote: string): Snapshot {
 	if (!quote) throw new Error("quote must not be empty");
-	if (Buffer.byteLength(quote, "utf8") > MAX_SNAPSHOT_BYTES) {
+	const located = locateQuote(rawContent, quote);
+	if (!located) throw new Error("quote is not a substring of the fetched content");
+	const canonical = located.quote;
+	if (Buffer.byteLength(canonical, "utf8") > MAX_SNAPSHOT_BYTES) {
 		throw new Error("quote exceeds the snapshot window");
 	}
-	const idx = rawContent.indexOf(quote);
-	if (idx < 0) throw new Error("quote is not a substring of the fetched content");
+	const idx = located.quoteStart;
 	const rawContentSha256 = sha256Hex(rawContent);
 	if (Buffer.byteLength(rawContent, "utf8") <= MAX_SNAPSHOT_BYTES) {
 		return {
 			snapshotText: rawContent,
+			quote: canonical,
 			quoteStart: idx,
-			quoteEnd: idx + quote.length,
+			quoteEnd: idx + canonical.length,
 			snapshotHash: sha256Hex(rawContent),
 			rawContentSha256,
 		};
@@ -123,26 +181,37 @@ export function buildSnapshot(rawContent: string, quote: string): Snapshot {
 	// Clamp: a large quote plus the look-behind must still fit the window —
 	// the bytes from the snapshot start through the end of the quote are
 	// capped at 20 KB (multibyte-safe: measured, not counted).
-	const quoteLen = idx + quote.length;
+	const quoteLen = idx + canonical.length;
 	while (
 		start < idx &&
 		Buffer.byteLength(rawContent.slice(start, quoteLen), "utf8") > MAX_SNAPSHOT_BYTES
 	) {
 		start += 1;
 	}
-	let end = idx + quote.length;
+	let end = idx + canonical.length;
 	while (
 		end < rawContent.length &&
 		Buffer.byteLength(rawContent.slice(start, end + 1), "utf8") <= MAX_SNAPSHOT_BYTES
 	) {
 		end += 1;
 	}
-	const snapshotText = rawContent.slice(start, end);
+	// Do not split a UTF-16 surrogate pair at the window boundary: a lone
+	// surrogate becomes U+FFFD when stored. The quote itself is unaffected.
+	if (start < idx && start < rawContent.length) {
+		const code = rawContent.charCodeAt(start);
+		if (code >= 0xdc00 && code <= 0xdfff) start += 1;
+	}
+	if (end > start && end < rawContent.length) {
+		const code = rawContent.charCodeAt(end);
+		if (code >= 0xdc00 && code <= 0xdfff) end -= 1;
+	}
+	const safeSnapshotText = rawContent.slice(start, end);
 	return {
-		snapshotText,
+		snapshotText: safeSnapshotText,
+		quote: canonical,
 		quoteStart: idx - start,
-		quoteEnd: idx - start + quote.length,
-		snapshotHash: sha256Hex(snapshotText),
+		quoteEnd: idx - start + canonical.length,
+		snapshotHash: sha256Hex(safeSnapshotText),
 		rawContentSha256,
 	};
 }

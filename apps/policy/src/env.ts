@@ -31,7 +31,7 @@ const schema = {
 	// case prompts, yielding an empty content field. 6k leaves room for the
 	// JSON answer while the per-query cost cap still bounds spend.
 	POLICY_AGENT_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(256).max(8_000).default(6_000),
-	POLICY_AGENT_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(30_000),
+	POLICY_AGENT_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(60_000),
 	POLICY_CASE_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(45_000),
 	POLICY_AGENT_MAX_COST_USD: z.coerce.number().min(0).default(0.1),
 	POLICY_CASE_MAX_COST_USD: z.coerce.number().min(0).default(0.2),

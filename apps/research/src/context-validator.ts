@@ -15,7 +15,7 @@ import { scanForbidden, scanProtected } from "./validator.js";
 import type { CandidateSnapshot } from "./context-tools.js";
 
 export const CONTEXT_VALIDATOR_VERSION = "context-v4";
-export const CONTEXT_PROMPT_VERSION = "context-v4";
+export const CONTEXT_PROMPT_VERSION = "context-v5";
 
 const signalTypeSchema = z.enum([
 	"negative_balance",

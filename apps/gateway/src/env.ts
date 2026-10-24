@@ -29,7 +29,7 @@ const parsed = createEnv({
 		LOANS_URL: z.string().url().default("http://127.0.0.1:4003"),
 		PORTFOLIO_URL: z.string().url().default("http://127.0.0.1:4004"),
 		POLICY_URL: z.string().url().default("http://127.0.0.1:4006"),
-		POLICY_UPSTREAM_TIMEOUT_MS: z.coerce.number().int().positive().default(60000),
+		POLICY_UPSTREAM_TIMEOUT_MS: z.coerce.number().int().positive().default(75000),
 		POLICY_ASK_RATE_PER_MIN: z.coerce.number().int().positive().default(10),
 	},
 	runtimeEnv: process.env,

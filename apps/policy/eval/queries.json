@@ -1,0 +1,422 @@
+[
+	{
+		"id": "q001",
+		"split": "dev",
+		"type": "exact-term",
+		"question": "What is the maximum TDSR allowed for an individual borrower?",
+		"expected": ["POL-CR-002#2.1"]
+	},
+	{
+		"id": "q002",
+		"split": "dev",
+		"type": "exact-term",
+		"question": "What minimum bureau score is needed for a standard approval?",
+		"expected": ["POL-CR-001#1.2"]
+	},
+	{
+		"id": "q003",
+		"split": "dev",
+		"type": "exact-term",
+		"question": "What DSCR must an SME borrower meet for a term loan?",
+		"expected": ["POL-CR-002#2.2"]
+	},
+	{
+		"id": "q004",
+		"split": "dev",
+		"type": "exact-term",
+		"question": "What is the highest LTV permitted on a completed residential property?",
+		"expected": ["POL-CR-008#8.1"]
+	},
+	{
+		"id": "q005",
+		"split": "dev",
+		"type": "semantic",
+		"question": "How long must a declined customer wait before applying again?",
+		"expected": ["POL-CR-001#1.5"]
+	},
+	{
+		"id": "q006",
+		"split": "dev",
+		"type": "semantic",
+		"question": "When can a struggling borrower pause repayments after losing their job?",
+		"expected": ["POL-CR-007#7.2"]
+	},
+	{
+		"id": "q007",
+		"split": "dev",
+		"type": "semantic",
+		"question": "How should freelance and gig earnings be counted toward qualifying income?",
+		"expected": ["POL-CR-002#2.4"]
+	},
+	{
+		"id": "q008",
+		"split": "dev",
+		"type": "semantic",
+		"question": "What extra charge applies when a loan is approved outside standard rules?",
+		"expected": ["POL-CR-005#5.3"]
+	},
+	{
+		"id": "q009",
+		"split": "dev",
+		"type": "product-scoped",
+		"question": "For a small business, how many years of trading history are required before borrowing?",
+		"expected": ["POL-CR-003#3.1"]
+	},
+	{
+		"id": "q010",
+		"split": "dev",
+		"type": "product-scoped",
+		"question": "What is the minimum yearly pay for a salaried person applying for an unsecured loan?",
+		"expected": ["POL-CR-001#1.1"]
+	},
+	{
+		"id": "q011",
+		"split": "dev",
+		"type": "product-scoped",
+		"question": "Which business sectors can never be onboarded as SME borrowers?",
+		"expected": ["POL-CR-003#3.1"]
+	},
+	{
+		"id": "q012",
+		"split": "dev",
+		"type": "product-scoped",
+		"question": "How is pricing set for an unsecured personal loan by credit score band?",
+		"expected": ["POL-CR-006#6.2"]
+	},
+	{
+		"id": "q013",
+		"split": "dev",
+		"type": "multi-section",
+		"question": "A young company wants to borrow: what trading history, guarantee, and revenue rules apply?",
+		"expected": ["POL-CR-003#3.1", "POL-CR-003#3.3"]
+	},
+	{
+		"id": "q014",
+		"split": "dev",
+		"type": "multi-section",
+		"question": "Which ratios block a loan outright with no possibility of an exception?",
+		"expected": ["POL-CR-005#5.2", "POL-CR-002#2.1"]
+	},
+	{
+		"id": "q015",
+		"split": "dev",
+		"type": "exact-term",
+		"question": "At what DPD is an unsecured account recommended for write-off?",
+		"expected": ["POL-CR-007#7.4"]
+	},
+	{
+		"id": "q016",
+		"split": "dev",
+		"type": "exact-term",
+		"question": "What stressed interest rate is used when testing affordability?",
+		"expected": ["POL-CR-002#2.3"]
+	},
+	{
+		"id": "q017",
+		"split": "dev",
+		"type": "semantic",
+		"question": "Who is allowed to sign off a S$120,000 personal loan?",
+		"expected": ["POL-CR-001#1.4"]
+	},
+	{
+		"id": "q018",
+		"split": "dev",
+		"type": "semantic",
+		"question": "How often must commercial property collateral be revalued?",
+		"expected": ["POL-CR-008#8.2"]
+	},
+	{
+		"id": "q019",
+		"split": "dev",
+		"type": "semantic",
+		"question": "What paperwork does a wage earner need to prove their pay?",
+		"expected": ["POL-CR-004#4.2"]
+	},
+	{
+		"id": "q020",
+		"split": "dev",
+		"type": "exact-term",
+		"question": "What share of monthly approvals by value can be exceptions in one unit?",
+		"expected": ["POL-CR-005#5.1"]
+	},
+	{
+		"id": "q021",
+		"split": "dev",
+		"type": "product-scoped",
+		"question": "My SME client relies on one big customer for half its sales — how does that affect the assessment?",
+		"expected": ["POL-CR-003#3.2"]
+	},
+	{
+		"id": "q022",
+		"split": "dev",
+		"type": "semantic",
+		"question": "What happens when property values fall and the loan exceeds its original limit ratio?",
+		"expected": ["POL-CR-008#8.3"]
+	},
+	{
+		"id": "q023",
+		"split": "dev",
+		"type": "exact-term",
+		"question": "What is the absolute minimum interest rate for secured lending?",
+		"expected": ["POL-CR-006#6.1"]
+	},
+	{
+		"id": "q024",
+		"split": "dev",
+		"type": "semantic",
+		"question": "How are rental earnings treated when working out what a borrower can afford?",
+		"expected": ["POL-CR-001#1.3"]
+	},
+	{
+		"id": "q025",
+		"split": "dev",
+		"type": "multi-section",
+		"question": "A borrower missed payments and now disputes a S$800 fee: what contact, hold, and review rules apply?",
+		"expected": ["POL-CR-007#7.1", "POL-CR-007#7.5"]
+	},
+	{
+		"id": "q026",
+		"split": "dev",
+		"type": "product-scoped",
+		"question": "What margin range applies to SME term loans across risk grades?",
+		"expected": ["POL-CR-006#6.3"]
+	},
+	{
+		"id": "q027",
+		"split": "dev",
+		"type": "semantic",
+		"question": "How quickly must identity documents and address proof be dated for KYC?",
+		"expected": ["POL-CR-004#4.1"]
+	},
+	{
+		"id": "q028",
+		"split": "dev",
+		"type": "exact-term",
+		"question": "How many cheque bounces in 90 days trigger an early warning review for SMEs?",
+		"expected": ["POL-CR-003#3.4"]
+	},
+	{
+		"id": "q029",
+		"split": "dev",
+		"type": "semantic",
+		"question": "Can a borrower get a second payment deferral within the same year?",
+		"expected": ["POL-CR-007#7.2"]
+	},
+	{
+		"id": "q030",
+		"split": "dev",
+		"type": "multi-section",
+		"question": "An officer wants to approve a below-grid interest rate — what exception and pricing rules govern this?",
+		"expected": ["POL-CR-006#6.1", "POL-CR-005#5.1"]
+	},
+	{
+		"id": "q031",
+		"split": "held-out",
+		"type": "exact-term",
+		"question": "What bureau score band only proceeds with a limit cut and dual sign-off?",
+		"expected": ["POL-CR-001#1.2"]
+	},
+	{
+		"id": "q032",
+		"split": "held-out",
+		"type": "exact-term",
+		"question": "What interest coverage multiple is required for unsecured SME facilities?",
+		"expected": ["POL-CR-003#3.2"]
+	},
+	{
+		"id": "q033",
+		"split": "held-out",
+		"type": "exact-term",
+		"question": "What default margin is added when a borrower breaches covenants?",
+		"expected": ["POL-CR-006#6.4"]
+	},
+	{
+		"id": "q034",
+		"split": "held-out",
+		"type": "exact-term",
+		"question": "How long are electronic credit records kept after a facility closes?",
+		"expected": ["POL-CR-004#4.4"]
+	},
+	{
+		"id": "q035",
+		"split": "held-out",
+		"type": "semantic",
+		"question": "An applicant earns commission with only 18 months of history — how much counts?",
+		"expected": ["POL-CR-002#2.4"]
+	},
+	{
+		"id": "q036",
+		"split": "held-out",
+		"type": "semantic",
+		"question": "Can we lend to a crypto trading firm if they offer extra collateral?",
+		"expected": ["POL-CR-003#3.1"]
+	},
+	{
+		"id": "q037",
+		"split": "held-out",
+		"type": "semantic",
+		"question": "What must happen before any money is released to the borrower?",
+		"expected": ["POL-CR-004#4.4"]
+	},
+	{
+		"id": "q038",
+		"split": "held-out",
+		"type": "semantic",
+		"question": "How do we price a loan secured by a cash deposit?",
+		"expected": ["POL-CR-006#6.3"]
+	},
+	{
+		"id": "q039",
+		"split": "held-out",
+		"type": "product-scoped",
+		"question": "What guarantee do we need from directors of a 2-year-old company seeking unsecured credit?",
+		"expected": ["POL-CR-003#3.3"]
+	},
+	{
+		"id": "q040",
+		"split": "held-out",
+		"type": "product-scoped",
+		"question": "A factory owner offers industrial premises as security — what advance rate applies?",
+		"expected": ["POL-CR-008#8.1"]
+	},
+	{
+		"id": "q041",
+		"split": "held-out",
+		"type": "product-scoped",
+		"question": "What financial statements must a company borrowing S$1.5 million provide?",
+		"expected": ["POL-CR-004#4.2"]
+	},
+	{
+		"id": "q042",
+		"split": "held-out",
+		"type": "product-scoped",
+		"question": "How is foreign-currency salary converted for affordability purposes?",
+		"expected": ["POL-CR-002#2.4"]
+	},
+	{
+		"id": "q043",
+		"split": "held-out",
+		"type": "multi-section",
+		"question": "A landlord borrower claims rental stress rules and insurance lapses — which collateral and affordability clauses interact?",
+		"expected": ["POL-CR-002#2.3", "POL-CR-008#8.4"]
+	},
+	{
+		"id": "q044",
+		"split": "held-out",
+		"type": "multi-section",
+		"question": "An SME with falling revenue and a single big customer seeks a top-up: what analysis and fresh-assessment rules apply?",
+		"expected": ["POL-CR-003#3.2", "POL-CR-002#2.5"]
+	},
+	{
+		"id": "q045",
+		"split": "held-out",
+		"type": "exact-term",
+		"question": "What is the minimum pricing uplift for an approved policy exception?",
+		"expected": ["POL-CR-005#5.3"]
+	},
+	{
+		"id": "q046",
+		"split": "held-out",
+		"type": "exact-term",
+		"question": "Within how many days must a margin-call shortfall be cured for property-backed loans?",
+		"expected": ["POL-CR-008#8.3"]
+	},
+	{
+		"id": "q047",
+		"split": "held-out",
+		"type": "semantic",
+		"question": "Who has to approve an application from a member of bank staff?",
+		"expected": ["POL-CR-001#1.4"]
+	},
+	{
+		"id": "q048",
+		"split": "held-out",
+		"type": "semantic",
+		"question": "What relief can we offer a borrower who needs their loan reshaped — longer time, lower rate, or less principal?",
+		"expected": ["POL-CR-007#7.3"]
+	},
+	{
+		"id": "q049",
+		"split": "held-out",
+		"type": "semantic",
+		"question": "How do we handle a self-employed applicant whose income varies year to year?",
+		"expected": ["POL-CR-001#1.3"]
+	},
+	{
+		"id": "q050",
+		"split": "held-out",
+		"type": "exact-term",
+		"question": "What exception rate forces a business unit to submit a remediation plan?",
+		"expected": ["POL-CR-005#5.4"]
+	},
+	{
+		"id": "q051",
+		"split": "held-out",
+		"type": "product-scoped",
+		"question": "Can a retiree aged 68 apply for a new unsecured facility?",
+		"expected": ["POL-CR-001#1.1"]
+	},
+	{
+		"id": "q052",
+		"split": "held-out",
+		"type": "semantic",
+		"question": "When must account monitoring flag a business that keeps maxing out its credit line?",
+		"expected": ["POL-CR-003#3.4"]
+	},
+	{
+		"id": "q053",
+		"split": "held-out",
+		"type": "semantic",
+		"question": "How much notice must borrowers get before their interest rate goes up?",
+		"expected": ["POL-CR-006#6.4"]
+	},
+	{
+		"id": "q054",
+		"split": "held-out",
+		"type": "exact-term",
+		"question": "What commission cap applies to agencies collecting written-off debts?",
+		"expected": ["POL-CR-007#7.4"]
+	},
+	{
+		"id": "q055",
+		"split": "held-out",
+		"type": "semantic",
+		"question": "What valuation evidence is needed for a S$3 million office building used as security?",
+		"expected": ["POL-CR-008#8.2"]
+	},
+	{
+		"id": "q056",
+		"split": "held-out",
+		"type": "product-scoped",
+		"question": "My applicant guarantees a friend's business loan that is now overdue — does that affect their own application?",
+		"expected": ["POL-CR-002#2.1"]
+	},
+	{
+		"id": "q057",
+		"split": "held-out",
+		"type": "multi-section",
+		"question": "An officer overrode a system decline for a connected party — which approval and conduct rules are breached?",
+		"expected": ["POL-CR-001#1.4", "POL-CR-005#5.2"]
+	},
+	{
+		"id": "q058",
+		"split": "held-out",
+		"type": "semantic",
+		"question": "What documents must a supplier provide to borrow against unpaid invoices?",
+		"expected": ["POL-CR-004#4.3"]
+	},
+	{
+		"id": "q059",
+		"split": "held-out",
+		"type": "semantic",
+		"question": "How do relationship discounts work for long-standing customers with several products?",
+		"expected": ["POL-CR-006#6.1"]
+	},
+	{
+		"id": "q060",
+		"split": "held-out",
+		"type": "multi-section",
+		"question": "After an exception expires uncured, what re-testing and exit rules decide the account's fate?",
+		"expected": ["POL-CR-005#5.4", "POL-CR-005#5.1"]
+	}
+]
