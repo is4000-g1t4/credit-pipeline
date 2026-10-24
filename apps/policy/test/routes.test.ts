@@ -251,6 +251,18 @@ describe("policy routes", () => {
 		expect(stats.answers).toBe(0);
 	});
 
+	it("blocks a direct identifier before embedding or answering", async () => {
+		const { deps: d, stats } = deps();
+		const res = await postJson(officerApp(d), "/api/policy/ask", {
+			question: "What is the TDSR for applicant S1234567D?",
+			product: "personal_loan",
+		});
+		expect(res.status).toBe(200);
+		expect(((await res.json()) as { status: string }).status).toBe("identifier_blocked");
+		expect(stats.queries).toBe(1);
+		expect(stats.embeds).toBe(0);
+		expect(stats.answers).toBe(0);
+	});
 	it("serves a case explanation for the service principal with a bound token", async () => {
 		const { deps: d, stats } = deps();
 		const context = {

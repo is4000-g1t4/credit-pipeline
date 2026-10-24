@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import { hasDirectIdentifier } from "./gates.js";
 
 const frontmatterSchema = z
 	.object({
@@ -102,6 +103,9 @@ export function parsePolicyMarkdown(source: string, sourceUri = "policy.md"): Pa
 			i + 1 < matches.length ? (matches[i + 1]!.index ?? source.length) : source.length;
 		const body = source.slice(bodyStartAt, bodyEnd).trim();
 		if (body.length === 0) throw new Error(`section ${sectionId} has no body`);
+		if (hasDirectIdentifier(`${heading}\n${body}`)) {
+			throw new Error(`section ${sectionId} contains applicant PII`);
+		}
 		if (/^##[ \t]+/m.test(body)) {
 			throw new Error(`section ${sectionId} has an unanchored heading`);
 		}

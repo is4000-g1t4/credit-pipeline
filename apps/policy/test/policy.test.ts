@@ -205,6 +205,13 @@ describe("navigator citation validation", () => {
 		expect(result.ok).toBe(true);
 		expect(result.answer.limitations).toEqual(["The corpus is silent on this point."]);
 	});
+	it("rejects applicant PII in a policy body", () => {
+		const withPii = markdown.replace(
+			"DSCR must be at least 1.25x for SME term loans.",
+			"Contact alice@example.com for the DSCR rule.",
+		);
+		expect(() => parsePolicyMarkdown(withPii)).toThrow(/applicant PII/);
+	});
 	it("accepts one claim with an exact quote", () => {
 		const result = validateNavigatorAnswer(
 			{
