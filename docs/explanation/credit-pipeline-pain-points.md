@@ -281,27 +281,54 @@ stale bureau/bank data, and impossible values. Show a “data confidence” pane
 and block scoring only for critical gaps. This addresses the data-quality
 challenge without a new platform.
 
-### 5.1 Unstructured-data lens
+## 6. Unstructured-data features that fit the regulatory box
 
-If the question is specifically “which feature turns customer documents into
-better creditworthiness assessment”, the ranking changes. The P0/P1 order
-below is effort-adjusted for a school demo; the feature that most directly
-improves the assessment is financial spreading.
+The safest high-value pattern is **extract → source-link → deterministic
+calculation → human confirm → audit**. Do not put an LLM in the position of
+assigning the credit score or making the decision. The LLM can classify,
+extract, summarize, and draft; the deterministic engine and the officer remain
+the decision path.
 
-| Feature                                          | Unstructured inputs                                                            | Assessment output                                                         | Why it matters                                                                                                  |
-| ------------------------------------------------ | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| **Financial spreading**                          | Financial statements, tax returns, bank statements, management accounts        | Revenue, EBITDA, debt service, DSCR/TDSR, leverage, liquidity, add-backs  | Converts the documents that determine repayment capacity into the exact inputs the score and policy engine need |
-| **Cross-document evidence graph**                | IDs, registry filings, statements, payslips, collateral docs, loan agreements  | Verified facts, contradictions, missing schedules, source citations       | Makes the assessment trustworthy: stale or inconsistent documents are caught before they become a bad decision  |
-| **Credit memo copilot**                          | Spread + evidence graph + policy + external brief + context signals            | Structured, cited assessment narrative with open items                    | Saves officer time, but its quality depends on the two features above                                           |
-| **Collateral and guarantee analyzer**            | Valuation reports, title deeds, insurance, lease agreements, guarantee letters | LTV, collateral coverage, insurance/title gaps, guarantee scope           | Secured/SME creditworthiness depends on loss-given-default, not only default probability                        |
-| **Covenant and compliance-certificate analyzer** | Loan agreements, compliance certificates, periodic financials                  | Covenant register, headroom trend, breach/EWS signals                     | Extends the assessment after booking and catches deterioration before annual review                             |
-| **Entity / UBO and related-party graph**         | Registry filings, shareholder docs, adverse media, counterparties              | Ownership links, related parties, concentration, possible name collisions | SME and connected-lending risk is often hidden in unstructured corporate records                                |
+| Feature                                  | Unstructured input                                                     | What it produces                                                                                            | Credit use                                   | Why it is defensible                                                                                        |
+| ---------------------------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Source-linked financial spreading        | Bank statements, financial statements, tax returns, payslips, invoices | Canonical line items, ratios, page/offset citations, confidence                                             | DSCR/TDSR, affordability, cash-flow analysis | Every figure traces to a document; deterministic ratio math; analyst confirms corrections; versioned spread |
+| Credit memo copilot                      | Documents, officer notes, research brief, policy text                  | Structured draft with citations and a “missing evidence” section                                            | Committee synthesis and officer productivity | Advisory only; no recommendation; every claim cited; officer edits/approves; versioned                      |
+| Document integrity signals               | PDFs, IDs, statements, contracts                                       | Classification, cross-document mismatches, duplicate hashes, metadata/recompression signals, OCR confidence | Fraud triage and evidence quality            | Signals route to human fraud review; no auto-decline; no deepfake claims; audit trail                       |
+| Covenant extraction and EWS              | Loan agreements, compliance certificates, financial statements         | Covenant register, thresholds, headroom trend, evidence-linked alerts                                       | Post-booking monitoring                      | Human validates extracted covenants; deterministic tests; alert dedupe; no automatic limit changes          |
+| Case-grounded policy/exception navigator | Policy corpus, case facts, document findings                           | Cited exception path, approver level, mitigants, open questions                                             | Policy application and exception routing     | Exact quotes; deterministic rule mapping; no approval language; auditable                                   |
+| Adverse-action reason explainer          | Deterministic reason codes, policy text, officer notes                 | 3–4 specific principal reasons and an applicant letter draft                                                | Decline communication and audit              | Reasons must come from the deterministic decision; max four; human approval; fair-lending review            |
 
-The practical implication: **build spreading first if the goal is assessment
-quality; build the memo first if the goal is demo visibility.** Spreading gives
-the memo something defensible to cite.
+### Regulatory guardrails to build in from day one
 
-## 6. Priority and sequencing
+| Regime / principle                 | What it means for these features                                                                                                                                                                                                                                                                                            |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **ECOA / Regulation B** (US)       | Adverse-action reasons must be specific and accurate; a generic score band or “internal policy” is not enough. Reg B commentary indicates more than four reasons is generally not required. This is US-specific, but the specificity principle is the right default.                                                        |
+| **Fair lending / fair treatment**  | Exclude protected attributes and proxies; test outcomes across groups; document why each input is used; keep a human review path.                                                                                                                                                                                           |
+| **Model risk management**          | Maintain a model inventory, validation, documentation, ongoing monitoring, and effective challenge. In the US, the 2026 interagency guidance (SR 26-2/OCC 2026-13) replaces SR 11-7; apply the same discipline to vendor/LLM components.                                                                                    |
+| **EU AI Act**                      | Creditworthiness assessment and credit scoring of natural persons are Annex III high-risk. The obligations include risk management, data governance, technical documentation, logging, transparency, human oversight, accuracy, robustness, and cybersecurity. If the app is ever deployed in the EU, design for these now. |
+| **MAS FEAT** (Singapore)           | Fairness, Ethics, Accountability, Transparency. MAS/Veritas has assessment methodologies specifically for credit risk scoring. This is the most relevant regime for an SG-jurisdiction PoC.                                                                                                                                 |
+| **Privacy / data protection**      | Purpose limitation, minimization, retention, encryption, access control, DPIA where required, and no PII/policy text in logs or Grafana. Use provider zero-data-retention/allowlists for model calls.                                                                                                                       |
+| **Third-party / outsourcing risk** | Contract for no training on bank data, data residency, audit rights, change notification, and exit. Keep a fallback path if the model provider is unavailable.                                                                                                                                                              |
+| **Human oversight and audit**      | The officer must be able to see the source, interpret the output, override it, and have that override recorded. Log model/prompt version, inputs used, output, citations, and approval.                                                                                                                                     |
+
+### What not to do with unstructured data
+
+- **Do not generate the credit score or decision from an LLM.** Use it for
+  extraction and explanation; keep the score deterministic.
+- **Do not write free-text adverse-action reasons without a deterministic
+  reason behind them.** The letter can be polished, but the reasons must be
+  traceable to the decision.
+- **Do not auto-decline on a fraud or document-integrity signal.** Route to
+  human review.
+- **Do not use protected attributes or obvious proxies** (gender, age, race,
+  religion, marital status, national origin, disability) in prompts or
+  features.
+- **Do not put raw documents, PII, or policy text in observability.** Keep
+  metadata-only telemetry, as the existing research service does.
+- **Do not treat an LLM extraction as validated data.** It is a candidate
+  value until a deterministic check or a human confirms it.
+
+## 7. Priority and sequencing
 
 | Order | Feature                         | Effort | Risk   | Demo value | Why now                                                    |
 | ----: | ------------------------------- | ------ | ------ | ---------- | ---------------------------------------------------------- |
@@ -330,7 +357,7 @@ reasons**. If three: **+ case triage**.
 This is one coherent story: explain the decision, prioritize the work, draft
 the analysis, route the exception, then monitor the loan.
 
-## 7. What not to build
+## 8. What not to build
 
 - **Autonomous approve/decline.** The current advisory-only design is the
   right story; do not cross it.
@@ -346,7 +373,7 @@ the analysis, route the exception, then monitor the loan.
   draft-only design is deliberate.
 - **A new eval platform.** Use the existing eval guideline and harnesses.
 
-## 8. Sources
+## 9. Sources
 
 Primary / regulator / DFI:
 
@@ -355,6 +382,9 @@ Primary / regulator / DFI:
 - IFC, [Banking on SMEs](https://www.ifc.org/content/dam/ifc/doc/mgrt/ifc-on-banking-smes-publication-june-2019.pdf).
 - CFPB, [Circular 2022-03: adverse action notices and complex algorithms](https://www.consumerfinance.gov/compliance/circulars/circular-2022-03-adverse-action-notification-requirements-in-connection-with-credit-decisions-based-on-complex-algorithms).
 - eCFR, [12 CFR 1002.9](https://www.ecfr.gov/current/title-12/chapter-X/part-1002/subpart-A/section-1002.9).
+- EU, [AI Act high-risk obligations](https://digital-strategy.ec.europa.eu/en/policies/regulatory-framework-ai) and [Article 14 human oversight](https://ai-act-service-desk.ec.europa.eu/en/ai-act/article-14).
+- Federal Reserve, [Supervisory Guidance on Model Risk Management](https://www.federalreserve.gov/frrs/guidance/supervisory-guidance-on-model-risk-management.htm).
+- MAS, [FEAT principles](https://www.mas.gov.sg/publications/monographs-or-information-paper/2018/feat) and [Veritas initiative](https://www.mas.gov.sg/schemes-and-initiatives/veritas).
 - BIS, [Managing explanations: AI explainability](https://www.bis.org/publications/fsi-paper-24-managing-explanations-how-regulators-can-address-ai-explainability.pdf).
 - Federal Reserve, [AI explainability in banking](https://www.federalreserve.gov/SECRS/2021/July/20210708/OP-1743/OP-1743_063021_138218_378216776070_1.pdf).
 - KPMG, [2025 Banking Survey: Technology](https://kpmg.com/kpmg-us/content/dam/kpmg/pdf/2025/kpmg-banking-survey-2025.pdf).
