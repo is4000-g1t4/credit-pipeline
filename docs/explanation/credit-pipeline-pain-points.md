@@ -281,6 +281,26 @@ stale bureau/bank data, and impossible values. Show a “data confidence” pane
 and block scoring only for critical gaps. This addresses the data-quality
 challenge without a new platform.
 
+### 5.1 Unstructured-data lens
+
+If the question is specifically “which feature turns customer documents into
+better creditworthiness assessment”, the ranking changes. The P0/P1 order
+below is effort-adjusted for a school demo; the feature that most directly
+improves the assessment is financial spreading.
+
+| Feature                                          | Unstructured inputs                                                            | Assessment output                                                         | Why it matters                                                                                                  |
+| ------------------------------------------------ | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| **Financial spreading**                          | Financial statements, tax returns, bank statements, management accounts        | Revenue, EBITDA, debt service, DSCR/TDSR, leverage, liquidity, add-backs  | Converts the documents that determine repayment capacity into the exact inputs the score and policy engine need |
+| **Cross-document evidence graph**                | IDs, registry filings, statements, payslips, collateral docs, loan agreements  | Verified facts, contradictions, missing schedules, source citations       | Makes the assessment trustworthy: stale or inconsistent documents are caught before they become a bad decision  |
+| **Credit memo copilot**                          | Spread + evidence graph + policy + external brief + context signals            | Structured, cited assessment narrative with open items                    | Saves officer time, but its quality depends on the two features above                                           |
+| **Collateral and guarantee analyzer**            | Valuation reports, title deeds, insurance, lease agreements, guarantee letters | LTV, collateral coverage, insurance/title gaps, guarantee scope           | Secured/SME creditworthiness depends on loss-given-default, not only default probability                        |
+| **Covenant and compliance-certificate analyzer** | Loan agreements, compliance certificates, periodic financials                  | Covenant register, headroom trend, breach/EWS signals                     | Extends the assessment after booking and catches deterioration before annual review                             |
+| **Entity / UBO and related-party graph**         | Registry filings, shareholder docs, adverse media, counterparties              | Ownership links, related parties, concentration, possible name collisions | SME and connected-lending risk is often hidden in unstructured corporate records                                |
+
+The practical implication: **build spreading first if the goal is assessment
+quality; build the memo first if the goal is demo visibility.** Spreading gives
+the memo something defensible to cite.
+
 ## 6. Priority and sequencing
 
 | Order | Feature                         | Effort | Risk   | Demo value | Why now                                                    |
