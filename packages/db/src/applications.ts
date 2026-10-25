@@ -1,8 +1,8 @@
 // @credit/db/applications — applications service only (credit_applications):
 // applications, kyc_checks, external_reports, documents, scores,
-// policy_evaluations, decisions, idempotency_keys, plus the shared
-// audit_log/outbox_events. applicant_user_id / officer_user_id are plain
-// uuids — no FK to users (cross-database references must never be FKs).
+// policy_evaluations, decisions, idempotency_keys, generated artifacts/holds,
+// plus the shared audit_log/outbox_events. applicant_user_id / officer_user_id
+// are plain uuids — no FK to users (cross-database references must never be FKs).
 import { sql } from "drizzle-orm";
 import {
 	bigint,
@@ -140,6 +140,19 @@ export const documentDateSource = pgEnum("document_date_source", [
 	"server_ocr",
 	"reused",
 	"customer_kyc",
+]);
+// EN-02 generated artifact lifecycle. Content lives only on draft/approved
+// history rows; approved rows reject content mutation at the database level.
+export const generatedArtifactType = pgEnum("generated_artifact_type", [
+	"credit_memo",
+	"policy_exception_memo",
+	"adverse_action_letter",
+]);
+export const generatedArtifactStatus = pgEnum("generated_artifact_status", [
+	"draft",
+	"approved",
+	"superseded",
+	"deleted",
 ]);
 
 export const applications = pgTable(
@@ -319,6 +332,87 @@ export const decisions = pgTable("decisions", {
 	decidedAt: timestamp("decided_at", { withTimezone: true, mode: "date" }).defaultNow().notNull(),
 	createdAt: createdAt(),
 });
+
+// EN-02 generic generated artifact record. One row per version; `revision`
+// is the optimistic-concurrency token for draft edits. Approved content is
+// immutable (migration trigger); edits create a new version. No hard delete.
+export const generatedArtifacts = pgTable(
+	"generated_artifacts",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		applicationId: uuid("application_id")
+			.notNull()
+			.references(() => applications.id, { onDelete: "restrict" }),
+		type: generatedArtifactType("type").notNull(),
+		version: integer("version").notNull(),
+		revision: integer("revision").notNull().default(1),
+		status: generatedArtifactStatus("status").notNull().default("draft"),
+		// Set when the artifact cites document evidence. Artifact reads then
+		// require the active assigned-officer grant, even after unassignment.
+		documentDerived: boolean("document_derived").notNull().default(false),
+		content: jsonb("content").notNull(),
+		citations: jsonb("citations").notNull(),
+		contentHash: text("content_hash").notNull(),
+		model: text("model").notNull(),
+		promptVersion: text("prompt_version").notNull(),
+		// Cross-DB reference to credit_auth.users — plain uuid, never an FK.
+		createdBy: uuid("created_by").notNull(),
+		approvedBy: uuid("approved_by"),
+		createdAt: createdAt(),
+		updatedAt: updatedAt(),
+		approvedAt: timestamp("approved_at", { withTimezone: true, mode: "date" }),
+		supersededAt: timestamp("superseded_at", { withTimezone: true, mode: "date" }),
+		deletedAt: timestamp("deleted_at", { withTimezone: true, mode: "date" }),
+		retentionUntil: timestamp("retention_until", { withTimezone: true, mode: "date" }).notNull(),
+	},
+	(t) => [
+		uniqueIndex("generated_artifacts_case_type_version_uniq").on(
+			t.applicationId,
+			t.type,
+			t.version,
+		),
+		// One live draft per case/type; approval supersedes the prior approved
+		// row, and a further edit creates the next version instead of a fork.
+		uniqueIndex("generated_artifacts_active_draft_uniq")
+			.on(t.applicationId, t.type)
+			.where(sql`${t.status} = 'draft'`),
+		index("generated_artifacts_case_type_created_idx").on(t.applicationId, t.type, t.createdAt),
+		index("generated_artifacts_retention_idx")
+			.on(t.retentionUntil)
+			.where(sql`${t.status} <> 'deleted'`),
+		check("generated_artifacts_version_revision_chk", sql`${t.version} > 0 AND ${t.revision} > 0`),
+		check(
+			"generated_artifacts_approved_actor_chk",
+			sql`${t.status} <> 'approved' OR ${t.approvedBy} IS NOT NULL`,
+		),
+	],
+);
+
+// Active rows block the retention tombstone (same semantics as document
+// legal holds). Service-only create/release; every change is audited.
+export const generatedArtifactHolds = pgTable(
+	"generated_artifact_holds",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		artifactId: uuid("artifact_id")
+			.notNull()
+			.references(() => generatedArtifacts.id, { onDelete: "restrict" }),
+		applicationId: uuid("application_id")
+			.notNull()
+			.references(() => applications.id, { onDelete: "restrict" }),
+		reason: text("reason").notNull(),
+		// Cross-DB reference to credit_auth.users — plain uuid, never an FK.
+		createdBy: uuid("created_by").notNull(),
+		createdAt: createdAt(),
+		releasedAt: timestamp("released_at", { withTimezone: true, mode: "date" }),
+	},
+	(t) => [
+		index("generated_artifact_holds_artifact_idx").on(t.artifactId),
+		index("generated_artifact_holds_active_idx")
+			.on(t.artifactId)
+			.where(sql`${t.releasedAt} IS NULL`),
+	],
+);
 
 export const idempotencyKeys = pgTable(
 	"idempotency_keys",

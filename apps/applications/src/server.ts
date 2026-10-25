@@ -2,6 +2,7 @@ import { createDb } from "@credit/db";
 import { createLogger, createTemporalGateway } from "@credit/service-kit";
 import { assertDemoBoot } from "@credit/core";
 import { createApp } from "./app.js";
+import { startArtifactRetention } from "./assist/index.js";
 import { configFromEnv } from "./documents/index.js";
 import { startDocumentMaintenance } from "./documents/retention.js";
 import { loadEnv } from "./env.js";
@@ -43,6 +44,10 @@ startDocumentMaintenance({
 	customerDemoAsOf: env.demo.mode ? env.demo.asOf : undefined,
 	logger,
 });
+
+// EN-02 artifact retention: boot + daily tombstone sweep. It runs even when
+// the assist flag is off so a disabled feature still honours retention.
+startArtifactRetention({ db, logger });
 
 // Bun entry: `bun --watch --env-file=../../.env src/server.ts` (see
 // package.json dev). Bun serves the default export; `app.ts` stays a pure

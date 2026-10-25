@@ -1,41 +1,76 @@
 {
-    "version":  "7",
-    "dialect":  "postgresql",
-    "entries":  [
-                    {
-                        "idx":  0,
-                        "version":  "7",
-                        "when":  1792420789623,
-                        "tag":  "0000_far_cerebro",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  1,
-                        "version":  "7",
-                        "when":  1792486105486,
-                        "tag":  "0001_keen_mystique",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  2,
-                        "version":  "7",
-                        "when":  1792568176978,
-                        "tag":  "0002_nifty_sprite",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  3,
-                        "version":  "7",
-                        "when":  1792658136122,
-                        "tag":  "0003_enum_values",
-                        "breakpoints":  true
-                    },
-                    {
-                        "idx":  4,
-                        "version":  "7",
-                        "when":  1792658136123,
-                        "tag":  "0004_lame_agent_brand",
-                        "breakpoints":  true
-                    }
-                ]
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1792420789623,
+      "tag": "0000_far_cerebro",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792486105486,
+      "tag": "0001_keen_mystique",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792568176978,
+      "tag": "0002_nifty_sprite",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792658136122,
+      "tag": "0003_enum_values",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792658136123,
+      "tag": "0004_lame_agent_brand",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792863459264,
+      "tag": "0005_spooky_silver_samurai",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792863600000,
+      "tag": "0006_artifact_superseded_retention",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792863800000,
+      "tag": "0008_artifact_tombstone_purge",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792863900000,
+      "tag": "0009_artifact_lifecycle_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792870768926,
+      "tag": "0010_far_sharon_carter",
+      "breakpoints": true
+    }
+  ]
 }

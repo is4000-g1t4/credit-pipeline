@@ -12,6 +12,7 @@ import { createDb } from "@credit/db";
 import { createLogger, signInternalHeaders } from "@credit/service-kit";
 import { stubGateway, type FakeGateway } from "@credit/service-kit/test";
 import { createApp } from "../src/app.js";
+import type { AssistConfig } from "../src/assist/index.js";
 import type { CustomerConfig } from "../src/customer/service.js";
 import type { OcrAdapter } from "../src/documents/ocr.js";
 import type { ScannerAdapter } from "../src/documents/scanner.js";
@@ -47,6 +48,12 @@ export interface SetupOpts {
 	};
 	/** App blob root shorthand (lands in documents.config.storageDir unless set there). */
 	storageDir?: string;
+	/** EN-01/02/03 assist overrides (flag, clock, research upstream). */
+	assist?: {
+		config?: Partial<AssistConfig>;
+		now?: () => Date;
+		researchFetchImpl?: typeof fetch;
+	};
 }
 
 export function setupApp(opts: SetupOpts = {}): TestContext {
@@ -68,6 +75,7 @@ export function setupApp(opts: SetupOpts = {}): TestContext {
 		logger: createLogger("applications-test"),
 		documents,
 		customer: opts.customer,
+		assist: opts.assist,
 	});
 	return { app, db, sql, gateway, secret: env.internalSecret };
 }

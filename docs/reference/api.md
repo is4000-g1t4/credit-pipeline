@@ -412,6 +412,37 @@ The automatic case-policy review has no officer route: when `POLICY_ASSIST_ENABL
 research calls `POST /internal/policy/explain-case` server-side and accepted
 citations appear in the case page Policy review section.
 
+## Case assist (EN-01/02/03)
+
+Officer only. Every `/api/assist/*` route proxies to the applications service.
+`ASSIST_ENABLED=false` makes every officer-facing assist route return 404;
+the service-only internal hold/retention routes stay available. Applicants
+get 403; a case actively assigned to another officer is a non-leaking 404.
+
+| Method and path                             | Purpose                                                                                                       |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `GET /api/assist/cases/:id/evidence`        | EN-01 bundle: stable `sourceRef`s, source types, retention/legal hold, typed `unavailable`                    |
+| `POST /api/assist/cases/:id/memos`          | Deterministic draft memo from the bundle (pending_review only)                                                |
+| `POST /api/assist/cases/:id/artifacts`      | Validate and create a generic artifact (`credit_memo`, `policy_exception_memo`, `adverse_action_letter`)      |
+| `GET /api/assist/cases/:id/artifacts?type=` | Version history for a case                                                                                    |
+| `GET /api/assist/artifacts/:id`             | Artifact + content + citations                                                                                |
+| `PATCH /api/assist/artifacts/:id`           | Edit a draft in place (revision compare-and-set); editing an approved artifact creates the next draft version |
+| `POST /api/assist/artifacts/:id/approve`    | Explicit approval (`confirm: true`); re-validates citations, supersedes the prior approved version            |
+| `POST /api/assist/artifacts/:id/tombstone`  | Soft delete (row retained; audited)                                                                           |
+
+Artifact bodies are type-specific and strict. Validation failure returns `422`
+`GENERATED_TEXT_INVALID` with typed `issues` (`SCHEMA_INVALID`,
+`UNSUPPORTED_CLAIM`, `CITATION_*`, `DECISION_LANGUAGE`, `PII_DETECTED`,
+`PROTECTED_ATTRIBUTE`); nothing is persisted. Revision mismatch returns `409`
+`VERSION_CONFLICT`, a live draft already exists `409` `DRAFT_EXISTS`, and a
+terminal artifact `409` `ARTIFACT_IMMUTABLE`.
+
+Internal service-only routes: `POST /internal/assist/artifacts/:id/holds`,
+`POST /internal/assist/artifacts/:id/holds/:holdId/release`, and
+`POST /internal/assist/retention/run`. These stay available while the
+officer-facing flag is off so legal holds can be recorded and retention still
+runs; they require the signed `service` identity.
+
 ## Health
 
 | Method and path   | Access | Purpose                              |

@@ -10,6 +10,7 @@ import {
 	type WorkflowGateway,
 } from "@credit/service-kit";
 import type { ApplicationsEnv } from "./env.js";
+import { assistRoutes, type AssistConfig } from "./assist/index.js";
 import {
 	buildDocumentService,
 	configFromEnv,
@@ -41,6 +42,12 @@ export interface ApplicationsDeps {
 	context?: Partial<ContextConfig>;
 	/** Test seam: research purge callback target without touching env. */
 	research?: { url?: string };
+	/** Test seam: EN-01/02/03 assist config, clock, and research fetch. */
+	assist?: {
+		config?: Partial<AssistConfig>;
+		now?: () => Date;
+		researchFetchImpl?: typeof fetch;
+	};
 }
 
 /** Test seam: pass fakes for gateway/db; the production server wires the real ones. */
@@ -94,6 +101,20 @@ export function createApp(deps: ApplicationsDeps): ServiceApp {
 				lockTimeoutMs: documentConfig.lockTimeoutMs,
 			},
 			context: resolveContextConfig(deps.env, deps.context),
+		}),
+	);
+	const assistRuntime = {
+		config: { ...deps.env.assist, ...deps.assist?.config },
+		documentsEnabled: documentConfig.featureEnabled,
+		now: deps.assist?.now ?? (() => new Date()),
+		researchFetchImpl: deps.assist?.researchFetchImpl,
+	};
+	routes.route(
+		"/",
+		assistRoutes({
+			db: deps.db,
+			runtime: assistRuntime,
+			logger: deps.logger,
 		}),
 	);
 	const documentService = buildDocumentService(deps.db, documentConfig, deps.documents ?? {});

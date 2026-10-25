@@ -285,6 +285,20 @@ export function createApp(deps: GatewayDeps): Hono<{ Variables: Variables }> {
 		);
 	});
 
+	// EN-01/02/03 case assist (officer only): evidence bundle, generated
+	// artifacts, validation. The applications service owns the flag: with
+	// ASSIST_ENABLED=false every assist route 404s downstream.
+	app.all("/api/assist/*", officer, async (c) => {
+		const path = new URL(c.req.url).pathname;
+		return proxyTo(
+			c,
+			deps,
+			c.var.user,
+			{ baseUrl: deps.env.applicationsUrl, path },
+			LONG_UPSTREAM_TIMEOUT_MS,
+		);
+	});
+
 	// Typed error envelope (no stacks); the health shape, cookie auth, and
 	// origin check above stay gateway-specific. The cast bridges
 	// GatewayVariables (cookie session) to the signed identity shape —

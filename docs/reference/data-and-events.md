@@ -4,14 +4,14 @@ This page is a lookup surface. Audience: developers who change storage or read e
 
 ## Database ownership
 
-| Database              | Owner                        | Tables                                                                                                                                                       | Notes                                                                                              |
-| --------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
-| `credit_auth`         | Gateway                      | `users`                                                                                                                                                      | Email unique; role `applicant` or `officer`; scrypt hash                                           |
-| `credit_applications` | Applications service, worker | `applications`, `kyc_checks`, `external_reports`, `documents`, `scores`, `policy_evaluations`, `decisions`, `idempotency_keys`, `audit_log`, `outbox_events` | Pipeline state, decisions, audit, outbox                                                           |
-| `credit_loans`        | Loans service, worker        | `loans`, `installments`, `payments`, `ews_alerts`, `audit_log`, `outbox_events`                                                                              | Ledger plus audit and outbox; denormalized `application_reference`, `applicant_user_id`, `product` |
-| `credit_portfolio`    | Portfolio service            | `processed_events`, `activity_feed`, `dead_letter_events`                                                                                                    | Kafka read model; application and loan ids are opaque                                              |
-| `credit_research`     | Research service             | `agent_runs`, `agent_evidence`, `agent_findings`, `finding_evidence`, `agent_finding_reviews`, `agent_run_views`                                             | Advisory briefs; runs token-claimed, evidence/findings persist atomically with success             |
-| `credit_policy`       | Policy service               | `policy_documents`, `policy_versions`, `policy_sections`, `policy_chunks`, `policy_queries`, ACL/role/audit/spend tables                                     | Versioned corpus, pgvector index, query log, spend ledger                                          |
+| Database              | Owner                        | Tables                                                                                                                                                                                                          | Notes                                                                                              |
+| --------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `credit_auth`         | Gateway                      | `users`                                                                                                                                                                                                         | Email unique; role `applicant` or `officer`; scrypt hash                                           |
+| `credit_applications` | Applications service, worker | `applications`, `kyc_checks`, `external_reports`, `documents`, `scores`, `policy_evaluations`, `decisions`, `idempotency_keys`, `generated_artifacts`, `generated_artifact_holds`, `audit_log`, `outbox_events` | Pipeline state, decisions, generated artifacts/holds, audit, outbox                                |
+| `credit_loans`        | Loans service, worker        | `loans`, `installments`, `payments`, `ews_alerts`, `audit_log`, `outbox_events`                                                                                                                                 | Ledger plus audit and outbox; denormalized `application_reference`, `applicant_user_id`, `product` |
+| `credit_portfolio`    | Portfolio service            | `processed_events`, `activity_feed`, `dead_letter_events`                                                                                                                                                       | Kafka read model; application and loan ids are opaque                                              |
+| `credit_research`     | Research service             | `agent_runs`, `agent_evidence`, `agent_findings`, `finding_evidence`, `agent_finding_reviews`, `agent_run_views`                                                                                                | Advisory briefs; runs token-claimed, evidence/findings persist atomically with success             |
+| `credit_policy`       | Policy service               | `policy_documents`, `policy_versions`, `policy_sections`, `policy_chunks`, `policy_queries`, ACL/role/audit/spend tables                                                                                        | Versioned corpus, pgvector index, query log, spend ledger                                          |
 
 Sources: `packages/db/src/auth.ts`, `packages/db/src/applications.ts`, `packages/db/src/loans.ts`, `packages/db/src/portfolio.ts`, `packages/db/src/research.ts`, `packages/db/src/policy.ts`, `packages/db/src/shared.ts`.
 
@@ -100,6 +100,31 @@ Phase 2 research state lives entirely in `credit_research`; no events are emitte
 - `agent_runs` rows carry the frozen case facts, `asOf`, model/agent/prompt versions, usage, and the Grafana conversation id (the run id — not PII). Evidence rows carry the server-built snapshot, offsets, hashes, tiers, and the verified date basis; findings carry only judge-supported claims with derived confidence (never the model's self-reported confidence).
 - Finding reviews are append-only (`agent_finding_reviews`); the latest action per finding wins. Views are per officer/run/minute (`agent_run_views`); the decision bundle's `viewedAt` is the deciding officer's latest view.
 - The frozen bundle (`researchBundleSchema`) is built server-side at decision time, narrowed to exactly the accepted finding ids, and copied into the officer decision snapshot (approve via `bookLoan`, decline via `persistOfficerDecline`). The public selection (`agentRunId` + `acceptedFindingIds`) never reaches the workflow.
+
+## Generated artifacts (EN-01/02/03)
+
+Generated artifacts stay in `credit_applications` because they are case-scoped
+and must be deleted under the same retention/legal-hold regime.
+
+- `generated_artifacts`: one row per version (`application_id`, `type`,
+  `version`, `revision`, `status`; `content` and server-extracted `citations`
+  jsonb; `content_hash`, `model`, `prompt_version`, `created_by`,
+  `approved_by`, timestamps, `retention_until`). A partial unique index keeps
+  one live draft per case/type. `revision` is the optimistic-concurrency token.
+  `document_derived` marks artifacts built while document evidence was
+  available; reads then require the active assigned-officer grant even after
+  unassignment.
+- A database trigger freezes `content`/`citations`/provenance once a row is
+  approved or superseded and only permits `draft → approved|deleted`,
+  `approved → superseded|deleted`, and `superseded → deleted`. Deletion is a
+  tombstone (`status='deleted'`, `deleted_at` set); rows are never hard-deleted.
+- `generated_artifact_holds` and any active document legal hold on the case
+  block tombstone/retention (release is idempotent); deletion also takes the
+  per-application advisory lock the document hold path uses. `audit_log` gets
+  one ids-only row per create/edit/version/approve/tombstone/hold/retention
+  action.
+- Generation provenance is metadata only; no prompt, generated text, document
+  quote, or applicant PII goes to logs or Grafana.
 
 ## PII allowlist
 

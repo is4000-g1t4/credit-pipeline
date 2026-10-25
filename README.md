@@ -114,6 +114,54 @@ T16). E2E: `e2e/documents.spec.ts` (+ `e2e/fixtures/mismatch.pdf`) runs the
 full path when the stack above is configured, otherwise it skips with the
 required env.
 
+## Case-assist enablers (EN-01/02/03, behind a flag)
+
+The shared substrate for the credit-memo, policy-exception, and
+adverse-action features lives in the applications service:
+
+- **EN-01 evidence bundle** — `GET /api/assist/cases/:id/evidence` returns the
+  case evidence with stable `sourceRef` keys (the five backlog sources:
+  document/page/offset, context signal, external evidence, policy section,
+  score/reason; plus `case_fact` for structured request/entity fields), source
+  type, retention/legal-hold metadata, and typed `unavailable` entries. Case
+  access is officer + non-draft + not another officer's assignment; document
+  text additionally requires the active `assigned_officer` grant.
+- **EN-02 artifact lifecycle** — generic versioned artifacts (`credit_memo`,
+  `policy_exception_memo`, `adverse_action_letter`) with optimistic
+  concurrency, a DB trigger that freezes approved content, tombstone-only
+  deletion, append-only audit, retention, and legal holds. A further edit of
+  an approved artifact creates the next version; approval supersedes the old
+  one.
+- **EN-03 shared validator** — strict per-type schema, citation existence and
+  exact-quote checks against the bundle, decision-language scan, and direct
+  PII / protected-attribute scans. Invalid output returns typed issues and is
+  never persisted.
+
+`POST /api/assist/cases/:id/memos` is the end-to-end consumer: it assembles
+evidence, builds a deterministic draft (no LLM, no decision language), runs
+the validator, and stores a draft artifact. It requires a `pending_review`
+case. Generic artifact routes are under `/api/assist/cases/:id/artifacts` and
+`/api/assist/artifacts/:id` (`PATCH`, `/approve`, `/tombstone`). All routes are
+officer-only; applicants get 403 and another officer's assigned case is a
+non-leaking 404.
+
+Enable locally (restart the applications service afterwards):
+
+```powershell
+# .env
+ASSIST_ENABLED=true
+ASSIST_RETENTION_DAYS=90
+```
+
+With the flag off every officer-facing assist route returns 404; the
+service-only hold/retention routes stay available so legal holds can still be
+recorded and retention still runs. The validator and evidence
+contract are pure exports from `@credit/core`; the applications module is
+`apps/applications/src/assist/`. Tests: `pnpm --filter @credit/applications
+test:integration` (real Postgres; route tests use a fake research upstream).
+`e2e/assist.spec.ts` runs the happy path when the flag is on and the
+flag-off 404 case when it is off.
+
 ## Demo customer fixtures (T17/D2a, CLI-only)
 
 `fixtures/demo/manifest.json` is the checked-in source of truth

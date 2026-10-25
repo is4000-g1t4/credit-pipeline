@@ -83,6 +83,13 @@ const parsed = createEnv({
 		// dev without research) disables the callback — read gating on the
 		// live consent flag still hides prior context immediately.
 		RESEARCH_URL: z.string().url().optional(),
+		// EN-01/02/03 case assist (evidence bundle, artifacts, generated-text
+		// validation). Off by default: every assist route 404s while disabled.
+		ASSIST_ENABLED: z.enum(["true", "false"]).default("false"),
+		ASSIST_RETENTION_DAYS: z.coerce.number().int().positive().default(90),
+		ASSIST_RESEARCH_TIMEOUT_MS: z.coerce.number().int().min(500).max(30_000).default(5_000),
+		ASSIST_MODEL: z.string().min(1).default("deterministic"),
+		ASSIST_PROMPT_VERSION: z.string().min(1).default("memo-template-v1"),
 		// HTTP body cap for the multipart upload path only (10 MB file +
 		// overhead); every other /api/* route keeps the 100 KB JSON bound.
 		DOCUMENT_UPLOAD_MAX_BYTES: z.coerce.number().int().positive().default(MAX_UPLOAD_BYTES),
@@ -148,6 +155,15 @@ export const env = {
 		resetAllowed: parsed.DEMO_RESET_ALLOWED === "true",
 	},
 	researchUrl: parsed.RESEARCH_URL,
+	assist: {
+		enabled: parsed.ASSIST_ENABLED === "true",
+		retentionDays: parsed.ASSIST_RETENTION_DAYS,
+		researchUrl: parsed.RESEARCH_URL ?? null,
+		researchTimeoutMs: parsed.ASSIST_RESEARCH_TIMEOUT_MS,
+		internalSecret: parsed.INTERNAL_SECRET,
+		model: parsed.ASSIST_MODEL,
+		promptVersion: parsed.ASSIST_PROMPT_VERSION,
+	},
 	nodeEnv: parsed.NODE_ENV,
 };
 
