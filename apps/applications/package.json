@@ -9,7 +9,8 @@
 		"build": "tsc --noEmit",
 		"test": "vitest run",
 		"test:integration": "vitest run --config vitest.integration.config.ts",
-		"eval:assist": "tsx eval/assist-eval.ts"
+		"eval:assist": "tsx eval/assist-eval.ts",
+		"eval:adverse": "tsx eval/adverse-eval.ts"
 	},
 	"dependencies": {
 		"@credit/core": "workspace:*",

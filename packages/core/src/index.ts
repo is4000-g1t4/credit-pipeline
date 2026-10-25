@@ -1,5 +1,6 @@
 // @credit/core — pure domain package. Every module re-exported; no defaults.
 
+export * from "./adverse-action.js";
 export * from "./affordability.js";
 export * from "./amortization.js";
 export * from "./canonical.js";
@@ -9,6 +10,7 @@ export * from "./demo-guards.js";
 export * from "./events.js";
 export * from "./evidence.js";
 export * from "./factors.js";
+export * from "./fair-lending.js";
 export * from "./generated-text.js";
 export * from "./mockBank.js";
 export * from "./mockBureau.js";

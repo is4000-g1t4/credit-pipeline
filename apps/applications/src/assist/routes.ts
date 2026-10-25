@@ -5,10 +5,18 @@
 // 404. Service-only hold/retention routes stay available while disabled.
 // Artifact content never enters logs or telemetry — only ids, versions, and
 // counts. Validation runs before persistence and again before approval.
-import type { Db } from "@credit/db/applications";
+import { decisions, scores, withTx, type Db } from "@credit/db/applications";
 import {
+	ADVERSE_TAXONOMY_VERSION,
 	ARTIFACT_TYPES,
+	FAIR_LENDING_DENY_LIST_VERSION,
+	resolveAdverseJurisdictionProfile,
+	validateAdverseJurisdictionProfile,
+	validateAdverseLetterContent,
+	validateAdverseLetterDecisionBinding,
 	validateGeneratedText,
+	type AdverseActionLetterContent,
+	type AdverseJurisdictionProfile,
 	type ArtifactType,
 	type ValidationIssue,
 } from "@credit/core";
@@ -17,11 +25,13 @@ import {
 	readJson,
 	requireOfficer,
 	requireService,
+	writeAudit,
 	zodFields,
 	type Logger,
 	type ServiceApp,
 	type ServiceVariables,
 } from "@credit/service-kit";
+import { desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import { z } from "zod";
@@ -38,9 +48,16 @@ import {
 	tombstoneArtifact,
 	updateArtifact,
 } from "./artifacts.js";
+import {
+	buildAdverseActionLetter,
+	buildAdverseReasonFacts,
+	decisionReasonCodes,
+	decisionSnapshotVersions,
+	type AdverseLetterBuildFailure,
+} from "./adverse.js";
 import { assembleCaseEvidence } from "./evidence.js";
 import { buildCreditMemo } from "./memo.js";
-import type { AssistRuntime } from "./types.js";
+import type { ArtifactAuditMetadata, AssistRuntime } from "./types.js";
 
 const artifactTypeSchema = z.enum(ARTIFACT_TYPES);
 
@@ -107,6 +124,104 @@ function caseIdParam(value: string): string {
 	return value;
 }
 
+function adverseFailureBody(failure: AdverseLetterBuildFailure): {
+	status: number;
+	body: {
+		error: {
+			code: string;
+			message: string;
+			details?: Record<string, unknown>;
+		};
+	};
+} {
+	if (failure.code === "NOT_DECLINED") {
+		return {
+			status: 409,
+			body: {
+				error: {
+					code: "CASE_NOT_DECLINED",
+					message: "the case has no declined decision to explain",
+				},
+			},
+		};
+	}
+	if (failure.code === "DISCLOSURE_UNAVAILABLE") {
+		return {
+			status: 422,
+			body: {
+				error: {
+					code: "DISCLOSURE_UNAVAILABLE",
+					message: failure.detail,
+					details: { issues: failure.issues ?? [] },
+				},
+			},
+		};
+	}
+	if (failure.code === "FAIR_LENDING_BLOCKED") {
+		return {
+			status: 422,
+			body: {
+				error: {
+					code: "FAIR_LENDING_BLOCKED",
+					message: failure.detail,
+					details: {
+						terms: failure.terms ?? [],
+						reasonCodes: failure.reasonCodes ?? [],
+					},
+				},
+			},
+		};
+	}
+	return {
+		status: 422,
+		body: {
+			error: {
+				code: "NEEDS_OFFICER_INPUT",
+				message: failure.detail,
+				details: {
+					reasonCodes: failure.reasonCodes ?? [],
+					unmappedCodes: failure.unmappedCodes ?? [],
+					missingCitationCodes: failure.missingCitationCodes ?? [],
+					requiredMin: failure.requiredMin ?? null,
+					requiredMax: failure.requiredMax ?? null,
+				},
+			},
+		},
+	};
+}
+
+function adverseProfileFailure(issues: Array<{ code: string; message: string }>): {
+	error: {
+		code: "ADVERSE_PROFILE_INVALID";
+		message: string;
+		issues: Array<{ code: string; message: string }>;
+	};
+} {
+	return {
+		error: {
+			code: "ADVERSE_PROFILE_INVALID",
+			message: "adverse-action letter does not satisfy its jurisdiction profile",
+			issues: issues.slice(0, 50),
+		},
+	};
+}
+
+function adverseDecisionFailure(issues: Array<{ code: string; message: string }>): {
+	error: {
+		code: "ADVERSE_DECISION_MISMATCH";
+		message: string;
+		issues: Array<{ code: string; message: string }>;
+	};
+} {
+	return {
+		error: {
+			code: "ADVERSE_DECISION_MISMATCH",
+			message: "adverse-action letter does not match the case decision",
+			issues: issues.slice(0, 50),
+		},
+	};
+}
+
 function hasDocumentCitation(artifact: {
 	documentDerived?: boolean;
 	citations: Array<{ ref: string }>;
@@ -115,6 +230,34 @@ function hasDocumentCitation(artifact: {
 		artifact.documentDerived === true ||
 		artifact.citations.some((citation) => citation.ref.startsWith("document:"))
 	);
+}
+
+function adverseAuditMetadata(input: {
+	content: AdverseActionLetterContent;
+	profile: AdverseJurisdictionProfile;
+	decision: typeof decisions.$inferSelect;
+	droppedReasonCodes?: string[];
+}): ArtifactAuditMetadata {
+	const versions = decisionSnapshotVersions(input.decision);
+	return {
+		decisionId: input.decision.id,
+		reasonCodes: input.content.principalReasons.map((reason) => reason.code),
+		...(input.droppedReasonCodes === undefined
+			? {}
+			: { droppedReasonCodes: input.droppedReasonCodes }),
+		jurisdiction: input.content.jurisdiction,
+		profileVersion: input.content.profileVersion,
+		profileWordingHash: input.profile.wordingHash,
+		taxonomyVersion: ADVERSE_TAXONOMY_VERSION,
+		legalReviewRef: input.profile.legalReview.reference,
+		policyVersion: versions.policyVersion,
+		scorecardVersion: versions.scorecardVersion,
+		citationRefs: input.content.principalReasons.flatMap((reason) =>
+			reason.citations.map((citation) => citation.ref),
+		),
+		fairLendingScan: "passed",
+		fairLendingDenyListVersion: FAIR_LENDING_DENY_LIST_VERSION,
+	};
 }
 
 export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
@@ -174,6 +317,124 @@ export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
 		return artifact;
 	};
 
+	const requireAdverseProfile = (): AdverseJurisdictionProfile => {
+		const profile = resolveAdverseJurisdictionProfile(config.adverseJurisdiction);
+		if (!profile) {
+			throw new HttpError(
+				409,
+				"JURISDICTION_UNSUPPORTED",
+				"adverse-action jurisdiction is not supported",
+			);
+		}
+		const profileValidation = validateAdverseJurisdictionProfile(profile);
+		if (!profileValidation.ok) {
+			throw new HttpError(
+				422,
+				"DISCLOSURE_UNAVAILABLE",
+				"the adverse-action jurisdiction profile is not approved",
+				{ issues: profileValidation.issues.map((issue) => issue.code) },
+			);
+		}
+		if (config.adverseContactPath.trim().length === 0 || config.adverseContactPath.length > 300) {
+			throw new HttpError(
+				422,
+				"DISCLOSURE_UNAVAILABLE",
+				"the adverse-action contact path is missing or too long",
+			);
+		}
+		return profile;
+	};
+
+	const loadDecisionRow = async (applicationId: string) => {
+		const rows = await db
+			.select()
+			.from(decisions)
+			.where(eq(decisions.applicationId, applicationId))
+			.limit(1);
+		return rows[0] ?? null;
+	};
+
+	const loadScoreRow = async (applicationId: string) => {
+		const rows = await db
+			.select()
+			.from(scores)
+			.where(eq(scores.applicationId, applicationId))
+			.orderBy(desc(scores.createdAt), desc(scores.id))
+			.limit(1);
+		return rows[0] ?? null;
+	};
+
+	const auditAdverseBlocked = async (
+		artifact: {
+			id: string;
+			applicationId: string;
+			type: string;
+			version: number;
+			revision: number;
+		},
+		actor: AssistActor,
+		action: "edit" | "approve",
+		issueCodes: string[],
+	): Promise<void> => {
+		await withTx(db, (tx) =>
+			writeAudit(tx, {
+				applicationId: artifact.applicationId,
+				actor: actor.id,
+				action: `artifact.${action}_blocked`,
+				entity: "generated_artifact",
+				payload: {
+					feature: "assist",
+					artifactId: artifact.id,
+					applicationId: artifact.applicationId,
+					type: artifact.type,
+					version: artifact.version,
+					revision: artifact.revision,
+					actorRole: actor.role,
+					issueCodes: issueCodes.slice(0, 50),
+				},
+			}),
+		);
+	};
+
+	const auditAdverseGenerateBlocked = async (input: {
+		applicationId: string;
+		actor: AssistActor;
+		decisionId: string | null;
+		failureCode: string;
+		detail: string;
+		issueCodes: string[];
+		jurisdiction: string;
+		profileVersion: string;
+		profileWordingHash: string | null;
+		model: string;
+		promptVersion: string;
+	}): Promise<void> => {
+		await withTx(db, (tx) =>
+			writeAudit(tx, {
+				applicationId: input.applicationId,
+				actor: input.actor.id,
+				action: "artifact.generate_blocked",
+				entity: "generated_artifact",
+				payload: {
+					feature: "assist",
+					applicationId: input.applicationId,
+					decisionId: input.decisionId,
+					failureCode: input.failureCode,
+					detail: input.detail,
+					issueCodes: input.issueCodes.slice(0, 50),
+					jurisdiction: input.jurisdiction,
+					profileVersion: input.profileVersion,
+					profileWordingHash: input.profileWordingHash,
+					taxonomyVersion: ADVERSE_TAXONOMY_VERSION,
+					model: input.model,
+					promptVersion: input.promptVersion,
+					fairLendingDenyListVersion: FAIR_LENDING_DENY_LIST_VERSION,
+					actorRole: input.actor.role,
+				},
+			}),
+		);
+	};
+
 	app.get("/api/assist/cases/:id/evidence", requireOfficer, async (c) => {
 		const applicationId = caseIdParam(c.req.param("id"));
 		const actor = actorOf(c.var.user);
@@ -230,6 +491,152 @@ export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
 		return c.json({ artifact }, 201);
 	});
 
+	// EN-08 / US-ADV-1/2: deterministic letter from the terminal decline.
+	// Only this route may create an adverse-action letter; generic artifact
+	// creation is rejected below so the taxonomy cannot be bypassed.
+	app.post("/api/assist/cases/:id/adverse-action", requireOfficer, async (c) => {
+		const applicationId = caseIdParam(c.req.param("id"));
+		const actor = actorOf(c.var.user);
+		const kase = await loadCase(applicationId, actor);
+		if (kase.application.status !== "declined") {
+			throw new HttpError(409, "CASE_NOT_DECLINED", "the case has no declined decision to explain");
+		}
+		const decision = await loadDecisionRow(applicationId);
+		if (!decision || decision.outcome !== "declined") {
+			throw new HttpError(409, "CASE_NOT_DECLINED", "the case has no declined decision to explain");
+		}
+		let profile: AdverseJurisdictionProfile;
+		try {
+			profile = requireAdverseProfile();
+		} catch (err) {
+			if (err instanceof HttpError) {
+				await auditAdverseGenerateBlocked({
+					applicationId,
+					actor,
+					decisionId: decision.id,
+					failureCode: err.code,
+					detail: err.message,
+					issueCodes: err.fields?.issues ?? [],
+					jurisdiction: config.adverseJurisdiction,
+					profileVersion: "",
+					profileWordingHash: null,
+					model: config.model,
+					promptVersion: config.adversePromptVersion,
+				});
+			}
+			throw err;
+		}
+		const score = await loadScoreRow(applicationId);
+		const evidence = await assembleFor(kase, actor);
+		const built = buildAdverseActionLetter({
+			application: kase.application,
+			decision,
+			score,
+			evidence,
+			profile,
+			contactPath: config.adverseContactPath,
+		});
+		if (!built.ok) {
+			const mapped = adverseFailureBody(built.failure);
+			logger.warn(
+				{
+					applicationId,
+					code: built.failure.code,
+					detail: built.failure.detail,
+					issueCount: built.failure.issues?.length ?? 0,
+				},
+				"assist adverse action letter blocked",
+			);
+			await auditAdverseGenerateBlocked({
+				applicationId,
+				actor,
+				decisionId: decision.id,
+				failureCode: built.failure.code,
+				detail: built.failure.detail,
+				issueCodes: [
+					...(built.failure.issues ?? []),
+					...(built.failure.unmappedCodes ?? []),
+					...(built.failure.missingCitationCodes ?? []),
+				],
+				jurisdiction: profile.code,
+				profileVersion: profile.version,
+				profileWordingHash: profile.wordingHash,
+				model: config.model,
+				promptVersion: config.adversePromptVersion,
+			});
+			return c.json(mapped.body, mapped.status === 409 ? 409 : 422);
+		}
+		const validation = validateGeneratedText({
+			artifactType: "adverse_action_letter",
+			content: built.content,
+			evidence,
+		});
+		if (!validation.ok) {
+			logger.warn(
+				{ applicationId, issueCount: validation.issues.length },
+				"assist adverse action letter validation failed",
+			);
+			await auditAdverseGenerateBlocked({
+				applicationId,
+				actor,
+				decisionId: decision.id,
+				failureCode: "GENERATED_TEXT_INVALID",
+				detail: "generated text failed validation",
+				issueCodes: validation.issues.map((issue) => issue.code),
+				jurisdiction: profile.code,
+				profileVersion: profile.version,
+				profileWordingHash: profile.wordingHash,
+				model: config.model,
+				promptVersion: config.adversePromptVersion,
+			});
+			return c.json(validationFailure(validation.issues), 422);
+		}
+		const content = validation.content as AdverseActionLetterContent;
+		const artifact = await createArtifact(db, {
+			applicationId,
+			type: "adverse_action_letter",
+			content,
+			citations: validation.citations,
+			documentDerived: content.principalReasons.some((reason) =>
+				reason.citations.some((citation) => citation.ref.startsWith("document:")),
+			),
+			createdBy: actor.id,
+			actorRole: actor.role,
+			model: config.model,
+			promptVersion: config.adversePromptVersion,
+			retentionDays: config.retentionDays,
+			auditMetadata: adverseAuditMetadata({
+				content,
+				profile,
+				decision,
+				droppedReasonCodes: built.droppedCodes,
+			}),
+			now: runtime.now(),
+		});
+		logger.info(
+			{
+				applicationId,
+				artifactId: artifact.id,
+				version: artifact.version,
+				jurisdiction: profile.code,
+				profileVersion: profile.version,
+				reasonCount: content.principalReasons.length,
+			},
+			"assist adverse action letter drafted",
+		);
+		return c.json(
+			{
+				artifact,
+				principalReasons: built.reasons,
+				droppedReasonCodes: built.droppedCodes,
+				decisionId: decision.id,
+				jurisdiction: profile.code,
+				profileVersion: profile.version,
+			},
+			201,
+		);
+	});
+
 	app.post("/api/assist/cases/:id/artifacts", requireOfficer, async (c) => {
 		const applicationId = caseIdParam(c.req.param("id"));
 		const parsed = createSchema.safeParse(await readJson(c));
@@ -237,6 +644,13 @@ export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
 		const actor = actorOf(c.var.user);
 		const kase = await loadCase(applicationId, actor);
 		if (parsed.data.type === "credit_memo") requireMemoableCase(kase);
+		if (parsed.data.type === "adverse_action_letter") {
+			throw new HttpError(
+				422,
+				"DEDICATED_ROUTE_REQUIRED",
+				"adverse-action letters must be generated from a declined case",
+			);
+		}
 		const evidence = await assembleFor(kase, actor);
 		const validation = validateGeneratedText({
 			artifactType: parsed.data.type,
@@ -297,13 +711,73 @@ export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
 		requireArtifactContentAccess(kase, artifact);
 		const parsed = updateSchema.safeParse(await readJson(c));
 		if (!parsed.success) throw invalidBody(parsed.error);
+		const adverseContext =
+			artifact.type === "adverse_action_letter"
+				? {
+						profile: requireAdverseProfile(),
+						decision: await loadDecisionRow(artifact.applicationId),
+						score: await loadScoreRow(artifact.applicationId),
+					}
+				: null;
+		if (adverseContext !== null && adverseContext.decision === null) {
+			throw new HttpError(409, "CASE_NOT_DECLINED", "the case decision is missing");
+		}
+		const adverseDecision = adverseContext?.decision ?? null;
 		const evidence = await assembleFor(kase, actor);
 		const validation = validateGeneratedText({
 			artifactType: artifact.type,
 			content: parsed.data.content,
 			evidence,
 		});
-		if (!validation.ok) return c.json(validationFailure(validation.issues), 422);
+		if (!validation.ok) {
+			if (adverseContext !== null) {
+				await auditAdverseBlocked(
+					artifact,
+					actor,
+					"edit",
+					validation.issues.map((issue) => issue.code),
+				);
+			}
+			return c.json(validationFailure(validation.issues), 422);
+		}
+		let adverseContent: AdverseActionLetterContent | null = null;
+		if (adverseContext !== null && adverseDecision !== null) {
+			const content = validation.content as AdverseActionLetterContent;
+			const profileValidation = validateAdverseLetterContent(content, adverseContext.profile);
+			if (!profileValidation.ok) {
+				await auditAdverseBlocked(
+					artifact,
+					actor,
+					"edit",
+					profileValidation.issues.map((issue) => issue.code),
+				);
+				return c.json(adverseProfileFailure(profileValidation.issues), 422);
+			}
+			const binding = validateAdverseLetterDecisionBinding({
+				content,
+				applicationId: kase.application.id,
+				decisionId: adverseDecision.id,
+				decisionReasonCodes: decisionReasonCodes(adverseDecision),
+				profile: adverseContext.profile,
+				contactPath: config.adverseContactPath,
+				facts: buildAdverseReasonFacts(
+					kase.application,
+					adverseDecision,
+					adverseContext.score,
+					evidence,
+				),
+			});
+			if (!binding.ok) {
+				await auditAdverseBlocked(
+					artifact,
+					actor,
+					"edit",
+					binding.issues.map((issue) => issue.code),
+				);
+				return c.json(adverseDecisionFailure(binding.issues), 422);
+			}
+			adverseContent = content;
+		}
 		const result = await updateArtifact(db, {
 			id: artifact.id,
 			actor: actor.id,
@@ -311,10 +785,26 @@ export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
 			expectedRevision: parsed.data.expectedRevision,
 			content: validation.content,
 			citations: validation.citations,
-			documentDerived: evidence.items.some((item) => item.sourceType === "document"),
+			documentDerived:
+				adverseContent === null
+					? evidence.items.some((item) => item.sourceType === "document")
+					: adverseContent.principalReasons.some((reason) =>
+							reason.citations.some((citation) => citation.ref.startsWith("document:")),
+						),
 			model: artifact.model,
 			promptVersion: artifact.promptVersion,
 			retentionDays: config.retentionDays,
+			auditMetadata:
+				adverseContent !== null && adverseContext !== null && adverseDecision !== null
+					? adverseAuditMetadata({
+							content: adverseContent,
+							profile: adverseContext.profile,
+							decision: adverseDecision,
+							droppedReasonCodes: decisionReasonCodes(adverseDecision).filter(
+								(code) => !adverseContent.principalReasons.some((reason) => reason.code === code),
+							),
+						})
+					: undefined,
 			now: runtime.now(),
 		});
 		logger.info(
@@ -345,18 +835,89 @@ export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
 		if (artifact.revision !== parsed.data.expectedRevision) {
 			throw new HttpError(409, "VERSION_CONFLICT", "the draft changed since it was read");
 		}
+		const adverseContext =
+			artifact.type === "adverse_action_letter"
+				? {
+						profile: requireAdverseProfile(),
+						decision: await loadDecisionRow(artifact.applicationId),
+						score: await loadScoreRow(artifact.applicationId),
+					}
+				: null;
+		if (adverseContext !== null && adverseContext.decision === null) {
+			throw new HttpError(409, "CASE_NOT_DECLINED", "the case decision is missing");
+		}
+		const adverseDecision = adverseContext?.decision ?? null;
 		const evidence = await assembleFor(kase, actor);
 		const validation = validateGeneratedText({
 			artifactType: artifact.type,
 			content: artifact.content,
 			evidence,
 		});
-		if (!validation.ok) return c.json(validationFailure(validation.issues), 422);
+		if (!validation.ok) {
+			if (adverseContext !== null) {
+				await auditAdverseBlocked(
+					artifact,
+					actor,
+					"approve",
+					validation.issues.map((issue) => issue.code),
+				);
+			}
+			return c.json(validationFailure(validation.issues), 422);
+		}
+		let adverseContent: AdverseActionLetterContent | null = null;
+		if (adverseContext !== null && adverseDecision !== null) {
+			const content = validation.content as AdverseActionLetterContent;
+			const profileValidation = validateAdverseLetterContent(content, adverseContext.profile);
+			if (!profileValidation.ok) {
+				await auditAdverseBlocked(
+					artifact,
+					actor,
+					"approve",
+					profileValidation.issues.map((issue) => issue.code),
+				);
+				return c.json(adverseProfileFailure(profileValidation.issues), 422);
+			}
+			const binding = validateAdverseLetterDecisionBinding({
+				content,
+				applicationId: kase.application.id,
+				decisionId: adverseDecision.id,
+				decisionReasonCodes: decisionReasonCodes(adverseDecision),
+				profile: adverseContext.profile,
+				contactPath: config.adverseContactPath,
+				facts: buildAdverseReasonFacts(
+					kase.application,
+					adverseDecision,
+					adverseContext.score,
+					evidence,
+				),
+			});
+			if (!binding.ok) {
+				await auditAdverseBlocked(
+					artifact,
+					actor,
+					"approve",
+					binding.issues.map((issue) => issue.code),
+				);
+				return c.json(adverseDecisionFailure(binding.issues), 422);
+			}
+			adverseContent = content;
+		}
 		const approved = await approveArtifact(db, {
 			id: artifact.id,
 			actor: actor.id,
 			actorRole: actor.role,
 			expectedRevision: parsed.data.expectedRevision,
+			auditMetadata:
+				adverseContent !== null && adverseContext !== null && adverseDecision !== null
+					? adverseAuditMetadata({
+							content: adverseContent,
+							profile: adverseContext.profile,
+							decision: adverseDecision,
+							droppedReasonCodes: decisionReasonCodes(adverseDecision).filter(
+								(code) => !adverseContent.principalReasons.some((reason) => reason.code === code),
+							),
+						})
+					: undefined,
 			now: runtime.now(),
 		});
 		logger.info(

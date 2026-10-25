@@ -263,6 +263,9 @@ function validLetter(): AdverseActionLetterContent {
 	return {
 		title: "Adverse action notice",
 		applicantName: "Jane Doe",
+		decisionId: "66666666-6666-4666-8666-666666666666",
+		jurisdiction: "SG",
+		profileVersion: "sg-feat-v2",
 		decision: "declined",
 		principalReasons: [
 			{
@@ -652,18 +655,32 @@ describe("safety scans", () => {
 			expect(result.issues).toContainEqual(expect.objectContaining({ code: "PII_DETECTED" }));
 	});
 
-	it("rejects protected attributes and proxies", () => {
+	it("rejects protected attributes and common proxies", () => {
 		const memo = validMemo();
 		memo.sections[0].claims[0].text = "Applicant age is 40.";
-		const result = validateGeneratedText({
+		const protectedResult = validateGeneratedText({
 			artifactType: "credit_memo",
 			content: memo,
 			evidence: bundle(),
 		});
-		expect(result.ok).toBe(false);
-		if (!result.ok) {
-			expect(result.issues).toContainEqual(
+		expect(protectedResult.ok).toBe(false);
+		if (!protectedResult.ok) {
+			expect(protectedResult.issues).toContainEqual(
 				expect.objectContaining({ code: "PROTECTED_ATTRIBUTE" }),
+			);
+		}
+
+		const proxyMemo = validMemo();
+		proxyMemo.sections[0].claims[0].text = "The applicant lives in a postal code area.";
+		const proxyResult = validateGeneratedText({
+			artifactType: "credit_memo",
+			content: proxyMemo,
+			evidence: bundle(),
+		});
+		expect(proxyResult.ok).toBe(false);
+		if (!proxyResult.ok) {
+			expect(proxyResult.issues).toContainEqual(
+				expect.objectContaining({ code: "FAIR_LENDING_PROXY" }),
 			);
 		}
 	});
@@ -675,5 +692,60 @@ describe("safety scans", () => {
 			evidence: bundle(),
 		});
 		expect(result.ok).toBe(true);
+	});
+
+	it("does not fair-lending-scan a structured applicant name", () => {
+		const letter = validLetter();
+		letter.applicantName = "Single Origin Coffee";
+		const identityRef = sourceRefKey(refs.applicant);
+		const identityBundle = bundle();
+		identityBundle.items = identityBundle.items.map((entry) =>
+			entry.ref === identityRef ? { ...entry, content: "Single Origin Coffee" } : entry,
+		);
+		const result = validateGeneratedText({
+			artifactType: "adverse_action_letter",
+			content: letter,
+			evidence: identityBundle,
+		});
+		expect(result.ok, JSON.stringify(result)).toBe(true);
+	});
+
+	it("does not decision-language-scan structured name/contact fields", () => {
+		const letter = validLetter();
+		letter.applicantName = "Approved Finance Pte Ltd";
+		letter.contactPath = "https://bank.example/rates";
+		const identityRef = sourceRefKey(refs.applicant);
+		const identityBundle = bundle();
+		identityBundle.items = identityBundle.items.map((entry) =>
+			entry.ref === identityRef ? { ...entry, content: "Approved Finance Pte Ltd" } : entry,
+		);
+		const result = validateGeneratedText({
+			artifactType: "adverse_action_letter",
+			content: letter,
+			evidence: identityBundle,
+		});
+		expect(result.ok, JSON.stringify(result)).toBe(true);
+	});
+
+	it("rejects internal risk/model/policy references in applicant prose", () => {
+		for (const text of [
+			"Model scorecard-v1 internal risk grade D.",
+			"EXC-14 applies.",
+			"Policy exception 14 applies.",
+		]) {
+			const letter = validLetter();
+			letter.principalReasons[0]!.text = text;
+			const result = validateGeneratedText({
+				artifactType: "adverse_action_letter",
+				content: letter,
+				evidence: bundle(),
+			});
+			expect(result.ok, text).toBe(false);
+			if (!result.ok) {
+				expect(result.issues, text).toContainEqual(
+					expect.objectContaining({ code: "INTERNAL_REFERENCE" }),
+				);
+			}
+		}
 	});
 });

@@ -229,15 +229,16 @@ Gaps worth closing, in order:
 Add one row when a feature lands. A feature with no row is an experiment, not
 a supported capability.
 
-| Feature                                       | Archetype                       | Dataset                                         | Command                                          | Status                                          |
-| --------------------------------------------- | ------------------------------- | ----------------------------------------------- | ------------------------------------------------ | ----------------------------------------------- |
-| Policy navigator (`apps/policy`)              | Retrieval-augmented answer      | `apps/policy/eval/answer-cases.json` (33 cases) | `pnpm --filter @credit/policy eval:answers`      | passing: held-out 8/8, dev 22/25 at pass^3      |
-| Case policy review (`apps/research` → policy) | Explain/classify                | inline demo personas + edge case                | `pnpm --filter @credit/research eval:policy`     | planned                                         |
-| External case brief (`apps/research`)         | Tool-using research             | inline 3-case fixture in `brief-eval.ts`        | `pnpm --filter @credit/research eval:brief`      | passing: 9/9, in-sample                         |
-| Context analyst (`apps/research`)             | Structured extraction/selection | demo personas in `fixtures.ts`                  | `pnpm --filter @credit/research eval:context`    | passing: 9/9, in-sample                         |
-| Advisory-only invariant                       | System invariant                | demo personas                                   | existing e2e/demo suite                          | partial: snapshot test only                     |
-| Case-assist validator (`apps/applications`)   | Pure gate/classifier            | 27 code-defined cases in `eval/assist-eval.ts`  | `pnpm --filter @credit/applications eval:assist` | passing: 27/27 at pass^3, 0 unsafe pass-through |
-| Future feature                                | Pick §1.2                       | `apps/<app>/eval/cases.json`                    | `pnpm --filter @credit/<app> eval:<feature>`     | required                                        |
+| Feature                                       | Archetype                       | Dataset                                         | Command                                           | Status                                          |
+| --------------------------------------------- | ------------------------------- | ----------------------------------------------- | ------------------------------------------------- | ----------------------------------------------- |
+| Policy navigator (`apps/policy`)              | Retrieval-augmented answer      | `apps/policy/eval/answer-cases.json` (33 cases) | `pnpm --filter @credit/policy eval:answers`       | passing: held-out 8/8, dev 22/25 at pass^3      |
+| Case policy review (`apps/research` → policy) | Explain/classify                | inline demo personas + edge case                | `pnpm --filter @credit/research eval:policy`      | planned                                         |
+| External case brief (`apps/research`)         | Tool-using research             | inline 3-case fixture in `brief-eval.ts`        | `pnpm --filter @credit/research eval:brief`       | passing: 9/9, in-sample                         |
+| Context analyst (`apps/research`)             | Structured extraction/selection | demo personas in `fixtures.ts`                  | `pnpm --filter @credit/research eval:context`     | passing: 9/9, in-sample                         |
+| Advisory-only invariant                       | System invariant                | demo personas                                   | existing e2e/demo suite                           | partial: snapshot test only                     |
+| Case-assist validator (`apps/applications`)   | Pure gate/classifier            | 27 code-defined cases in `eval/assist-eval.ts`  | `pnpm --filter @credit/applications eval:assist`  | passing: 27/27 at pass^3, 0 unsafe pass-through |
+| Adverse-action letter (`apps/applications`)   | Pure gate/classifier            | 19 code-defined cases in `eval/adverse-eval.ts` | `pnpm --filter @credit/applications eval:adverse` | passing: 19/19 at pass^3, 0 unsafe pass-through |
+| Future feature                                | Pick §1.2                       | `apps/<app>/eval/cases.json`                    | `pnpm --filter @credit/<app> eval:<feature>`      | required                                        |
 
 Update the status column to `baseline`, `passing`, `saturated`, or
 `directional` after each run. Keep the command in the row so the next person

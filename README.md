@@ -140,7 +140,12 @@ adverse-action features lives in the applications service:
 `POST /api/assist/cases/:id/memos` is the end-to-end consumer: it assembles
 evidence, builds a deterministic draft (no LLM, no decision language), runs
 the validator, and stores a draft artifact. It requires a `pending_review`
-case. Generic artifact routes are under `/api/assist/cases/:id/artifacts` and
+case. `POST /api/assist/cases/:id/adverse-action` (EN-08 / E4) is the
+declined-case counterpart: it selects 3-4 principal reasons from the decision
+reason codes via the EN-08 taxonomy and stores an `adverse_action_letter`
+draft under the configured jurisdiction profile (`ASSIST_ADVERSE_*`; see
+[docs/explanation/adverse-action.md](docs/explanation/adverse-action.md)).
+Generic artifact routes are under `/api/assist/cases/:id/artifacts` and
 `/api/assist/artifacts/:id` (`PATCH`, `/approve`, `/tombstone`). All routes are
 officer-only; applicants get 403 and another officer's assigned case is a
 non-leaking 404.
@@ -151,6 +156,10 @@ Enable locally (restart the applications service afterwards):
 # .env
 ASSIST_ENABLED=true
 ASSIST_RETENTION_DAYS=90
+ASSIST_ADVERSE_JURISDICTION=SG
+# Required; blank makes the adverse-action route fail closed with 422.
+ASSIST_ADVERSE_CONTACT_PATH=
+ASSIST_ADVERSE_PROMPT_VERSION=adverse-letter-v1
 ```
 
 With the flag off every officer-facing assist route returns 404; the
@@ -202,7 +211,7 @@ reports those seams instead of failing on them.
 | `pnpm lint` / `pnpm format` / `pnpm format:check`  | `oxlint` / `oxfmt .` / `oxfmt --check .`                                                                                                  |
 | `pnpm test`                                        | all workspace unit suites, compose-free                                                                                                   |
 | `pnpm test:integration`                            | gateway (15) + applications (11) + loans (5) + portfolio (5) + review (19) + worker (10) + research (38) integration = 103, needs compose |
-| `pnpm test:e2e`                                    | Playwright (7 specs), boots worker/gateway/services/web itself, needs compose                                                             |
+| `pnpm test:e2e`                                    | Playwright (9 specs), boots worker/gateway/services/web itself, needs compose                                                             |
 | `pnpm demo:check`                                  | scripted HTTP smoke (Maria/Sam/Tomás + monitoring/pay), needs the stack                                                                   |
 | `pnpm demo:monitor`                                | officer login + `POST /demo/monitoring/run`, prints counts                                                                                |
 | `pnpm demo:seed`                                   | idempotent T17 fixture load (users/customers/evidence, `DEMO_MODE` + manifest hash gate), needs DB                                        |
@@ -405,7 +414,7 @@ Docker: `postgres:18-alpine` · `apache/kafka:3.9.0` ·
 ## Notes
 
 - **Worker runs on Node 26; Temporal officially supports 20/22/24.**
-  26 passes our full unit + integration suite and the 7 Playwright specs but is outside
+  26 passes our full unit + integration suite and the 9 Playwright specs but is outside
   the support matrix — if the worker ever acts up, Node 24 LTS is the first
   thing to try (`.nvmrc` pins the 26 we test on).
 - **TS 7 kept (7.0.2).** It needed two small fixes, both correct anyway:

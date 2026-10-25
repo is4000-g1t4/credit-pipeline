@@ -90,6 +90,14 @@ const parsed = createEnv({
 		ASSIST_RESEARCH_TIMEOUT_MS: z.coerce.number().int().min(500).max(30_000).default(5_000),
 		ASSIST_MODEL: z.string().min(1).default("deterministic"),
 		ASSIST_PROMPT_VERSION: z.string().min(1).default("memo-template-v1"),
+		// EN-08 adverse-action taxonomy/profile. SG is the v1 default; US is
+		// available but must be selected explicitly. An unsupported value
+		// disables the adverse-action route with a typed error.
+		ASSIST_ADVERSE_JURISDICTION: z.string().min(1).default("SG"),
+		// Required for a legal notice: an empty value fails the route closed
+		// with 422 rather than pointing applicants at a placeholder domain.
+		ASSIST_ADVERSE_CONTACT_PATH: z.string().default(""),
+		ASSIST_ADVERSE_PROMPT_VERSION: z.string().min(1).default("adverse-letter-v1"),
 		// HTTP body cap for the multipart upload path only (10 MB file +
 		// overhead); every other /api/* route keeps the 100 KB JSON bound.
 		DOCUMENT_UPLOAD_MAX_BYTES: z.coerce.number().int().positive().default(MAX_UPLOAD_BYTES),
@@ -163,6 +171,9 @@ export const env = {
 		internalSecret: parsed.INTERNAL_SECRET,
 		model: parsed.ASSIST_MODEL,
 		promptVersion: parsed.ASSIST_PROMPT_VERSION,
+		adverseJurisdiction: parsed.ASSIST_ADVERSE_JURISDICTION,
+		adverseContactPath: parsed.ASSIST_ADVERSE_CONTACT_PATH,
+		adversePromptVersion: parsed.ASSIST_ADVERSE_PROMPT_VERSION,
 	},
 	nodeEnv: parsed.NODE_ENV,
 };

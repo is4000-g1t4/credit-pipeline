@@ -13,10 +13,12 @@ import {
 } from "@credit/core";
 import {
 	applications,
+	decisions,
 	documentCrosschecks,
 	documentFiles,
 	documentFindings,
 	documentLegalHolds,
+	externalReports,
 	policyEvaluations,
 	scores,
 	type Db,
@@ -47,14 +49,28 @@ export async function assembleCaseEvidence(deps: EvidenceDeps): Promise<Evidence
 	const unavailable: UnavailableSource[] = [];
 
 	addCaseFacts(application, items);
+	await addBureauFacts(db, application, items);
 	await addScoreReasons(db, application, items, unavailable);
+	await addDecisionReasons(db, application, items);
 	await addDocuments(deps, items, unavailable);
 	await addResearch(deps, items, unavailable);
 
 	const seen = new Set<string>();
 	const deduped = items.filter((item) => (seen.has(item.ref) ? false : (seen.add(item.ref), true)));
 	deduped.sort((a, b) => (a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0));
+	let kept = deduped;
 	if (deduped.length > 500) {
+		// Decision reasons are the adverse-action letter's citation base;
+		// keep them ahead of document/research bulk when the cap trips.
+		const decisionReasons = deduped.filter(
+			(item) =>
+				item.sourceType === "score_reason" &&
+				(item.metadata["kind"] === "decision_reason" ||
+					item.metadata["kind"] === "decision_factor"),
+		);
+		const rest = deduped.filter((item) => !decisionReasons.includes(item));
+		kept = [...decisionReasons, ...rest].slice(0, 500);
+		kept.sort((a, b) => (a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0));
 		unavailable.push({
 			ref: sourceRefKey({ type: "case_fact", applicationId: application.id, field: "truncated" }),
 			sourceType: "case_fact",
@@ -84,7 +100,7 @@ export async function assembleCaseEvidence(deps: EvidenceDeps): Promise<Evidence
 		applicationId: application.id,
 		asOf: (application.submittedAt ?? application.createdAt).toISOString(),
 		assembledAt: now.toISOString(),
-		items: deduped.slice(0, 500),
+		items: kept,
 		unavailable: dedupedUnavailable.slice(0, 100),
 	};
 }
@@ -104,6 +120,9 @@ const CASE_LABELS: Record<string, string> = {
 	industry: "Industry",
 	yearsTrading: "Years trading",
 	city: "City",
+	"bureau.delinquencies": "Bureau delinquencies",
+	"bureau.utilizationPct": "Bureau credit utilization",
+	"bureau.bureauScore": "Bureau score",
 };
 
 function humanize(key: string): string {
@@ -174,6 +193,35 @@ function addCaseFacts(application: typeof applications.$inferSelect, items: Evid
 			if (!FIELD_RE.test(field)) continue;
 			push(field, value);
 		}
+	}
+}
+
+/** Structured bureau facts are case evidence, not document text. They let
+ * the adverse-action templates name the delinquency count/utilization. */
+async function addBureauFacts(
+	db: Db,
+	application: typeof applications.$inferSelect,
+	items: EvidenceItem[],
+): Promise<void> {
+	const rows = await db
+		.select()
+		.from(externalReports)
+		.where(
+			and(eq(externalReports.applicationId, application.id), eq(externalReports.kind, "bureau")),
+		)
+		.orderBy(desc(externalReports.fetchedAt), desc(externalReports.id))
+		.limit(1);
+	const payload = rows[0]?.payload;
+	if (!isRecord(payload)) return;
+	for (const [field, key] of [
+		["bureau.delinquencies", "delinquencies"],
+		["bureau.utilizationPct", "utilizationPct"],
+		["bureau.bureauScore", "bureauScore"],
+	] as const) {
+		const value = payload[key];
+		if (typeof value !== "number" || !Number.isFinite(value)) continue;
+		const item = caseFact(application.id, field, value);
+		if (item) items.push(item);
 	}
 }
 
@@ -266,6 +314,67 @@ async function addScoreReasons(
 			code: "missing",
 			detail: "no policy evaluation reason",
 		});
+	}
+}
+
+/** Terminal decision reasons are themselves citable evidence for the
+ * adverse-action letter. The decision id stands in as the `score_reason`
+ * source id; `kind: decision_reason` distinguishes it from score/policy
+ * reasons. No decision means no items (memo cases stay unaffected). */
+async function addDecisionReasons(
+	db: Db,
+	application: typeof applications.$inferSelect,
+	items: EvidenceItem[],
+): Promise<void> {
+	const rows = await db
+		.select()
+		.from(decisions)
+		.where(eq(decisions.applicationId, application.id))
+		.limit(1);
+	const decision = rows[0];
+	if (!decision) return;
+	const pushReason = (
+		code: string,
+		kind: "decision_reason" | "decision_factor",
+		text: string | null,
+	): void => {
+		items.push({
+			ref: sourceRefKey({ type: "score_reason", scoreId: decision.id, code }),
+			sourceType: "score_reason",
+			label: code,
+			content: code,
+			access: { retentionUntil: null, legalHold: false },
+			metadata: { kind, text, outcome: decision.outcome },
+		});
+	};
+	if (Array.isArray(decision.reasons)) {
+		for (const raw of decision.reasons as unknown[]) {
+			if (!isRecord(raw) || typeof raw["code"] !== "string" || !REASON_RE.test(raw["code"])) {
+				continue;
+			}
+			pushReason(
+				raw["code"],
+				"decision_reason",
+				typeof raw["text"] === "string" ? raw["text"] : null,
+			);
+		}
+	}
+	// Officer/check-only decisions may carry a single generic reason while
+	// the frozen snapshot still holds the specific negative factors. Those
+	// factors are part of the decision, so they are citable too.
+	const snapshot = isRecord(decision.snapshot) ? decision.snapshot : {};
+	const factors = Array.isArray(snapshot["factors"]) ? (snapshot["factors"] as unknown[]) : [];
+	for (const raw of factors) {
+		if (!isRecord(raw) || typeof raw["code"] !== "string" || !REASON_RE.test(raw["code"])) {
+			continue;
+		}
+		const points = typeof raw["points"] === "number" ? raw["points"] : null;
+		if (points === null || points >= 0) continue;
+		pushReason(
+			raw["code"],
+			"decision_factor",
+			typeof raw["label"] === "string" ? raw["label"] : null,
+		);
 	}
 }
 

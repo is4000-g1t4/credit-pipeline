@@ -412,7 +412,7 @@ The automatic case-policy review has no officer route: when `POLICY_ASSIST_ENABL
 research calls `POST /internal/policy/explain-case` server-side and accepted
 citations appear in the case page Policy review section.
 
-## Case assist (EN-01/02/03)
+## Case assist (EN-01/02/03, EN-08 / E4)
 
 Officer only. Every `/api/assist/*` route proxies to the applications service.
 `ASSIST_ENABLED=false` makes every officer-facing assist route return 404;
@@ -423,7 +423,8 @@ get 403; a case actively assigned to another officer is a non-leaking 404.
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | `GET /api/assist/cases/:id/evidence`        | EN-01 bundle: stable `sourceRef`s, source types, retention/legal hold, typed `unavailable`                    |
 | `POST /api/assist/cases/:id/memos`          | Deterministic draft memo from the bundle (pending_review only)                                                |
-| `POST /api/assist/cases/:id/artifacts`      | Validate and create a generic artifact (`credit_memo`, `policy_exception_memo`, `adverse_action_letter`)      |
+| `POST /api/assist/cases/:id/adverse-action` | EN-08 / E4 deterministic adverse-action letter from the terminal decline (declined only)                      |
+| `POST /api/assist/cases/:id/artifacts`      | Validate and create a generic artifact (`credit_memo`, `policy_exception_memo`)                               |
 | `GET /api/assist/cases/:id/artifacts?type=` | Version history for a case                                                                                    |
 | `GET /api/assist/artifacts/:id`             | Artifact + content + citations                                                                                |
 | `PATCH /api/assist/artifacts/:id`           | Edit a draft in place (revision compare-and-set); editing an approved artifact creates the next draft version |
@@ -433,9 +434,55 @@ get 403; a case actively assigned to another officer is a non-leaking 404.
 Artifact bodies are type-specific and strict. Validation failure returns `422`
 `GENERATED_TEXT_INVALID` with typed `issues` (`SCHEMA_INVALID`,
 `UNSUPPORTED_CLAIM`, `CITATION_*`, `DECISION_LANGUAGE`, `PII_DETECTED`,
-`PROTECTED_ATTRIBUTE`); nothing is persisted. Revision mismatch returns `409`
+`PROTECTED_ATTRIBUTE`, `FAIR_LENDING_PROXY`, `INTERNAL_REFERENCE`); nothing is persisted. Revision mismatch returns `409`
 `VERSION_CONFLICT`, a live draft already exists `409` `DRAFT_EXISTS`, and a
 terminal artifact `409` `ARTIFACT_IMMUTABLE`.
+
+### Adverse action (EN-08 / E4)
+
+Officer only. `POST /api/assist/cases/:id/adverse-action` builds a
+deterministic adverse-action letter from the terminal declined decision: 3-4
+principal reasons selected from the decision reason codes via the EN-08
+taxonomy, each cited to decision-reason evidence. The case must be
+`declined`; anything else returns 409 `CASE_NOT_DECLINED`. Success persists
+an `adverse_action_letter` draft artifact and returns `201`:
+
+```json
+{
+	"artifact": { "id": "<uuid>", "version": 1 },
+	"principalReasons": [{ "code": "SCORE_TOO_LOW", "category": "...", "text": "..." }],
+	"droppedReasonCodes": ["SECTOR_RISK"],
+	"decisionId": "<uuid>",
+	"jurisdiction": "SG",
+	"profileVersion": "sg-feat-v2"
+}
+```
+
+Artifact content: `title`, `applicantName`, `decisionId`, `jurisdiction`,
+`profileVersion`, `decision`, `principalReasons[]` (`code`, `text`,
+`citations`), `notices[]`, `contactPath`, `openItems`. `title` and `notices`
+must match the profile exactly; `contactPath` must match
+`ASSIST_ADVERSE_CONTACT_PATH`.
+
+Fail-closed errors: `CASE_NOT_DECLINED` 409 (case or decision not declined),
+`JURISDICTION_UNSUPPORTED` 409 (configured jurisdiction has no profile),
+`DISCLOSURE_UNAVAILABLE` 422 (profile not approved or contact path missing),
+`NEEDS_OFFICER_INPUT` 422 (unmapped/insufficient reason codes, missing
+applicant name), `FAIR_LENDING_BLOCKED` 422 (deny-list or proxy hit on inputs),
+`ADVERSE_PROFILE_INVALID` 422 (edit/approve drifts off the jurisdiction
+profile, title, or notices), `ADVERSE_DECISION_MISMATCH` 422 (edit/approve
+changes `decisionId`, invents a reason outside the decision, rewrites the
+approved reason text, cites a different decision reason, or changes the contact
+path; issue codes include `DECISION_ID_MISMATCH`,
+`REASON_CODE_NOT_IN_DECISION`, `REASON_TEXT_MISMATCH`,
+`CITATION_NOT_DECISION_REASON`, `CONTACT_PATH_MISMATCH`). Generic
+`POST /api/assist/cases/:id/artifacts` no longer creates
+`adverse_action_letter` — it returns 422 `DEDICATED_ROUTE_REQUIRED`. Edits and
+approval still go through the existing artifact routes (`PATCH`, `/approve`);
+both re-run the profile and decision binding, approved letters are immutable,
+and edits create a new version. Generation-blocked fair-lending hits write an
+`artifact.generate_blocked` audit row; edit/approve blocks write
+`artifact.edit_blocked` / `artifact.approve_blocked`.
 
 Internal service-only routes: `POST /internal/assist/artifacts/:id/holds`,
 `POST /internal/assist/artifacts/:id/holds/:holdId/release`, and

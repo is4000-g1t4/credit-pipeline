@@ -1,0 +1,216 @@
+{
+  "summary": {
+    "feature": "adverse-action EN-08 letter builder and validator",
+    "archetype": "pure gate/classifier",
+    "model": "deterministic",
+    "costUsd": 0,
+    "n": 19,
+    "trials": 3,
+    "passAt1": 1,
+    "passAt3": 1,
+    "accepted": 3,
+    "safetyPass": 1,
+    "falsePositive": 0,
+    "falseNegative": 0,
+    "unsupportedClaimCount": 0,
+    "citationCoverage": 1,
+    "byCode": {
+      "ADVERSE_DECISION_MISMATCH/CITATION_NOT_DECISION_REASON": 1,
+      "ADVERSE_DECISION_MISMATCH/CONTACT_PATH_MISMATCH": 1,
+      "ADVERSE_DECISION_MISMATCH/DECISION_ID_MISMATCH": 1,
+      "ADVERSE_DECISION_MISMATCH/REASON_CODE_NOT_IN_DECISION": 1,
+      "ADVERSE_DECISION_MISMATCH/REASON_TEXT_MISMATCH": 1,
+      "FAIR_LENDING_BLOCKED": 2,
+      "FAIR_LENDING_PROXY": 1,
+      "INTERNAL_REFERENCE": 1,
+      "NEEDS_OFFICER_INPUT": 1,
+      "NEEDS_OFFICER_INPUT/insufficient_reasons": 1,
+      "NEEDS_OFFICER_INPUT/insufficient_specificity": 1,
+      "NEEDS_OFFICER_INPUT/missingCitationCodes": 1,
+      "NEEDS_OFFICER_INPUT/unmapped_code": 1,
+      "NOT_DECLINED": 1,
+      "PROTECTED_ATTRIBUTE": 1,
+      "accept": 3
+    },
+    "failures": []
+  },
+  "cases": [
+    {
+      "id": "sg-success-3",
+      "expected": "accept",
+      "observed": "accept",
+      "pass": true,
+      "tags": [
+        "happy",
+        "sg"
+      ]
+    },
+    {
+      "id": "us-success-4",
+      "expected": "accept",
+      "observed": "accept",
+      "pass": true,
+      "tags": [
+        "happy",
+        "us"
+      ]
+    },
+    {
+      "id": "too-few-reasons",
+      "expected": "NEEDS_OFFICER_INPUT/insufficient_reasons",
+      "observed": "NEEDS_OFFICER_INPUT/insufficient_reasons",
+      "pass": true,
+      "tags": [
+        "gate"
+      ]
+    },
+    {
+      "id": "unmapped-code",
+      "expected": "NEEDS_OFFICER_INPUT/unmapped_code",
+      "observed": "NEEDS_OFFICER_INPUT/unmapped_code",
+      "pass": true,
+      "tags": [
+        "gate"
+      ]
+    },
+    {
+      "id": "generic-only",
+      "expected": "NEEDS_OFFICER_INPUT/insufficient_specificity",
+      "observed": "NEEDS_OFFICER_INPUT/insufficient_specificity",
+      "pass": true,
+      "tags": [
+        "gate"
+      ]
+    },
+    {
+      "id": "protected-label",
+      "expected": "FAIR_LENDING_BLOCKED",
+      "observed": "FAIR_LENDING_BLOCKED",
+      "pass": true,
+      "tags": [
+        "fair-lending"
+      ]
+    },
+    {
+      "id": "proxy-label",
+      "expected": "FAIR_LENDING_BLOCKED",
+      "observed": "FAIR_LENDING_BLOCKED",
+      "pass": true,
+      "tags": [
+        "fair-lending"
+      ]
+    },
+    {
+      "id": "missing-citation",
+      "expected": "NEEDS_OFFICER_INPUT/missingCitationCodes",
+      "observed": "NEEDS_OFFICER_INPUT/missingCitationCodes",
+      "pass": true,
+      "tags": [
+        "citation"
+      ]
+    },
+    {
+      "id": "approved-decision",
+      "expected": "NOT_DECLINED",
+      "observed": "NOT_DECLINED",
+      "pass": true,
+      "tags": [
+        "gate"
+      ]
+    },
+    {
+      "id": "missing-name",
+      "expected": "NEEDS_OFFICER_INPUT",
+      "observed": "NEEDS_OFFICER_INPUT",
+      "pass": true,
+      "tags": [
+        "gate"
+      ]
+    },
+    {
+      "id": "validator-valid-sg",
+      "expected": "accept",
+      "observed": "accept",
+      "pass": true,
+      "tags": [
+        "happy",
+        "validator"
+      ]
+    },
+    {
+      "id": "validator-protected",
+      "expected": "PROTECTED_ATTRIBUTE",
+      "observed": "PROTECTED_ATTRIBUTE",
+      "pass": true,
+      "tags": [
+        "fair-lending",
+        "validator"
+      ]
+    },
+    {
+      "id": "validator-proxy",
+      "expected": "FAIR_LENDING_PROXY",
+      "observed": "FAIR_LENDING_PROXY",
+      "pass": true,
+      "tags": [
+        "fair-lending",
+        "validator"
+      ]
+    },
+    {
+      "id": "validator-internal-reference",
+      "expected": "INTERNAL_REFERENCE",
+      "observed": "INTERNAL_REFERENCE",
+      "pass": true,
+      "tags": [
+        "internal",
+        "validator"
+      ]
+    },
+    {
+      "id": "binding-forged-decision-id",
+      "expected": "ADVERSE_DECISION_MISMATCH/DECISION_ID_MISMATCH",
+      "observed": "ADVERSE_DECISION_MISMATCH/DECISION_ID_MISMATCH",
+      "pass": true,
+      "tags": [
+        "binding"
+      ]
+    },
+    {
+      "id": "binding-invented-code",
+      "expected": "ADVERSE_DECISION_MISMATCH/REASON_CODE_NOT_IN_DECISION",
+      "observed": "ADVERSE_DECISION_MISMATCH/REASON_CODE_NOT_IN_DECISION",
+      "pass": true,
+      "tags": [
+        "binding"
+      ]
+    },
+    {
+      "id": "binding-wrong-citation",
+      "expected": "ADVERSE_DECISION_MISMATCH/CITATION_NOT_DECISION_REASON",
+      "observed": "ADVERSE_DECISION_MISMATCH/CITATION_NOT_DECISION_REASON",
+      "pass": true,
+      "tags": [
+        "binding"
+      ]
+    },
+    {
+      "id": "binding-forged-text",
+      "expected": "ADVERSE_DECISION_MISMATCH/REASON_TEXT_MISMATCH",
+      "observed": "ADVERSE_DECISION_MISMATCH/REASON_TEXT_MISMATCH",
+      "pass": true,
+      "tags": [
+        "binding"
+      ]
+    },
+    {
+      "id": "binding-contact-path",
+      "expected": "ADVERSE_DECISION_MISMATCH/CONTACT_PATH_MISMATCH",
+      "observed": "ADVERSE_DECISION_MISMATCH/CONTACT_PATH_MISMATCH",
+      "pass": true,
+      "tags": [
+        "binding"
+      ]
+    }
+  ]
+}

@@ -12,7 +12,15 @@ export interface AssistConfig {
 	internalSecret: string;
 	model: string;
 	promptVersion: string;
+	/** EN-08 adverse-action profile selection. */
+	adverseJurisdiction: string;
+	adverseContactPath: string;
+	adversePromptVersion: string;
 }
+
+/** Metadata-only audit additions. Never include generated text, document
+ * text, or applicant PII. */
+export type ArtifactAuditMetadata = Record<string, string | number | boolean | string[] | null>;
 
 export interface AssistRuntime {
 	config: AssistConfig;

@@ -101,7 +101,7 @@ Phase 2 research state lives entirely in `credit_research`; no events are emitte
 - Finding reviews are append-only (`agent_finding_reviews`); the latest action per finding wins. Views are per officer/run/minute (`agent_run_views`); the decision bundle's `viewedAt` is the deciding officer's latest view.
 - The frozen bundle (`researchBundleSchema`) is built server-side at decision time, narrowed to exactly the accepted finding ids, and copied into the officer decision snapshot (approve via `bookLoan`, decline via `persistOfficerDecline`). The public selection (`agentRunId` + `acceptedFindingIds`) never reaches the workflow.
 
-## Generated artifacts (EN-01/02/03)
+## Generated artifacts (EN-01/02/03, EN-08)
 
 Generated artifacts stay in `credit_applications` because they are case-scoped
 and must be deleted under the same retention/legal-hold regime.
@@ -125,6 +125,20 @@ and must be deleted under the same retention/legal-hold regime.
   action.
 - Generation provenance is metadata only; no prompt, generated text, document
   quote, or applicant PII goes to logs or Grafana.
+- `adverse_action_letter` artifacts are created only by
+  `POST /api/assist/cases/:id/adverse-action` from the terminal declined
+  decision. Decision reasons and negative snapshot factors are citable
+  `score_reason` evidence (`kind: decision_reason` / `decision_factor`,
+  `scoreId = decision.id`). Approval is immutable: edits create a new version
+  under the same retention/legal-hold regime, and edit/approve re-bind the
+  letter to the decision and active profile.
+- Adverse-action audit rows are metadata only: `decisionId`, `reasonCodes`,
+  `droppedReasonCodes`, `jurisdiction`, `profileVersion`, `profileWordingHash`,
+  `legalReviewRef`, `policyVersion`, `scorecardVersion`, `taxonomyVersion`,
+  `citationRefs`, `fairLendingScan`, `fairLendingDenyListVersion` — never letter
+  text.
+  Generation failures write `artifact.generate_blocked`; edit/approve failures
+  write `artifact.edit_blocked` / `artifact.approve_blocked` with issue codes.
 
 ## PII allowlist
 

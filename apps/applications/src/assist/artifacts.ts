@@ -15,7 +15,7 @@ import { HttpError, writeAudit } from "@credit/service-kit";
 import { and, desc, eq, isNull, lte, sql } from "drizzle-orm";
 import { lockApplication } from "../documents/access.js";
 import { LockTimeout } from "../documents/pipeline.js";
-import type { ArtifactDto, ArtifactStatus, ArtifactType } from "./types.js";
+import type { ArtifactAuditMetadata, ArtifactDto, ArtifactStatus, ArtifactType } from "./types.js";
 
 const ARTIFACT_LOCK_TIMEOUT_MS = 5_000;
 
@@ -30,6 +30,7 @@ export interface CreateArtifactInput {
 	model: string;
 	promptVersion: string;
 	retentionDays: number;
+	auditMetadata?: ArtifactAuditMetadata;
 	now?: Date;
 }
 
@@ -44,6 +45,7 @@ export interface UpdateArtifactInput {
 	model: string;
 	promptVersion: string;
 	retentionDays: number;
+	auditMetadata?: ArtifactAuditMetadata;
 	now?: Date;
 }
 
@@ -209,6 +211,7 @@ export async function createArtifact(db: Db, input: CreateArtifactInput): Promis
 			action: "artifact.created",
 			entity: "generated_artifact",
 			payload: {
+				...input.auditMetadata,
 				feature: "assist",
 				artifactId: row.id,
 				applicationId: input.applicationId,
@@ -279,6 +282,7 @@ export async function updateArtifact(
 				action: "artifact.version_created",
 				entity: "generated_artifact",
 				payload: {
+					...input.auditMetadata,
 					feature: "assist",
 					artifactId: created.id,
 					baseArtifactId: row.id,
@@ -325,6 +329,7 @@ export async function updateArtifact(
 			action: "artifact.edited",
 			entity: "generated_artifact",
 			payload: {
+				...input.auditMetadata,
 				feature: "assist",
 				artifactId: row.id,
 				applicationId: row.applicationId,
@@ -342,7 +347,14 @@ export async function updateArtifact(
 
 export async function approveArtifact(
 	db: Db,
-	input: { id: string; actor: string; actorRole?: string; expectedRevision: number; now?: Date },
+	input: {
+		id: string;
+		actor: string;
+		actorRole?: string;
+		expectedRevision: number;
+		auditMetadata?: ArtifactAuditMetadata;
+		now?: Date;
+	},
 ): Promise<ArtifactDto> {
 	const now = input.now ?? new Date();
 	return artifactTx(db, async (tx) => {
@@ -403,6 +415,7 @@ export async function approveArtifact(
 			action: "artifact.approved",
 			entity: "generated_artifact",
 			payload: {
+				...input.auditMetadata,
 				feature: "assist",
 				artifactId: row.id,
 				applicationId: row.applicationId,

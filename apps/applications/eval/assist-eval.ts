@@ -5,6 +5,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
+	ADVERSE_JURISDICTION_PROFILES,
 	hashQuote,
 	sourceRefKey,
 	validateGeneratedText,
@@ -195,6 +196,9 @@ function adverseLetter(): AdverseActionLetterContent {
 	return {
 		title: "Adverse action notice",
 		applicantName: "Tomas Aurora",
+		decisionId: "77777777-7777-4777-8777-777777777777",
+		jurisdiction: "US",
+		profileVersion: "us-ecoa-v2",
 		decision: "declined",
 		principalReasons: [
 			{
@@ -213,7 +217,7 @@ function adverseLetter(): AdverseActionLetterContent {
 				citations: [cite(refs.amount)],
 			},
 		],
-		notices: ["You may request a review of this outcome."],
+		notices: ADVERSE_JURISDICTION_PROFILES.US.disclosures.map((disclosure) => disclosure.text),
 		contactPath: "https://example.com/contact",
 		openItems: [],
 	};

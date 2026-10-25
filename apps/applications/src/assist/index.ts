@@ -1,4 +1,5 @@
 export { requireAssistCaseAccess, requireMemoableCase, type AssistActor } from "./access.js";
+export { buildAdverseActionLetter, type BuildAdverseLetterInput } from "./adverse.js";
 export {
 	approveArtifact,
 	createArtifact,

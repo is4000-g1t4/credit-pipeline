@@ -11,6 +11,7 @@ import {
 	type EvidenceBundle,
 	type UnavailableSource,
 } from "./evidence.js";
+import { FAIR_LENDING_PROXY_RE, PROTECTED_ATTRIBUTE_RE } from "./fair-lending.js";
 
 export const ARTIFACT_TYPES = [
 	"credit_memo",
@@ -30,6 +31,8 @@ export const VALIDATION_CODES = [
 	"DECISION_LANGUAGE",
 	"PII_DETECTED",
 	"PROTECTED_ATTRIBUTE",
+	"FAIR_LENDING_PROXY",
+	"INTERNAL_REFERENCE",
 ] as const;
 
 export type ValidationCode = (typeof VALIDATION_CODES)[number];
@@ -177,6 +180,10 @@ export const adverseActionLetterContentSchema = z
 	.object({
 		title: z.string().min(1).max(200),
 		applicantName: z.string().min(1).max(200),
+		/** Structured provenance, never scanned as free text. */
+		decisionId: z.uuid(),
+		jurisdiction: z.string().regex(/^[A-Z]{2}$/),
+		profileVersion: z.string().min(1).max(80),
 		/** Structured outcome, not scanned as free text. */
 		decision: z.enum(["declined", "not_successful"]),
 		principalReasons: z
@@ -217,13 +224,21 @@ const SCHEMAS = {
 const DECISION_LANGUAGE_RE =
 	/\b(?:approv(?:e|ed|es|al|ing)|declin(?:e|ed|es|ing)|reject(?:ed|ion|ing|s)?|recommend(?:ed|ation|ations|ing|s)?|decision(?:s)?|scor(?:e|ed|es|ing)|rat(?:e|ed|es|ing)|limit(?:s|ed)?|terms?)\b/i;
 
-const PROTECTED_ATTRIBUTE_RE =
-	/\b(?:gender|male|female|sex|sexual|age|ages|aged|race|racial|ethnicity|ethnic|religion|religious|marital|married|divorced|single|nationality|national origin|citizenship|disabilit(?:y|ies)|disabled|pregnan(?:t|cy)|genetic|veteran|date of birth|dob)\b/i;
+/** Internal risk grades, model names, and policy identifiers must never
+ * appear in applicant-facing prose. */
+const INTERNAL_REFERENCE_RE =
+	/\b(?:scorecard(?:[\s-]\S+)?|model(?:\s+version)?|risk\s+grade|grade\s+[A-E]\b|internal\s+(?:policy|risk|model)|policy\s+(?:id|code|section|exception)|exception\s+\d+|exc[\s-]*\d+)\b/i;
 
 /** Underscores/hyphens are word characters for `\b`; normalise identifiers
  * so `marital_status`, `decision_language`, and `long-term` cannot slip past. */
 function scanNormalize(text: string): string {
 	return text.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replaceAll(/[_-]+/g, " ");
+}
+
+/** Shared by the validator and the taxonomy tests, so a change to the banned
+ * list cannot leave the test asserting an old copy. */
+export function containsDecisionLanguage(text: string): boolean {
+	return DECISION_LANGUAGE_RE.test(scanNormalize(text));
 }
 
 const EMAIL_RE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
@@ -262,6 +277,11 @@ interface TextNode {
 	allowContactPii?: boolean;
 	/** Adverse-action notices may legitimately say "review this decision". */
 	allowDecisionLanguage?: boolean;
+	/** Structured identity/contact fields are not reason prose; a company
+	 * called "Single Origin Coffee" must not trip the fair-lending list. */
+	skipFairLending?: boolean;
+	/** The same structured fields are not internal-reference prose. */
+	skipInternalReference?: boolean;
 }
 
 /** Case-scoped PII values the generated prose must not repeat. The evidence
@@ -333,17 +353,42 @@ function openItemRefs(
 }
 
 function textNodes(artifactType: ArtifactType, content: GeneratedContent): TextNode[] {
-	const nodes: TextNode[] = [{ path: "title", text: content.title }];
+	// Memos are officer-facing and may legitimately cite policy sections;
+	// the internal-reference scan is an applicant-letter control.
+	const memoNode = artifactType !== "adverse_action_letter";
+	const nodes: TextNode[] = [
+		{
+			path: "title",
+			text: content.title,
+			skipInternalReference: memoNode,
+			// The adverse title is profile-controlled, not free prose.
+			allowDecisionLanguage: artifactType === "adverse_action_letter",
+		},
+	];
 	if (artifactType === "adverse_action_letter") {
 		const letter = content as AdverseActionLetterContent;
-		nodes.push({ path: "applicantName", text: letter.applicantName, allowKnownPii: true });
+		nodes.push({
+			path: "applicantName",
+			text: letter.applicantName,
+			allowKnownPii: true,
+			allowDecisionLanguage: true,
+			skipFairLending: true,
+			skipInternalReference: true,
+		});
 		for (const [index, reason] of letter.principalReasons.entries()) {
 			nodes.push({ path: `principalReasons.${index}.text`, text: reason.text });
 		}
 		for (const [index, notice] of letter.notices.entries()) {
 			nodes.push({ path: `notices.${index}`, text: notice, allowDecisionLanguage: true });
 		}
-		nodes.push({ path: "contactPath", text: letter.contactPath, allowContactPii: true });
+		nodes.push({
+			path: "contactPath",
+			text: letter.contactPath,
+			allowContactPii: true,
+			allowDecisionLanguage: true,
+			skipFairLending: true,
+			skipInternalReference: true,
+		});
 		for (const [index, item] of letter.openItems.entries()) {
 			nodes.push({ path: `openItems.${index}.text`, text: item.text });
 		}
@@ -351,18 +396,30 @@ function textNodes(artifactType: ArtifactType, content: GeneratedContent): TextN
 	}
 	const document = content as CreditMemoContent | PolicyExceptionMemoContent;
 	for (const [sectionIndex, section] of document.sections.entries()) {
-		nodes.push({ path: `sections.${sectionIndex}.title`, text: section.title });
+		nodes.push({
+			path: `sections.${sectionIndex}.title`,
+			text: section.title,
+			skipInternalReference: true,
+		});
 		for (const [claimIndex, claim] of section.claims.entries()) {
-			nodes.push({ path: `sections.${sectionIndex}.claims.${claimIndex}.text`, text: claim.text });
+			nodes.push({
+				path: `sections.${sectionIndex}.claims.${claimIndex}.text`,
+				text: claim.text,
+				skipInternalReference: true,
+			});
 		}
 	}
 	for (const [index, item] of document.openItems.entries()) {
-		nodes.push({ path: `openItems.${index}.text`, text: item.text });
+		nodes.push({ path: `openItems.${index}.text`, text: item.text, skipInternalReference: true });
 	}
 	if (artifactType === "credit_memo") {
 		const memo = content as CreditMemoContent;
 		for (const [index, question] of memo.officerQuestions.entries()) {
-			nodes.push({ path: `officerQuestions.${index}`, text: question });
+			nodes.push({
+				path: `officerQuestions.${index}`,
+				text: question,
+				skipInternalReference: true,
+			});
 		}
 	}
 	return nodes;
@@ -524,18 +581,32 @@ export function validateGeneratedText(input: {
 	const piiValues = knownPii(input.evidence).map((value) => scanNormalize(value).toLowerCase());
 	for (const node of textNodes(input.artifactType, content)) {
 		const scanned = scanNormalize(node.text);
-		if (!node.allowDecisionLanguage && DECISION_LANGUAGE_RE.test(scanned)) {
+		if (!node.allowDecisionLanguage && containsDecisionLanguage(node.text)) {
 			issues.push({
 				code: "DECISION_LANGUAGE",
 				path: node.path,
 				message: "text contains decision language",
 			});
 		}
-		if (PROTECTED_ATTRIBUTE_RE.test(scanned)) {
+		if (!node.skipFairLending && PROTECTED_ATTRIBUTE_RE.test(scanned)) {
 			issues.push({
 				code: "PROTECTED_ATTRIBUTE",
 				path: node.path,
-				message: "text contains a protected attribute or proxy",
+				message: "text contains a protected attribute",
+			});
+		}
+		if (!node.skipFairLending && FAIR_LENDING_PROXY_RE.test(scanned)) {
+			issues.push({
+				code: "FAIR_LENDING_PROXY",
+				path: node.path,
+				message: "text contains a common fair-lending proxy",
+			});
+		}
+		if (!node.skipInternalReference && INTERNAL_REFERENCE_RE.test(scanned)) {
+			issues.push({
+				code: "INTERNAL_REFERENCE",
+				path: node.path,
+				message: "text contains an internal risk, model, or policy reference",
 			});
 		}
 		if (!node.allowContactPii && hasDirectIdentifier(node.text)) {
