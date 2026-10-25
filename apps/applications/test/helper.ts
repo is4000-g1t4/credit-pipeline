@@ -12,7 +12,7 @@ import { createDb } from "@credit/db";
 import { createLogger, signInternalHeaders } from "@credit/service-kit";
 import { stubGateway, type FakeGateway } from "@credit/service-kit/test";
 import { createApp } from "../src/app.js";
-import type { AssistConfig, MemoModel } from "../src/assist/index.js";
+import type { AssistConfig, MemoAgentRunner } from "../src/assist/index.js";
 import type { CustomerConfig } from "../src/customer/service.js";
 import type { OcrAdapter } from "../src/documents/ocr.js";
 import type { ScannerAdapter } from "../src/documents/scanner.js";
@@ -51,7 +51,7 @@ export interface SetupOpts {
 	/** EN-01/02/03 assist overrides (flag, clock, research upstream, memo model). */
 	assist?: {
 		config?: Partial<AssistConfig>;
-		memoModel?: MemoModel;
+		memoAgentRunner?: MemoAgentRunner;
 		now?: () => Date;
 		researchFetchImpl?: typeof fetch;
 	};

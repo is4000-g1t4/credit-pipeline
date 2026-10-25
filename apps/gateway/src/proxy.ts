@@ -25,6 +25,9 @@ export const LONG_UPSTREAM_TIMEOUT_MS = 45_000;
 /** Document uploads run scan+OCR synchronously (≤35s server-side); the
  * proxy bound stays above it with headroom for the encrypted download. */
 export const DOCUMENT_UPSTREAM_TIMEOUT_MS = 50_000;
+/** Agentic memo generation can run a bounded multi-step tool loop; keep the
+ * gateway bound above the applications-side memo timeout. */
+export const ASSIST_UPSTREAM_TIMEOUT_MS = 120_000;
 
 function signedHeaders(
 	deps: GatewayDeps,

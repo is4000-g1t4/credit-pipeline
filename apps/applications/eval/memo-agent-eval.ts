@@ -1,8 +1,9 @@
 // Agentic memo eval (scripted mechanics, no network, no live model).
 // Archetype: bounded tool-loop harness. Cases drive the production
-// `runMemoAgent` with a scripted fake MemoModel and grade the production
-// `validateGeneratedText` outcome (accept vs typed agent error), plus
-// tool/source coverage, gap retrieval, repair, citation, and safety stats.
+// `runMemoAgent` with a scripted fake MemoAgentRunner (executing the real
+// evidence tools) and grade the production `validateGeneratedText` outcome
+// (accept vs typed agent error), plus tool/source coverage, gap retrieval,
+// repair, citation, and safety stats.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
@@ -14,11 +15,15 @@ import {
 } from "@credit/core";
 import type { applications } from "@credit/db/applications";
 import {
+	MemoAgentError,
 	runMemoAgent,
 	type MemoAgentConfig,
 	type MemoAgentErrorCode,
+	type MemoAgentRunResult,
+	type MemoAgentRunner,
 } from "../src/assist/memo-agent.js";
-import { MemoModelError, type MemoModel } from "../src/assist/memo-model.js";
+import { runMemoEvidenceTool } from "../src/assist/memo-tools.js";
+import type { MemoAgentTrace } from "../src/assist/memo-trace.js";
 
 const APP_ID = "55555555-5555-4555-8555-555555555555";
 const SCORE_ID = "33333333-3333-4333-8333-333333333333";
@@ -62,10 +67,10 @@ function item(
 	metadata: Record<string, string | number | boolean | null> = {},
 ): EvidenceItem {
 	return {
-		ref,
 		sourceType,
 		label,
 		content,
+		ref,
 		access: { retentionUntil: null, legalHold: false },
 		metadata,
 	};
@@ -228,34 +233,47 @@ const decisionMemo = (): Record<string, unknown> =>
 		claim["text"] = "The application is approved for USD 60,000.00.";
 	});
 
-interface ScriptedStep {
-	content?: string | null;
-	toolCalls?: Array<{ name: string; arguments?: unknown }>;
-	error?: MemoModelError;
+interface ScriptedRun {
+	tools?: Array<{ name: string; args?: unknown }>;
+	draft?: string;
+	error?: Error;
 }
 
-function scriptedModel(steps: ScriptedStep[]): { model: MemoModel; drafts: Array<string | null> } {
-	const drafts: Array<string | null> = [];
+/** Scripted runner: tools execute the production `runMemoEvidenceTool`
+ * against the fixed bundle, so coverage stays faithful without a model. */
+function scriptedRunner(runs: ScriptedRun[]): {
+	runner: MemoAgentRunner;
+	drafts: string[];
+} {
+	const drafts: string[] = [];
 	let index = 0;
 	return {
 		drafts,
-		model: {
-			async complete(input) {
-				for (const message of input.messages) {
-					if (message.role === "assistant" && typeof message.content === "string") {
-						drafts.push(message.content);
-					}
-				}
-				const step = steps[Math.min(index, steps.length - 1)];
+		runner: {
+			async run(input): Promise<MemoAgentRunResult> {
+				const run = runs[Math.min(index, runs.length - 1)];
 				index += 1;
-				if (step.error) throw step.error;
+				if (!run) throw new MemoAgentError("MODEL_ERROR");
+				if (run.error) throw run.error;
+				const toolCalls: MemoAgentTrace["toolCalls"] = [];
+				const refs = new Set<string>();
+				for (const call of run.tools ?? []) {
+					const outcome = runMemoEvidenceTool(call.name, call.args ?? {}, input.evidence);
+					toolCalls.push({
+						step: toolCalls.length + 1,
+						name: call.name.slice(0, 80),
+						resultCount: outcome.resultCount,
+						sourceTypes: outcome.sourceTypes,
+					});
+					for (const ref of outcome.refs) refs.add(ref);
+				}
+				const rawOutput = run.draft ?? "";
+				drafts.push(rawOutput);
 				return {
-					content: step.content ?? null,
-					toolCalls: (step.toolCalls ?? []).map((call, callIndex) => ({
-						id: `call_${index}_${callIndex}`,
-						name: call.name,
-						arguments: call.arguments ?? {},
-					})),
+					rawOutput,
+					toolCalls,
+					sourceRefs: [...refs].sort(),
+					steps: toolCalls.length + 1,
 					usage: { inputTokens: 10, outputTokens: 20, costUsd: 0 },
 				};
 			},
@@ -278,7 +296,7 @@ function agentConfig(over: Partial<MemoAgentConfig> = {}): MemoAgentConfig {
 
 interface AgentEvalCase {
 	id: string;
-	steps: ScriptedStep[];
+	runs: ScriptedRun[];
 	config?: Partial<MemoAgentConfig>;
 	expected: "accept" | MemoAgentErrorCode;
 	tags: string[];
@@ -286,60 +304,61 @@ interface AgentEvalCase {
 
 function cases(): AgentEvalCase[] {
 	const valid = JSON.stringify(validMemo());
+	const list = { name: "list_evidence" };
 	return [
 		{
 			id: "happy-tool-use",
-			steps: [{ toolCalls: [{ name: "list_evidence", arguments: {} }] }, { content: valid }],
+			runs: [{ tools: [list], draft: valid }],
 			expected: "accept",
 			tags: ["happy"],
 		},
 		{
 			// First listing surfaces a gap; the model retrieves before drafting.
 			id: "gap-second-retrieval",
-			steps: [
-				{ toolCalls: [{ name: "list_evidence", arguments: {} }] },
-				{ toolCalls: [{ name: "search_evidence", arguments: { query: "revenue" } }] },
-				{ toolCalls: [{ name: "get_evidence", arguments: { ref: REVENUE_REF } }] },
-				{ content: valid },
+			runs: [
+				{
+					tools: [
+						list,
+						{ name: "search_evidence", args: { query: "revenue" } },
+						{ name: "get_evidence", args: { ref: REVENUE_REF } },
+					],
+					draft: valid,
+				},
 			],
 			expected: "accept",
 			tags: ["happy", "gap-retrieval"],
 		},
 		{
 			id: "repair-then-valid",
-			steps: [
-				{ toolCalls: [{ name: "list_evidence", arguments: {} }] },
-				{ content: JSON.stringify(unsupportedMemo()) },
-				{ content: valid },
-			],
+			runs: [{ tools: [list], draft: JSON.stringify(unsupportedMemo()) }, { draft: valid }],
 			expected: "accept",
 			tags: ["repair"],
 		},
 		{
 			id: "no-tool-failure",
-			steps: [{ content: valid }],
+			runs: [{ draft: valid }, { draft: valid }],
 			expected: "NO_TOOL_USE",
 			tags: ["failure"],
 		},
 		{
 			id: "invalid-after-repair",
-			steps: [
-				{ toolCalls: [{ name: "list_evidence", arguments: {} }] },
-				{ content: JSON.stringify(unsupportedMemo()) },
-				{ content: "not json at all" },
+			runs: [
+				{ tools: [list], draft: JSON.stringify(unsupportedMemo()) },
+				{ draft: "not json at all" },
 			],
 			expected: "INVALID_OUTPUT",
 			tags: ["failure"],
 		},
 		{
 			id: "bound-exceeded",
-			steps: [
+			runs: [
 				{
-					toolCalls: [
-						{ name: "list_evidence", arguments: {} },
-						{ name: "search_evidence", arguments: { query: "revenue" } },
-						{ name: "get_evidence", arguments: { ref: AMOUNT_REF } },
+					tools: [
+						list,
+						{ name: "search_evidence", args: { query: "revenue" } },
+						{ name: "get_evidence", args: { ref: AMOUNT_REF } },
 					],
+					draft: valid,
 				},
 			],
 			config: { maxToolCalls: 2 },
@@ -349,10 +368,9 @@ function cases(): AgentEvalCase[] {
 		{
 			// Exact-quote mismatch persists through the single repair attempt.
 			id: "citation-mismatch",
-			steps: [
-				{ toolCalls: [{ name: "list_evidence", arguments: {} }] },
-				{ content: JSON.stringify(mismatchMemo()) },
-				{ content: JSON.stringify(mismatchMemo()) },
+			runs: [
+				{ tools: [list], draft: JSON.stringify(mismatchMemo()) },
+				{ draft: JSON.stringify(mismatchMemo()) },
 			],
 			expected: "INVALID_OUTPUT",
 			tags: ["failure", "citation"],
@@ -362,11 +380,12 @@ function cases(): AgentEvalCase[] {
 			// The repair turn also grounds the draft: it retrieves the cited
 			// refs and every evidence category before rewriting.
 			id: "decision-language-repair",
-			steps: [
-				{ toolCalls: [{ name: "get_evidence", arguments: { ref: AMOUNT_REF } }] },
-				{ content: JSON.stringify(decisionMemo()) },
-				{ toolCalls: [{ name: "list_evidence", arguments: {} }] },
-				{ content: valid },
+			runs: [
+				{
+					tools: [{ name: "get_evidence", args: { ref: AMOUNT_REF } }],
+					draft: JSON.stringify(decisionMemo()),
+				},
+				{ tools: [list], draft: valid },
 			],
 			expected: "accept",
 			tags: ["repair", "safety"],
@@ -412,7 +431,7 @@ async function runOnce(evalCases: AgentEvalCase[]): Promise<TrialOutcome> {
 	let unsafeClosed = 0;
 
 	for (const testCase of evalCases) {
-		const { model, drafts } = scriptedModel(testCase.steps);
+		const { runner, drafts } = scriptedRunner(testCase.runs);
 		let observed = "threw";
 		let steps: number | null = null;
 		let toolCalls: number | null = null;
@@ -422,7 +441,7 @@ async function runOnce(evalCases: AgentEvalCase[]): Promise<TrialOutcome> {
 			const { content, trace } = await runMemoAgent({
 				application,
 				evidence: bundle,
-				model,
+				runner,
 				config: agentConfig(testCase.config),
 			});
 			const validation = validateGeneratedText({
@@ -464,7 +483,7 @@ async function runOnce(evalCases: AgentEvalCase[]): Promise<TrialOutcome> {
 			if (observed === "accept") unsafeClosed += 1;
 		}
 		// First-draft hygiene: count unsupported-claim drafts the loop caught.
-		const firstDraft = drafts.find((draft) => typeof draft === "string" && draft !== null);
+		const firstDraft = drafts.find((draft) => typeof draft === "string" && draft.length > 0);
 		if (typeof firstDraft === "string") {
 			try {
 				const parsed = JSON.parse(firstDraft) as unknown;
@@ -519,7 +538,7 @@ const mean = (pick: (trial: TrialOutcome) => number): number =>
 
 const summary = {
 	feature: "agentic credit memo",
-	archetype: "bounded tool loop over the evidence bundle (scripted model)",
+	archetype: "bounded tool loop over the evidence bundle (scripted runner)",
 	model: "scripted-fake",
 	costUsd: 0,
 	n: first.length,

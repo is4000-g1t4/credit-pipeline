@@ -139,8 +139,8 @@ adverse-action features lives in the applications service:
 
 `POST /api/assist/cases/:id/memos` is the end-to-end consumer: it assembles
 evidence, drafts with the configured writer (deterministic template by
-default, no LLM and no decision language; `ASSIST_MEMO_WRITER=agent` runs a
-bounded tool loop over allowlisted evidence tools with one
+default, no LLM and no decision language; `ASSIST_MEMO_WRITER=agent` runs the
+`@openai/agents` tool loop over allowlisted evidence tools with one
 validation/repair attempt), validates, and stores a draft artifact with its
 agent trace. Identical evidence replays the same artifact (`200 replayed`)
 instead of regenerating. It requires a `pending_review`

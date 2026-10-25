@@ -334,6 +334,9 @@ importers:
       '@credit/service-kit':
         specifier: workspace:*
         version: link:../../packages/service-kit
+      '@openai/agents':
+        specifier: 'catalog:'
+        version: 0.8.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(ws@8.22.0)(zod@4.6.7)
       '@t3-oss/env-core':
         specifier: 'catalog:'
         version: 0.13.11(typescript@7.0.2)(zod@4.6.7)
@@ -346,6 +349,9 @@ importers:
       hono:
         specifier: 'catalog:'
         version: 4.13.13
+      openai:
+        specifier: 'catalog:'
+        version: 6.27.0(ws@8.22.0)(zod@4.6.7)
       pdfjs-dist:
         specifier: 'catalog:'
         version: 6.4.299

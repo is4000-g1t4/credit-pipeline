@@ -502,9 +502,9 @@ export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
 		const documentDerived = evidence.items.some((item) => item.sourceType === "document");
 
 		if (config.memoWriter === "agent") {
-			const memoModel = runtime.memoModel;
+			const memoAgentRunner = runtime.memoAgentRunner;
 			// Fails closed without leaking config: no key names, no model ids.
-			if (!memoModel) {
+			if (!memoAgentRunner) {
 				throw new HttpError(503, "MEMO_AGENT_UNAVAILABLE", "memo agent is not configured");
 			}
 			let result: Awaited<ReturnType<typeof runMemoAgent>>;
@@ -512,7 +512,7 @@ export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
 				result = await runMemoAgent({
 					application: kase.application,
 					evidence,
-					model: memoModel,
+					runner: memoAgentRunner,
 					config: {
 						model: config.memoModel,
 						promptVersion: config.memoPromptVersion,

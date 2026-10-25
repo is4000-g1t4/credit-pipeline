@@ -1,6 +1,6 @@
 import type { CitationRecord } from "@credit/core";
 import type { generatedArtifacts } from "@credit/db/applications";
-import type { MemoModel } from "./memo-model.js";
+import type { MemoAgentRunner } from "./memo-agent.js";
 import type { MemoAgentTrace } from "./memo-trace.js";
 
 export type { MemoAgentTrace } from "./memo-trace.js";
@@ -44,8 +44,8 @@ export interface AssistRuntime {
 	/** Test seam; production uses the wall clock. */
 	now: () => Date;
 	researchFetchImpl?: typeof fetch;
-	/** Test seam for the agentic memo writer; routes build the OpenRouter model. */
-	memoModel?: MemoModel;
+	/** Test seam for the agentic memo writer; routes build the SDK runner. */
+	memoAgentRunner?: MemoAgentRunner;
 }
 
 /** Public artifact shape. Content is whatever the validated type schema

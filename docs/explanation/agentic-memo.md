@@ -40,13 +40,17 @@ contract and error codes), [configuration](../reference/configuration.md)
 
 ## Bounded tool loop
 
-The agent writer (`apps/applications/src/assist/memo-agent.ts`) runs a
-bounded loop over plain OpenRouter chat completions (`fetch`, no agent SDK):
+The agent writer (`memo-agent.ts` orchestrator + `memo-agent-sdk.ts`) uses
+`@openai/agents` (`Agent` + `OpenAIChatCompletionsModel` + `Runner` + `tool`)
+over the pure evidence tools. The orchestrator owns bounds, validation,
+grounding, repair, and the trace; the SDK runner produces one draft per run.
+The applications service is Bun, and the Agents SDK is Bun-compatible.
 
-- Max steps (`ASSIST_MEMO_MAX_STEPS`, default 8), max tool calls
-  (`ASSIST_MEMO_MAX_TOOL_CALLS`, default 12), wall-clock timeout
-  (`ASSIST_MEMO_TIMEOUT_MS`, default 45s), token/cost budget
-  (`ASSIST_MEMO_MAX_COST_USD`, default 0.25).
+- Max steps (`ASSIST_MEMO_MAX_STEPS`, default 24), max tool calls
+  (`ASSIST_MEMO_MAX_TOOL_CALLS`, default 24), wall-clock timeout
+  (`ASSIST_MEMO_TIMEOUT_MS`, default 90s), token/cost budget
+  (`ASSIST_MEMO_MAX_COST_USD`, default 0.25). The gateway proxy bound for
+  `/api/assist/*` is 120s.
 - Allowlisted evidence tools, all read-only over the passed bundle:
   `list_evidence` (refs, labels, types, counts), `search_evidence`
   (case-insensitive substring/token search, capped), `get_evidence` (exact

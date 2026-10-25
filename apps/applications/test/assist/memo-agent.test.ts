@@ -1,5 +1,6 @@
-// runMemoAgent unit tests: no DB, no network. A scripted fake MemoModel
-// drives the loop; evidence fixtures are built from EvidenceItem directly.
+// runMemoAgent unit tests: no DB, no network. A scripted fake
+// MemoAgentRunner drives the orchestrator; evidence fixtures are built from
+// EvidenceItem directly.
 import { describe, expect, it } from "vitest";
 import {
 	hashQuote,
@@ -10,17 +11,13 @@ import {
 } from "@credit/core";
 import type { applications } from "@credit/db/applications";
 import {
-	MEMO_AGENT_TOOLS,
 	MemoAgentError,
 	runMemoAgent,
 	type MemoAgentConfig,
+	type MemoAgentRunResult,
+	type MemoAgentRunner,
 } from "../../src/assist/memo-agent.js";
-import {
-	MemoModelError,
-	type MemoModel,
-	type MemoModelMessage,
-	type MemoToolDefinition,
-} from "../../src/assist/memo-model.js";
+import { MEMO_TOOL_NAMES } from "../../src/assist/memo-tools.js";
 import { evidenceHash } from "../../src/assist/memo-trace.js";
 
 type ApplicationRow = typeof applications.$inferSelect;
@@ -47,6 +44,26 @@ const COMPANY_REF = `case_fact:${APP_ID}:companyName`;
 const REVENUE_REF = `case_fact:${APP_ID}:business.annualRevenueCents`;
 const FACTOR_REF = `score_reason:${SCORE_ID}:BANK_RELATIONSHIP`;
 const FACTOR_CONTENT = "BANK_RELATIONSHIP +40";
+
+const ALL_TYPES = [
+	"case_fact",
+	"score_reason",
+	"document",
+	"context_signal",
+	"external_evidence",
+	"policy_section",
+];
+
+const ALL_CITED_REFS = [
+	AMOUNT_REF,
+	TERM_REF,
+	PRODUCT_REF,
+	INDUSTRY_REF,
+	COMPANY_REF,
+	REVENUE_REF,
+	FACTOR_REF,
+	POLICY_REF,
+];
 
 function fact(field: string, content: string): EvidenceItem {
 	return {
@@ -253,34 +270,47 @@ function invalidMemo(): Record<string, unknown> {
 	return memo;
 }
 
-interface ScriptedStep {
-	content?: string | null;
-	toolCalls?: Array<{ name: string; arguments?: unknown; id?: string }>;
+interface ScriptedRun {
+	rawOutput?: string;
+	tools?: Array<{ name: string; resultCount: number; sourceTypes: string[] }>;
+	sourceRefs?: string[];
+	steps?: number;
 	usage?: { inputTokens?: number; outputTokens?: number; costUsd?: number };
-	error?: MemoModelError | Error;
+	error?: Error;
 }
 
-function scriptedModel(steps: ScriptedStep[]): {
-	model: MemoModel;
-	calls: Array<{ messages: MemoModelMessage[]; tools: MemoToolDefinition[] }>;
+type RunnerInput = Parameters<MemoAgentRunner["run"]>[0];
+
+/** Scripted runner: each `run` call consumes the next scripted result and
+ * records its input (so tests can assert on the repair payload). */
+function scriptedRunner(script: ScriptedRun[]): {
+	runner: MemoAgentRunner;
+	inputs: RunnerInput[];
+	runCount: () => number;
 } {
-	const calls: Array<{ messages: MemoModelMessage[]; tools: MemoToolDefinition[] }> = [];
+	const inputs: RunnerInput[] = [];
 	let index = 0;
 	return {
-		calls,
-		model: {
-			async complete(input) {
-				calls.push({ messages: input.messages, tools: input.tools });
-				const step = steps[Math.min(index, steps.length - 1)];
+		inputs,
+		runCount: () => inputs.length,
+		runner: {
+			async run(runInput: RunnerInput): Promise<MemoAgentRunResult> {
+				inputs.push(runInput);
+				const step = script[Math.min(index, script.length - 1)];
 				index += 1;
+				if (!step) throw new MemoAgentError("MODEL_ERROR");
 				if (step.error) throw step.error;
+				const tools = step.tools ?? [];
 				return {
-					content: step.content ?? null,
-					toolCalls: (step.toolCalls ?? []).map((call, callIndex) => ({
-						id: call.id ?? `call_${index}_${callIndex}`,
+					rawOutput: step.rawOutput ?? "",
+					toolCalls: tools.map((call, callIndex) => ({
+						step: callIndex + 1,
 						name: call.name,
-						arguments: call.arguments ?? {},
+						resultCount: call.resultCount,
+						sourceTypes: call.sourceTypes,
 					})),
+					sourceRefs: step.sourceRefs ?? [],
+					steps: step.steps ?? tools.length + 1,
 					usage: {
 						inputTokens: step.usage?.inputTokens ?? 0,
 						outputTokens: step.usage?.outputTokens ?? 0,
@@ -292,26 +322,26 @@ function scriptedModel(steps: ScriptedStep[]): {
 	};
 }
 
-function lastUserMessage(calls: Array<{ messages: MemoModelMessage[] }>): string {
-	const messages = calls[calls.length - 1]?.messages ?? [];
-	const user = [...messages].reverse().find((message) => message.role === "user");
-	return typeof user?.content === "string" ? user.content : "";
+function listAll(resultCount = 13): NonNullable<ScriptedRun["tools"]> {
+	return [{ name: "list_evidence", resultCount, sourceTypes: ALL_TYPES }];
 }
 
 describe("runMemoAgent", () => {
 	it("completes the happy path with tool calls and a metadata-only trace", async () => {
 		const evidence = bundle();
-		const { model, calls } = scriptedModel([
+		const { runner, inputs } = scriptedRunner([
 			{
-				toolCalls: [{ name: "list_evidence", arguments: {} }],
-				usage: { inputTokens: 30, outputTokens: 10 },
+				rawOutput: JSON.stringify(validMemo()),
+				tools: listAll(),
+				sourceRefs: ALL_CITED_REFS,
+				steps: 2,
+				usage: { inputTokens: 60, outputTokens: 80 },
 			},
-			{ content: JSON.stringify(validMemo()), usage: { inputTokens: 30, outputTokens: 70 } },
 		]);
 		const { content, trace } = await runMemoAgent({
 			application: smeApp(),
 			evidence,
-			model,
+			runner,
 			config: agentConfig(),
 		});
 
@@ -324,13 +354,8 @@ describe("runMemoAgent", () => {
 			"risks",
 			"policy_compliance",
 		]);
-		expect(calls).toHaveLength(2);
-		expect(calls[0]?.tools.map((tool) => tool.name)).toEqual([
-			"list_evidence",
-			"search_evidence",
-			"get_evidence",
-			"list_unavailable",
-		]);
+		expect(inputs).toHaveLength(1);
+		expect(inputs[0]?.repair).toBeUndefined();
 		expect(trace.writer).toBe("agent");
 		expect(trace.agentVersion).toBe("memo-agent-v1");
 		expect(trace.model).toBe("test-model");
@@ -356,16 +381,26 @@ describe("runMemoAgent", () => {
 
 	it("repairs once when the first draft uses no tools", async () => {
 		const evidence = bundle();
-		const { model, calls } = scriptedModel([
-			{ content: JSON.stringify(validMemo()) },
-			{ toolCalls: [{ name: "list_evidence", arguments: {} }] },
-			{ content: JSON.stringify(validMemo()) },
+		const { runner, inputs } = scriptedRunner([
+			{ rawOutput: JSON.stringify(validMemo()), steps: 1 },
+			{
+				rawOutput: JSON.stringify(validMemo()),
+				tools: listAll(),
+				sourceRefs: ALL_CITED_REFS,
+				steps: 2,
+			},
 		]);
 		const { trace } = await runMemoAgent({
 			application: smeApp(),
 			evidence,
-			model,
+			runner,
 			config: agentConfig(),
+		});
+		expect(inputs).toHaveLength(2);
+		expect(inputs[1]?.repair).toMatchObject({
+			previousOutput: JSON.stringify(validMemo()),
+			issues: [{ code: "NO_TOOL_USE", path: "_" }],
+			requireTools: true,
 		});
 		expect(trace.steps).toBe(3);
 		expect(trace.toolCalls).toHaveLength(1);
@@ -373,52 +408,66 @@ describe("runMemoAgent", () => {
 		expect(trace.toolCalls[0]?.resultCount).toBeGreaterThan(0);
 		expect(trace.repairAttempted).toBe(true);
 		expect(trace.repairSucceeded).toBe(true);
-		expect(lastUserMessage(calls)).toContain("without calling any evidence tool");
 	});
 
 	it("fails with NO_TOOL_USE when the repair still uses no tools", async () => {
-		const { model } = scriptedModel([{ content: JSON.stringify(validMemo()) }]);
+		const { runner, inputs } = scriptedRunner([
+			{ rawOutput: JSON.stringify(validMemo()), steps: 1 },
+		]);
 		const error = await runMemoAgent({
 			application: smeApp(),
 			evidence: bundle(),
-			model,
+			runner,
 			config: agentConfig(),
 		}).catch((err: unknown) => err);
 		expect(error).toBeInstanceOf(MemoAgentError);
 		expect((error as MemoAgentError).code).toBe("NO_TOOL_USE");
+		expect(inputs).toHaveLength(2);
+		expect(inputs[1]?.repair?.requireTools).toBe(true);
 	});
 
 	it("repairs once on validation failure with codes/paths only", async () => {
 		const evidence = bundle();
-		const { model, calls } = scriptedModel([
-			{ toolCalls: [{ name: "list_evidence", arguments: {} }] },
-			{ content: JSON.stringify(invalidMemo()) },
-			{ content: JSON.stringify(validMemo()) },
+		const { runner, inputs } = scriptedRunner([
+			{
+				rawOutput: JSON.stringify(invalidMemo()),
+				tools: listAll(),
+				sourceRefs: ALL_CITED_REFS,
+				steps: 2,
+			},
+			{ rawOutput: JSON.stringify(validMemo()), steps: 1 },
 		]);
 		const { trace } = await runMemoAgent({
 			application: smeApp(),
 			evidence,
-			model,
+			runner,
 			config: agentConfig(),
 		});
 		expect(trace.repairAttempted).toBe(true);
 		expect(trace.repairSucceeded).toBe(true);
-		const repair = lastUserMessage(calls);
-		expect(repair).toContain("UNSUPPORTED_CLAIM");
-		expect(repair).toContain("sections.3.claims.0");
-		expect(repair).not.toContain(POLICY_QUOTE);
+		const repair = inputs[1]?.repair;
+		expect(repair?.previousOutput).toBe(JSON.stringify(invalidMemo()));
+		expect(repair?.requireTools).toBe(false);
+		expect(repair?.issues).toContainEqual(
+			expect.objectContaining({ code: "UNSUPPORTED_CLAIM", path: "sections.3.claims.0" }),
+		);
+		expect(JSON.stringify(repair?.issues)).not.toContain(POLICY_QUOTE);
 	});
 
 	it("fails with INVALID_OUTPUT when the repair is still invalid", async () => {
-		const { model } = scriptedModel([
-			{ toolCalls: [{ name: "list_evidence", arguments: {} }] },
-			{ content: JSON.stringify(invalidMemo()) },
-			{ content: "not json at all" },
+		const { runner } = scriptedRunner([
+			{
+				rawOutput: JSON.stringify(invalidMemo()),
+				tools: listAll(),
+				sourceRefs: ALL_CITED_REFS,
+				steps: 2,
+			},
+			{ rawOutput: "not json at all", steps: 1 },
 		]);
 		const error = await runMemoAgent({
 			application: smeApp(),
 			evidence: bundle(),
-			model,
+			runner,
 			config: agentConfig(),
 		}).catch((err: unknown) => err);
 		expect(error).toBeInstanceOf(MemoAgentError);
@@ -427,35 +476,43 @@ describe("runMemoAgent", () => {
 		expect(JSON.stringify((error as MemoAgentError).issues)).not.toContain(POLICY_QUOTE);
 	});
 
-	it("fails with STEP_LIMIT when the model never answers", async () => {
-		const { model, calls } = scriptedModel([
-			{ toolCalls: [{ name: "list_evidence", arguments: {} }] },
-		]);
-		const error = await runMemoAgent({
-			application: smeApp(),
-			evidence: bundle(),
-			model,
-			config: agentConfig({ maxSteps: 2 }),
-		}).catch((err: unknown) => err);
-		expect(error).toBeInstanceOf(MemoAgentError);
-		expect((error as MemoAgentError).code).toBe("STEP_LIMIT");
-		expect(calls).toHaveLength(2);
-	});
-
-	it("fails with TOOL_CALL_LIMIT when a batch exceeds the budget", async () => {
-		const { model } = scriptedModel([
+	it("fails with STEP_LIMIT when the run exceeds the step budget", async () => {
+		const { runner, runCount } = scriptedRunner([
 			{
-				toolCalls: [
-					{ name: "list_evidence", arguments: {} },
-					{ name: "search_evidence", arguments: { query: "revenue" } },
-					{ name: "get_evidence", arguments: { ref: AMOUNT_REF } },
-				],
+				rawOutput: JSON.stringify(validMemo()),
+				tools: listAll(),
+				sourceRefs: ALL_CITED_REFS,
+				steps: 5,
 			},
 		]);
 		const error = await runMemoAgent({
 			application: smeApp(),
 			evidence: bundle(),
-			model,
+			runner,
+			config: agentConfig({ maxSteps: 2 }),
+		}).catch((err: unknown) => err);
+		expect(error).toBeInstanceOf(MemoAgentError);
+		expect((error as MemoAgentError).code).toBe("STEP_LIMIT");
+		expect(runCount()).toBe(1);
+	});
+
+	it("fails with TOOL_CALL_LIMIT when the run exceeds the tool budget", async () => {
+		const { runner } = scriptedRunner([
+			{
+				rawOutput: JSON.stringify(validMemo()),
+				tools: [
+					{ name: "list_evidence", resultCount: 13, sourceTypes: ALL_TYPES },
+					{ name: "search_evidence", resultCount: 2, sourceTypes: ["case_fact"] },
+					{ name: "get_evidence", resultCount: 1, sourceTypes: ["case_fact"] },
+				],
+				sourceRefs: ALL_CITED_REFS,
+				steps: 4,
+			},
+		]);
+		const error = await runMemoAgent({
+			application: smeApp(),
+			evidence: bundle(),
+			runner,
 			config: agentConfig({ maxToolCalls: 2 }),
 		}).catch((err: unknown) => err);
 		expect(error).toBeInstanceOf(MemoAgentError);
@@ -463,94 +520,84 @@ describe("runMemoAgent", () => {
 	});
 
 	it("fails with TIMEOUT when the wall-clock budget is spent", async () => {
-		const { model, calls } = scriptedModel([
-			{ toolCalls: [{ name: "list_evidence", arguments: {} }] },
+		const { runner, runCount } = scriptedRunner([
+			{
+				rawOutput: JSON.stringify(validMemo()),
+				tools: listAll(),
+				sourceRefs: ALL_CITED_REFS,
+			},
 		]);
 		const error = await runMemoAgent({
 			application: smeApp(),
 			evidence: bundle(),
-			model,
+			runner,
 			config: agentConfig({ timeoutMs: 0 }),
 		}).catch((err: unknown) => err);
 		expect(error).toBeInstanceOf(MemoAgentError);
 		expect((error as MemoAgentError).code).toBe("TIMEOUT");
-		expect(calls).toHaveLength(0);
+		expect(runCount()).toBe(0);
 	});
 
 	it("fails with BUDGET_EXCEEDED when accumulated cost passes the cap", async () => {
-		const { model } = scriptedModel([
+		const { runner } = scriptedRunner([
 			{
-				toolCalls: [{ name: "list_evidence", arguments: {} }],
+				rawOutput: JSON.stringify(validMemo()),
+				tools: listAll(),
+				sourceRefs: ALL_CITED_REFS,
 				usage: { inputTokens: 100, outputTokens: 100, costUsd: 1 },
 			},
 		]);
 		const error = await runMemoAgent({
 			application: smeApp(),
 			evidence: bundle(),
-			model,
+			runner,
 			config: agentConfig({ maxCostUsd: 0.25 }),
 		}).catch((err: unknown) => err);
 		expect(error).toBeInstanceOf(MemoAgentError);
 		expect((error as MemoAgentError).code).toBe("BUDGET_EXCEEDED");
 	});
 
-	it("handles unknown tools and bad args as tool errors and continues", async () => {
-		const evidence = bundle();
-		const { model, calls } = scriptedModel([
-			{
-				toolCalls: [
-					{ name: "mystery_tool", arguments: {} },
-					{ name: "get_evidence", arguments: { nope: 1 } },
-					{ name: "search_evidence", arguments: { query: "revenue" } },
-					{ name: "list_evidence", arguments: {} },
-				],
-			},
-			{ content: JSON.stringify(validMemo()) },
-		]);
-		const { trace } = await runMemoAgent({
-			application: smeApp(),
-			evidence,
-			model,
-			config: agentConfig(),
-		});
-		expect(trace.toolCalls).toHaveLength(4);
-		expect(trace.toolCalls[0]).toMatchObject({
-			name: "mystery_tool",
-			resultCount: 0,
-			sourceTypes: [],
-		});
-		expect(trace.toolCalls[1]).toMatchObject({
-			name: "get_evidence",
-			resultCount: 0,
-			sourceTypes: [],
-		});
-		expect(trace.toolCalls[2]?.resultCount).toBeGreaterThan(0);
-		const toolMessages = (calls[1]?.messages ?? []).filter((message) => message.role === "tool");
-		expect(toolMessages).toHaveLength(4);
-		for (const message of toolMessages.slice(0, 2)) {
-			expect(String(message.content)).toContain("error");
-		}
-	});
-
-	it("maps model transport errors to typed agent errors", async () => {
-		for (const [modelError, code] of [
-			[new MemoModelError("UNAVAILABLE"), "MODEL_ERROR"],
-			[new MemoModelError("INVALID_RESPONSE"), "MODEL_ERROR"],
-			[new MemoModelError("TIMEOUT"), "TIMEOUT"],
+	it("propagates runner MemoAgentErrors and maps unknown throws to MODEL_ERROR", async () => {
+		for (const [thrown, code] of [
+			[new MemoAgentError("TIMEOUT"), "TIMEOUT"],
+			[new MemoAgentError("MODEL_ERROR"), "MODEL_ERROR"],
+			[new MemoAgentError("STEP_LIMIT"), "STEP_LIMIT"],
+			[new Error("socket hang up"), "MODEL_ERROR"],
 		] as const) {
-			const { model } = scriptedModel([{ error: modelError }]);
+			const { runner } = scriptedRunner([{ error: thrown }]);
 			const error = await runMemoAgent({
 				application: smeApp(),
 				evidence: bundle(),
-				model,
+				runner,
 				config: agentConfig(),
 			}).catch((err: unknown) => err);
-			expect((error as MemoAgentError).code).toBe(code);
+			expect((error as MemoAgentError).code, thrown.message).toBe(code);
 		}
 	});
 
+	it("aborts with TIMEOUT when the signal is already aborted", async () => {
+		const { runner, runCount } = scriptedRunner([
+			{
+				rawOutput: JSON.stringify(validMemo()),
+				tools: listAll(),
+				sourceRefs: ALL_CITED_REFS,
+			},
+		]);
+		const controller = new AbortController();
+		controller.abort();
+		const error = await runMemoAgent({
+			application: smeApp(),
+			evidence: bundle(),
+			runner,
+			config: agentConfig(),
+			signal: controller.signal,
+		}).catch((err: unknown) => err);
+		expect((error as MemoAgentError).code).toBe("TIMEOUT");
+		expect(runCount()).toBe(0);
+	});
+
 	it("exposes exactly the four allowlisted tools", () => {
-		expect(MEMO_AGENT_TOOLS.map((tool) => tool.name)).toEqual([
+		expect([...MEMO_TOOL_NAMES]).toEqual([
 			"list_evidence",
 			"search_evidence",
 			"get_evidence",
@@ -607,22 +654,33 @@ describe("runMemoAgent", () => {
 			{ ref: AMOUNT_REF, quote: "6000000" },
 			{ ref: TERM_REF, quote: "60" },
 		]);
-		const { model, calls } = scriptedModel([
-			{ toolCalls: [{ name: "get_evidence", arguments: { ref: AMOUNT_REF } }] },
-			{ content: JSON.stringify(draft) },
-			{ toolCalls: [{ name: "get_evidence", arguments: { ref: TERM_REF } }] },
-			{ content: JSON.stringify(draft) },
+		const { runner, inputs } = scriptedRunner([
+			{
+				rawOutput: JSON.stringify(draft),
+				tools: [{ name: "get_evidence", resultCount: 1, sourceTypes: ["case_fact"] }],
+				sourceRefs: [AMOUNT_REF],
+				steps: 2,
+			},
+			{
+				rawOutput: JSON.stringify(draft),
+				tools: [{ name: "get_evidence", resultCount: 1, sourceTypes: ["case_fact"] }],
+				sourceRefs: [TERM_REF],
+				steps: 2,
+			},
 		]);
 		const { content, trace } = await runMemoAgent({
 			application: smeApp(),
 			evidence,
-			model,
+			runner,
 			config: agentConfig(),
 		});
 		expect(validateGeneratedText({ artifactType: "credit_memo", content, evidence }).ok).toBe(true);
 		expect(trace.repairAttempted).toBe(true);
 		expect(trace.repairSucceeded).toBe(true);
-		expect(lastUserMessage(calls)).toContain("CITATION_NOT_FROM_TOOL");
+		expect(inputs[1]?.repair?.requireTools).toBe(true);
+		expect(inputs[1]?.repair?.issues).toContainEqual(
+			expect.objectContaining({ code: "CITATION_NOT_FROM_TOOL" }),
+		);
 	});
 
 	it("fails INVALID_OUTPUT when the repaired draft still cites unfetched refs", async () => {
@@ -631,15 +689,19 @@ describe("runMemoAgent", () => {
 			{ ref: AMOUNT_REF, quote: "6000000" },
 			{ ref: TERM_REF, quote: "60" },
 		]);
-		const { model } = scriptedModel([
-			{ toolCalls: [{ name: "get_evidence", arguments: { ref: AMOUNT_REF } }] },
-			{ content: JSON.stringify(draft) },
-			{ content: JSON.stringify(draft) },
+		const { runner } = scriptedRunner([
+			{
+				rawOutput: JSON.stringify(draft),
+				tools: [{ name: "get_evidence", resultCount: 1, sourceTypes: ["case_fact"] }],
+				sourceRefs: [AMOUNT_REF],
+				steps: 2,
+			},
+			{ rawOutput: JSON.stringify(draft), steps: 1 },
 		]);
 		const error = await runMemoAgent({
 			application: smeApp(),
 			evidence,
-			model,
+			runner,
 			config: agentConfig(),
 		}).catch((err: unknown) => err);
 		expect(error).toBeInstanceOf(MemoAgentError);
@@ -656,23 +718,35 @@ describe("runMemoAgent", () => {
 			items: [...base.items, item(POLICY_REF, "policy_section", "policy", POLICY_QUOTE, {})],
 		};
 		const draft = tinyMemo([{ ref: AMOUNT_REF, quote: "6000000" }]);
-		const { model, calls } = scriptedModel([
-			{ toolCalls: [{ name: "get_evidence", arguments: { ref: AMOUNT_REF } }] },
-			{ content: JSON.stringify(draft) },
-			{ toolCalls: [{ name: "list_evidence", arguments: {} }] },
-			{ content: JSON.stringify(draft) },
+		const { runner, inputs } = scriptedRunner([
+			{
+				rawOutput: JSON.stringify(draft),
+				tools: [{ name: "get_evidence", resultCount: 1, sourceTypes: ["case_fact"] }],
+				sourceRefs: [AMOUNT_REF],
+				steps: 2,
+			},
+			{
+				rawOutput: JSON.stringify(draft),
+				tools: [
+					{ name: "list_evidence", resultCount: 4, sourceTypes: ["case_fact", "policy_section"] },
+				],
+				sourceRefs: [AMOUNT_REF, POLICY_REF],
+				steps: 2,
+			},
 		]);
 		const { content, trace } = await runMemoAgent({
 			application: smeApp(),
 			evidence,
-			model,
+			runner,
 			config: agentConfig(),
 		});
 		expect(validateGeneratedText({ artifactType: "credit_memo", content, evidence }).ok).toBe(true);
 		expect(trace.repairAttempted).toBe(true);
 		expect(trace.repairSucceeded).toBe(true);
-		const repair = lastUserMessage(calls);
-		expect(repair).toContain("EVIDENCE_COVERAGE");
-		expect(repair).toContain("policy_section");
+		const repair = inputs[1]?.repair;
+		expect(repair?.requireTools).toBe(true);
+		expect(repair?.issues).toContainEqual(
+			expect.objectContaining({ code: "EVIDENCE_COVERAGE", path: "evidence.policy_section" }),
+		);
 	});
 });

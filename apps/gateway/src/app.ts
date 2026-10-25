@@ -30,6 +30,7 @@ import { authRoutes, requireOfficer, requireUser } from "./auth.js";
 import type { GatewayDeps, GatewayVariables } from "./deps.js";
 import { healthRoutes } from "./health.js";
 import {
+	ASSIST_UPSTREAM_TIMEOUT_MS,
 	DOCUMENT_UPSTREAM_TIMEOUT_MS,
 	fetchUpstream,
 	forwardResponse,
@@ -295,7 +296,7 @@ export function createApp(deps: GatewayDeps): Hono<{ Variables: Variables }> {
 			deps,
 			c.var.user,
 			{ baseUrl: deps.env.applicationsUrl, path },
-			LONG_UPSTREAM_TIMEOUT_MS,
+			ASSIST_UPSTREAM_TIMEOUT_MS,
 		);
 	});
 

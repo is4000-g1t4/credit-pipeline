@@ -1,7 +1,7 @@
 {
   "summary": {
     "feature": "agentic credit memo",
-    "archetype": "bounded tool loop over the evidence bundle (scripted model)",
+    "archetype": "bounded tool loop over the evidence bundle (scripted runner)",
     "model": "scripted-fake",
     "costUsd": 0,
     "n": 8,

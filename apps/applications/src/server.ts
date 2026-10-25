@@ -2,7 +2,7 @@ import { createDb } from "@credit/db";
 import { createLogger, createTemporalGateway } from "@credit/service-kit";
 import { assertDemoBoot } from "@credit/core";
 import { createApp } from "./app.js";
-import { createOpenRouterMemoModel, startArtifactRetention } from "./assist/index.js";
+import { createAgentsMemoRunner, startArtifactRetention } from "./assist/index.js";
 import { configFromEnv } from "./documents/index.js";
 import { startDocumentMaintenance } from "./documents/retention.js";
 import { loadEnv } from "./env.js";
@@ -29,15 +29,16 @@ const app = createApp({
 	env,
 	gateway,
 	logger,
-	// Agent writer only: without an OpenRouter key there is no model, so the
-	// memo route fails closed with a typed 503. Never fail process startup.
+	// Agent writer only: without an OpenRouter key there is no runner, so
+	// the memo route fails closed with a typed 503. Never fail process startup.
 	assist:
 		env.assist.memoWriter === "agent" && env.assist.openRouterApiKey
 			? {
-					memoModel: createOpenRouterMemoModel({
+					memoAgentRunner: createAgentsMemoRunner({
 						apiKey: env.assist.openRouterApiKey,
 						baseUrl: env.assist.openRouterBaseUrl,
 						model: env.assist.memoModel,
+						maxToolCalls: env.assist.memoMaxToolCalls,
 						maxOutputTokens: env.assist.memoMaxOutputTokens,
 						timeoutMs: env.assist.memoTimeoutMs,
 					}),

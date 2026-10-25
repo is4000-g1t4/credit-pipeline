@@ -1,6 +1,6 @@
-// Agentic memo route integration (real Postgres, scripted fake model):
-// agent happy path + trace/audit, idempotent replay, typed failures,
-// missing-model 503, and the deterministic trace.
+// Agentic memo route integration (real Postgres, scripted runner over the
+// real evidence tools): agent happy path + trace/audit, idempotent replay,
+// typed failures, missing-runner 503, and the deterministic trace.
 import { randomUUID } from "node:crypto";
 import {
 	applications,
@@ -12,7 +12,13 @@ import { and, eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { assembleCaseEvidence } from "../../src/assist/evidence.js";
 import { buildCreditMemo } from "../../src/assist/memo.js";
-import { MemoModelError, type MemoModel } from "../../src/assist/memo-model.js";
+import {
+	MemoAgentError,
+	type MemoAgentRunResult,
+	type MemoAgentRunner,
+} from "../../src/assist/memo-agent.js";
+import { runMemoEvidenceTool } from "../../src/assist/memo-tools.js";
+import type { MemoAgentTrace } from "../../src/assist/memo-trace.js";
 import { createUser, setupApp, signed, type TestContext, type TestUser } from "../helper.js";
 
 process.env.LOG_LEVEL ??= "silent";
@@ -20,41 +26,53 @@ process.env.LOG_LEVEL ??= "silent";
 const NOW = new Date("2026-07-01T00:00:00Z");
 const SENTINEL = `SENTINEL-AGENT-${randomUUID()}`;
 
-interface ScriptedStep {
-	content?: string | null;
-	toolCalls?: Array<{ name: string; arguments?: unknown }>;
+interface ScriptedRun {
+	tools?: Array<{ name: string; args?: unknown }>;
+	draft?: string;
 	error?: Error;
 }
 
-/** Programmable fake: each test loads a script, the route drives it. */
-function programmableModel(): {
-	model: MemoModel;
-	setScript: (steps: ScriptedStep[]) => void;
+/** Programmable runner: each test loads a script; every listed tool executes
+ * the production `runMemoEvidenceTool` against the real evidence, so tool
+ * calls and source refs stay faithful without a model. */
+function programmableRunner(): {
+	runner: MemoAgentRunner;
+	setScript: (runs: ScriptedRun[]) => void;
 	calls: () => number;
 } {
-	let script: ScriptedStep[] = [];
+	let script: ScriptedRun[] = [];
 	let index = 0;
 	let count = 0;
 	return {
 		calls: () => count,
-		setScript: (steps) => {
-			script = steps;
+		setScript: (runs) => {
+			script = runs;
 			index = 0;
 		},
-		model: {
-			async complete() {
+		runner: {
+			async run(input): Promise<MemoAgentRunResult> {
 				count += 1;
 				const step = script[Math.min(index, Math.max(0, script.length - 1))];
 				index += 1;
-				if (!step) throw new MemoModelError("UNAVAILABLE");
+				if (!step) throw new MemoAgentError("MODEL_ERROR");
 				if (step.error) throw step.error;
+				const toolCalls: MemoAgentTrace["toolCalls"] = [];
+				const refs = new Set<string>();
+				for (const call of step.tools ?? []) {
+					const outcome = runMemoEvidenceTool(call.name, call.args ?? {}, input.evidence);
+					toolCalls.push({
+						step: toolCalls.length + 1,
+						name: call.name.slice(0, 80),
+						resultCount: outcome.resultCount,
+						sourceTypes: outcome.sourceTypes,
+					});
+					for (const ref of outcome.refs) refs.add(ref);
+				}
 				return {
-					content: step.content ?? null,
-					toolCalls: (step.toolCalls ?? []).map((call, callIndex) => ({
-						id: `call_${count}_${callIndex}`,
-						name: call.name,
-						arguments: call.arguments ?? {},
-					})),
+					rawOutput: step.draft ?? "",
+					toolCalls,
+					sourceRefs: [...refs].sort(),
+					steps: toolCalls.length + 1,
 					usage: { inputTokens: 10, outputTokens: 20, costUsd: 0 },
 				};
 			},
@@ -64,14 +82,14 @@ function programmableModel(): {
 
 let ctx: TestContext;
 let officer: TestUser;
-const fake = programmableModel();
+const fake = programmableRunner();
 
 function agentCtx(): TestContext {
 	return setupApp({
 		documents: { config: { featureEnabled: true } },
 		assist: {
 			config: { enabled: true, memoWriter: "agent" },
-			memoModel: fake.model,
+			memoAgentRunner: fake.runner,
 			now: () => NOW,
 		},
 	});
@@ -157,10 +175,7 @@ describe("agent memo route", () => {
 	it("drafts via the agent with trace, metadata-only audit, and no leak", async () => {
 		const company = `${SENTINEL}-CO`;
 		const applicationId = await seedCase(company);
-		fake.setScript([
-			{ toolCalls: [{ name: "list_evidence", arguments: {} }] },
-			{ content: await memoJson(applicationId) },
-		]);
+		fake.setScript([{ tools: [{ name: "list_evidence" }], draft: await memoJson(applicationId) }]);
 		const res = await postMemo(officer, applicationId);
 		expect(res.status).toBe(201);
 		const body = (await res.json()) as {
@@ -213,39 +228,33 @@ describe("agent memo route", () => {
 
 	it("replays the same evidence with 200 and persists no second artifact", async () => {
 		const applicationId = await seedCase(`${SENTINEL}-REPLAY`);
-		fake.setScript([
-			{ toolCalls: [{ name: "list_evidence", arguments: {} }] },
-			{ content: await memoJson(applicationId) },
-		]);
+		fake.setScript([{ tools: [{ name: "list_evidence" }], draft: await memoJson(applicationId) }]);
 		const first = await postMemo(officer, applicationId);
 		expect(first.status).toBe(201);
 		const firstId = ((await first.json()) as { artifact: { id: string } }).artifact.id;
 
-		fake.setScript([
-			{ toolCalls: [{ name: "list_evidence", arguments: {} }] },
-			{ content: await memoJson(applicationId) },
-		]);
+		fake.setScript([{ tools: [{ name: "list_evidence" }], draft: await memoJson(applicationId) }]);
 		const callsBefore = fake.calls();
 		const second = await postMemo(officer, applicationId);
 		expect(second.status).toBe(200);
 		const replay = (await second.json()) as { artifact: { id: string }; replayed: boolean };
 		expect(replay.artifact.id).toBe(firstId);
 		expect(replay.replayed).toBe(true);
-		// Replay short-circuits before the model: no new calls, no new row.
+		// Replay short-circuits before the runner: no new calls, no new row.
 		expect(fake.calls()).toBe(callsBefore);
 		expect(await artifactRows(applicationId)).toHaveLength(1);
 	});
 
-	it("maps model failures to typed errors and persists nothing", async () => {
-		const failures: Array<{ step: ScriptedStep; status: number; code: string }> = [
+	it("maps runner failures to typed errors and persists nothing", async () => {
+		const failures: Array<{ run: ScriptedRun; status: number; code: string }> = [
 			{
-				step: { error: new MemoModelError("UNAVAILABLE") },
+				run: { error: new MemoAgentError("MODEL_ERROR") },
 				status: 502,
 				code: "MEMO_AGENT_UNAVAILABLE",
 			},
-			{ step: { error: new MemoModelError("TIMEOUT") }, status: 504, code: "MEMO_AGENT_TIMEOUT" },
+			{ run: { error: new MemoAgentError("TIMEOUT") }, status: 504, code: "MEMO_AGENT_TIMEOUT" },
 			{
-				step: { toolCalls: [{ name: "list_evidence", arguments: {} }] },
+				run: { tools: [{ name: "list_evidence" }] },
 				status: 422,
 				code: "MEMO_AGENT_INVALID",
 			},
@@ -254,8 +263,8 @@ describe("agent memo route", () => {
 			const applicationId = await seedCase(`${SENTINEL}-FAIL-${index}`);
 			fake.setScript(
 				failure.code === "MEMO_AGENT_INVALID"
-					? [failure.step, { content: "not json" }, { content: "still not json" }]
-					: [failure.step],
+					? [{ ...failure.run, draft: "not json" }, { draft: "still not json" }]
+					: [failure.run],
 			);
 			const res = await postMemo(officer, applicationId);
 			expect(res.status, failure.code).toBe(failure.status);
@@ -264,14 +273,14 @@ describe("agent memo route", () => {
 		}
 	});
 
-	it("returns 503 when agent mode has no model", async () => {
-		const noModel = setupApp({
+	it("returns 503 when agent mode has no runner", async () => {
+		const noRunner = setupApp({
 			documents: { config: { featureEnabled: true } },
 			assist: { config: { enabled: true, memoWriter: "agent" }, now: () => NOW },
 		});
 		try {
-			const noModelOfficer = await createUser(noModel, "officer");
-			const [row] = await noModel.db
+			const noRunnerOfficer = await createUser(noRunner, "officer");
+			const [row] = await noRunner.db
 				.insert(applications)
 				.values({
 					reference: `AGT-${randomUUID().slice(0, 8)}`,
@@ -281,36 +290,36 @@ describe("agent memo route", () => {
 					status: "pending_review",
 					amountCents: 6_000_000,
 					termMonths: 60,
-					purpose: "Missing model test",
-					identity: { fullName: "No Model", city: "Singapore" },
-					business: { companyName: "No Model Co" },
+					purpose: "Missing runner test",
+					identity: { fullName: "No Runner", city: "Singapore" },
+					business: { companyName: "No Runner Co" },
 					financial: null,
 					consents: [true, true, true],
 					submittedAt: new Date("2026-06-30T00:00:00Z"),
 				})
 				.returning({ id: applications.id });
-			await noModel.db.insert(caseAccessGrants).values({
+			await noRunner.db.insert(caseAccessGrants).values({
 				applicationId: row.id,
-				userId: noModelOfficer.id,
+				userId: noRunnerOfficer.id,
 				accessRole: "assigned_officer",
-				grantedBy: noModelOfficer.id,
+				grantedBy: noRunnerOfficer.id,
 			});
-			const res = await noModel.app.request(`/api/assist/cases/${row.id}/memos`, {
+			const res = await noRunner.app.request(`/api/assist/cases/${row.id}/memos`, {
 				method: "POST",
-				headers: signed(noModel, noModelOfficer, "POST", `/api/assist/cases/${row.id}/memos`),
+				headers: signed(noRunner, noRunnerOfficer, "POST", `/api/assist/cases/${row.id}/memos`),
 			});
 			expect(res.status).toBe(503);
 			expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
 				"MEMO_AGENT_UNAVAILABLE",
 			);
 			expect(
-				await noModel.db
+				await noRunner.db
 					.select()
 					.from(generatedArtifacts)
 					.where(eq(generatedArtifacts.applicationId, row.id)),
 			).toHaveLength(0);
 		} finally {
-			await noModel.sql.end();
+			await noRunner.sql.end();
 		}
 	});
 
@@ -357,17 +366,14 @@ describe("agent memo route", () => {
 				documents: { config: { featureEnabled: true } },
 				assist: {
 					config: { enabled: true, memoWriter: "agent" },
-					memoModel: fake.model,
+					memoAgentRunner: fake.runner,
 					now: () => NOW,
 				},
 			});
 			try {
 				const agentPath = `/api/assist/cases/${row.id}/memos`;
 				const agentHeaders = () => signed(agent, detOfficer, "POST", agentPath);
-				fake.setScript([
-					{ toolCalls: [{ name: "list_evidence", arguments: {} }] },
-					{ content: await memoJson(row.id) },
-				]);
+				fake.setScript([{ tools: [{ name: "list_evidence" }], draft: await memoJson(row.id) }]);
 				// Same evidence, other writer: no replay, a new agent artifact.
 				const res = await agent.app.request(agentPath, {
 					method: "POST",
@@ -385,7 +391,7 @@ describe("agent memo route", () => {
 				)[0];
 				expect(oldRow?.status).toBe("superseded");
 
-				// Same writer and evidence: replay returns the same id, no model call.
+				// Same writer and evidence: replay returns the same id, no runner call.
 				const callsBefore = fake.calls();
 				const replay = await agent.app.request(agentPath, {
 					method: "POST",

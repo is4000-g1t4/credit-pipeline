@@ -7,9 +7,10 @@ safety gate.
 Command: `pnpm --filter @credit/applications eval:memo-agent`
 
 Dataset: 8 code-defined cases in `apps/applications/eval/memo-agent-eval.ts`
-(synthetic application/evidence fixtures, scripted fake `MemoModel`). The
-runner uses the production loop (`runMemoAgent`) and the production shared
-validator (`validateGeneratedText`).
+(synthetic application/evidence fixtures, scripted `MemoAgentRunner`). The
+runner uses the production orchestrator (`runMemoAgent`) and the production
+shared validator (`validateGeneratedText`); production swaps in the
+`@openai/agents` runner (`memo-agent-sdk.ts`).
 
 | Metric             | Result                      |
 | ------------------ | --------------------------- |
@@ -39,6 +40,8 @@ Caveats:
 - This is a mechanics/harness eval, not a prose-quality eval. The model is
   scripted; wording quality, real retrieval judgment, and officer edit rate
   need the live model and human review.
+- A one-off live OpenRouter SDK smoke (not part of this eval/CI) passed with
+  6 sections, 14 steps, 12 tool calls, one repair, and ~22.5s latency.
 - Cases are synthetic and code-defined. Grow the set from real failures.
 - The loop never persists (no DB in the harness); route-level fail-closed
   persistence is covered by `test/integration/assist-agent.test.ts`.

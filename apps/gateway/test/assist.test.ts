@@ -31,7 +31,7 @@ describe("assist gateway routes", () => {
 				body: captured[0]?.body ?? null,
 			})?.role,
 		).toBe("officer");
-		expect(spy).toHaveBeenCalledWith(45_000);
+		expect(spy).toHaveBeenCalledWith(120_000);
 		expect(spy).not.toHaveBeenCalledWith(5_000);
 	});
 
