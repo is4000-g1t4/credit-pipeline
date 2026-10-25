@@ -422,7 +422,7 @@ get 403; a case actively assigned to another officer is a non-leaking 404.
 | Method and path                             | Purpose                                                                                                       |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | `GET /api/assist/cases/:id/evidence`        | EN-01 bundle: stable `sourceRef`s, source types, retention/legal hold, typed `unavailable`                    |
-| `POST /api/assist/cases/:id/memos`          | Deterministic draft memo from the bundle (pending_review only)                                                |
+| `POST /api/assist/cases/:id/memos`          | Draft memo from the bundle (pending_review only); 201 fresh, 200 replay on identical evidence                 |
 | `POST /api/assist/cases/:id/adverse-action` | EN-08 / E4 deterministic adverse-action letter from the terminal decline (declined only)                      |
 | `POST /api/assist/cases/:id/artifacts`      | Validate and create a generic artifact (`credit_memo`, `policy_exception_memo`)                               |
 | `GET /api/assist/cases/:id/artifacts?type=` | Version history for a case                                                                                    |
@@ -483,6 +483,55 @@ both re-run the profile and decision binding, approved letters are immutable,
 and edits create a new version. Generation-blocked fair-lending hits write an
 `artifact.generate_blocked` audit row; edit/approve blocks write
 `artifact.edit_blocked` / `artifact.approve_blocked`.
+
+### Credit memo (agentic writer)
+
+Officer only. `POST /api/assist/cases/:id/memos` assembles the EN-01 bundle
+and drafts a `credit_memo` with the configured writer (`ASSIST_MEMO_WRITER`,
+default `deterministic`; `agent` runs the bounded tool loop). The case must
+be `pending_review`; anything else returns 409 `CASE_NOT_PENDING`. Success
+persists a draft artifact and returns `201 { artifact }`. Identical evidence
+replays the newest non-deleted memo instead of regenerating: `200
+{ artifact, replayed: true }`. Edits preserve the generated trace; evidence
+changes create a new version.
+
+The artifact carries `agentTrace` (null for artifacts written before trace
+persistence) and `evidenceHash`:
+
+```json
+{
+	"artifact": {
+		"id": "<uuid>",
+		"version": 1,
+		"evidenceHash": "<sha256-hex>",
+		"agentTrace": {
+			"writer": "agent",
+			"agentVersion": "memo-agent-v1",
+			"model": "deepseek/deepseek-v4.1-flash-1017",
+			"promptVersion": "memo-agent-v1",
+			"evidenceHash": "<sha256-hex>",
+			"steps": 3,
+			"toolCalls": [
+				{ "step": 1, "name": "search_evidence", "resultCount": 4, "sourceTypes": ["score_reason"] }
+			],
+			"sourceRefs": ["score_reason:<id>:AMOUNT_ABOVE_AUTO_LIMIT"],
+			"repairAttempted": false,
+			"repairSucceeded": null,
+			"fallbackReason": null,
+			"inputTokens": 1200,
+			"outputTokens": 800,
+			"latencyMs": 2310
+		}
+	}
+}
+```
+
+Fail-closed agent errors: `MEMO_AGENT_TIMEOUT` 504 (loop deadline hit),
+`MEMO_AGENT_UNAVAILABLE` 502 (model error) or 503 (no key configured —
+`ASSIST_MEMO_WRITER=agent` without `OPENROUTER_API_KEY` fails here),
+`MEMO_AGENT_BUDGET` 422 (step, tool-call, or cost budget exceeded),
+`MEMO_AGENT_INVALID` 422 (output failed validation after the repair
+attempt; nothing persisted).
 
 Internal service-only routes: `POST /internal/assist/artifacts/:id/holds`,
 `POST /internal/assist/artifacts/:id/holds/:holdId/release`, and
@@ -552,6 +601,10 @@ Response `200`:
 | `RESEARCH_UNAVAILABLE`     | 503      | Research bundle unfetchable; retry or decide without research                                                                                                                                |
 | `RESEARCH_SELECTION_STALE` | 409      | Selection no longer resolves; re-review or decide without                                                                                                                                    |
 | `ALREADY_PAID`             | 409      | Installment is already paid                                                                                                                                                                  |
+| `MEMO_AGENT_TIMEOUT`       | 504      | Memo tool loop hit its deadline; retry or decide without a memo                                                                                                                              |
+| `MEMO_AGENT_UNAVAILABLE`   | 502, 503 | Memo model error (502), or agent writer with no key (503); retry or decide without                                                                                                           |
+| `MEMO_AGENT_BUDGET`        | 422      | Memo step, tool-call, or cost budget exceeded                                                                                                                                                |
+| `MEMO_AGENT_INVALID`       | 422      | Memo output failed validation after repair; nothing persisted                                                                                                                                |
 | `ALERT_NOT_OPEN`           | 409      | Alert is not open                                                                                                                                                                            |
 | `BAD_GATEWAY`              | 502      | Downstream service or lookup failed                                                                                                                                                          |
 | `DECISION_FAILED`          | 500      | Officer decision failed                                                                                                                                                                      |

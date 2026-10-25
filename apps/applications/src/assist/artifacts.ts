@@ -12,9 +12,10 @@ import {
 } from "@credit/db/applications";
 import { hashCanonical, type CitationRecord } from "@credit/core";
 import { HttpError, writeAudit } from "@credit/service-kit";
-import { and, desc, eq, isNull, lte, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, lte, ne, sql } from "drizzle-orm";
 import { lockApplication } from "../documents/access.js";
 import { LockTimeout } from "../documents/pipeline.js";
+import { memoAgentTraceSchema, type MemoAgentTrace } from "./memo-trace.js";
 import type { ArtifactAuditMetadata, ArtifactDto, ArtifactStatus, ArtifactType } from "./types.js";
 
 const ARTIFACT_LOCK_TIMEOUT_MS = 5_000;
@@ -30,6 +31,12 @@ export interface CreateArtifactInput {
 	model: string;
 	promptVersion: string;
 	retentionDays: number;
+	/** Memo regeneration only: supersede the live draft before versioning. */
+	supersedeDraft?: boolean;
+	/** Agentic provenance. Validated against the trace schema before writing. */
+	agentTrace?: MemoAgentTrace;
+	/** Replay key. Defaults to `agentTrace.evidenceHash` when not supplied. */
+	evidenceHash?: string;
 	auditMetadata?: ArtifactAuditMetadata;
 	now?: Date;
 }
@@ -45,11 +52,50 @@ export interface UpdateArtifactInput {
 	model: string;
 	promptVersion: string;
 	retentionDays: number;
+	/** Explicit replacement; omitted (or null) preserves the source row's trace. */
+	agentTrace?: MemoAgentTrace | null;
+	/** Explicit replacement; omitted preserves the source row's hash. */
+	evidenceHash?: string;
 	auditMetadata?: ArtifactAuditMetadata;
 	now?: Date;
 }
 
 type ArtifactRow = typeof generatedArtifacts.$inferSelect;
+
+/** Validate + normalize a caller-supplied trace. Internal typed error (never
+ * echoes trace content) so artifactTx passes it through untouched. */
+function parseAgentTrace(trace: unknown): MemoAgentTrace {
+	const parsed = memoAgentTraceSchema.safeParse(trace);
+	if (!parsed.success) {
+		throw new HttpError(500, "ARTIFACT_TRACE_INVALID", "agent trace failed validation");
+	}
+	return parsed.data;
+}
+
+function resolveTraceColumns(
+	input: { agentTrace?: MemoAgentTrace | null; evidenceHash?: string },
+	fallback: { agentTrace: unknown; evidenceHash: string | null },
+): { agentTrace: MemoAgentTrace | null; evidenceHash: string | null } {
+	const trace =
+		input.agentTrace === undefined || input.agentTrace === null
+			? (fallback.agentTrace as MemoAgentTrace | null)
+			: parseAgentTrace(input.agentTrace);
+	return {
+		agentTrace: trace,
+		evidenceHash: input.evidenceHash ?? trace?.evidenceHash ?? fallback.evidenceHash,
+	};
+}
+
+/** Metadata-only trace audit additions: counts/refs, never memo or evidence text. */
+function traceAudit(trace: MemoAgentTrace | null): ArtifactAuditMetadata {
+	if (!trace) return {};
+	return {
+		evidenceHash: trace.evidenceHash,
+		traceWriter: trace.writer,
+		toolCallCount: trace.toolCalls.length,
+		repairAttempted: trace.repairAttempted,
+	};
+}
 
 function toDto(row: ArtifactRow): ArtifactDto {
 	const deleted = row.status === "deleted";
@@ -65,6 +111,8 @@ function toDto(row: ArtifactRow): ArtifactDto {
 		// a direct DB path marked it deleted without purging.
 		content: deleted ? {} : row.content,
 		citations: deleted ? [] : (row.citations as CitationRecord[]),
+		agentTrace: (row.agentTrace as MemoAgentTrace | null) ?? null,
+		evidenceHash: row.evidenceHash,
 		model: row.model,
 		promptVersion: row.promptVersion,
 		createdBy: row.createdBy,
@@ -173,8 +221,49 @@ async function nextVersion(
 
 export async function createArtifact(db: Db, input: CreateArtifactInput): Promise<ArtifactDto> {
 	const now = input.now ?? new Date();
+	const trace = resolveTraceColumns(input, { agentTrace: null, evidenceHash: null });
 	return artifactTx(db, async (tx) => {
 		const version = await nextVersion(tx, input.applicationId, input.type);
+		if (input.supersedeDraft === true) {
+			// Memo regeneration after a replay miss: retire the live draft so
+			// the new version becomes the active one. Historical (approved,
+			// superseded, deleted) rows are untouched.
+			const live = await tx
+				.select()
+				.from(generatedArtifacts)
+				.where(
+					and(
+						eq(generatedArtifacts.applicationId, input.applicationId),
+						eq(generatedArtifacts.type, input.type),
+						eq(generatedArtifacts.status, "draft"),
+					),
+				)
+				.limit(1)
+				.for("update");
+			for (const stale of live) {
+				await tx
+					.update(generatedArtifacts)
+					.set({ status: "superseded" as ArtifactStatus, supersededAt: now })
+					.where(eq(generatedArtifacts.id, stale.id));
+				await writeAudit(tx, {
+					applicationId: input.applicationId,
+					actor: input.createdBy,
+					action: "artifact.superseded",
+					entity: "generated_artifact",
+					payload: {
+						feature: "assist",
+						artifactId: stale.id,
+						applicationId: input.applicationId,
+						type: input.type,
+						version: stale.version,
+						supersededByVersion: version,
+						actorRole: input.actorRole ?? "officer",
+						model: stale.model,
+						promptVersion: stale.promptVersion,
+					},
+				});
+			}
+		}
 		let row: ArtifactRow;
 		try {
 			[row] = await tx
@@ -189,6 +278,8 @@ export async function createArtifact(db: Db, input: CreateArtifactInput): Promis
 					content: input.content,
 					citations: input.citations,
 					contentHash: hashCanonical(input.content),
+					agentTrace: trace.agentTrace,
+					evidenceHash: trace.evidenceHash,
 					model: input.model,
 					promptVersion: input.promptVersion,
 					createdBy: input.createdBy,
@@ -212,6 +303,7 @@ export async function createArtifact(db: Db, input: CreateArtifactInput): Promis
 			entity: "generated_artifact",
 			payload: {
 				...input.auditMetadata,
+				...traceAudit(trace.agentTrace),
 				feature: "assist",
 				artifactId: row.id,
 				applicationId: input.applicationId,
@@ -244,6 +336,7 @@ export async function updateArtifact(
 			if (row.revision !== input.expectedRevision) {
 				throw new HttpError(409, "VERSION_CONFLICT", "the artifact changed since it was read");
 			}
+			const trace = resolveTraceColumns(input, row);
 			const version = await nextVersion(tx, row.applicationId, row.type);
 			let created: ArtifactRow;
 			try {
@@ -259,6 +352,8 @@ export async function updateArtifact(
 						content: input.content,
 						citations: input.citations,
 						contentHash: hashCanonical(input.content),
+						agentTrace: trace.agentTrace,
+						evidenceHash: trace.evidenceHash,
 						model: input.model,
 						promptVersion: input.promptVersion,
 						createdBy: input.actor,
@@ -283,6 +378,7 @@ export async function updateArtifact(
 				entity: "generated_artifact",
 				payload: {
 					...input.auditMetadata,
+					...traceAudit(trace.agentTrace),
 					feature: "assist",
 					artifactId: created.id,
 					baseArtifactId: row.id,
@@ -302,12 +398,15 @@ export async function updateArtifact(
 		if (row.revision !== input.expectedRevision) {
 			throw new HttpError(409, "VERSION_CONFLICT", "the draft changed since it was read");
 		}
+		const trace = resolveTraceColumns(input, row);
 		const [updated] = await tx
 			.update(generatedArtifacts)
 			.set({
 				content: input.content,
 				citations: input.citations,
 				contentHash: hashCanonical(input.content),
+				agentTrace: trace.agentTrace,
+				evidenceHash: trace.evidenceHash,
 				documentDerived: (input.documentDerived ?? false) || row.documentDerived,
 				model: input.model,
 				promptVersion: input.promptVersion,
@@ -330,6 +429,7 @@ export async function updateArtifact(
 			entity: "generated_artifact",
 			payload: {
 				...input.auditMetadata,
+				...traceAudit(trace.agentTrace),
 				feature: "assist",
 				artifactId: row.id,
 				applicationId: row.applicationId,
@@ -529,6 +629,27 @@ export async function listArtifacts(
 		)
 		.orderBy(desc(generatedArtifacts.version));
 	return rows.map(toDto);
+}
+
+export async function findArtifactByEvidence(
+	db: Db,
+	input: { applicationId: string; type: ArtifactType; evidenceHash: string },
+): Promise<ArtifactDto | null> {
+	const rows = await db
+		.select()
+		.from(generatedArtifacts)
+		.where(
+			and(
+				eq(generatedArtifacts.applicationId, input.applicationId),
+				eq(generatedArtifacts.type, input.type),
+				eq(generatedArtifacts.evidenceHash, input.evidenceHash),
+				ne(generatedArtifacts.status, "deleted"),
+			),
+		)
+		.orderBy(desc(generatedArtifacts.version))
+		.limit(1);
+	const row = rows[0];
+	return row ? toDto(row) : null;
 }
 
 export async function createArtifactHold(

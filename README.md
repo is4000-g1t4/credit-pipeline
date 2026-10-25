@@ -138,9 +138,16 @@ adverse-action features lives in the applications service:
   never persisted.
 
 `POST /api/assist/cases/:id/memos` is the end-to-end consumer: it assembles
-evidence, builds a deterministic draft (no LLM, no decision language), runs
-the validator, and stores a draft artifact. It requires a `pending_review`
-case. `POST /api/assist/cases/:id/adverse-action` (EN-08 / E4) is the
+evidence, drafts with the configured writer (deterministic template by
+default, no LLM and no decision language; `ASSIST_MEMO_WRITER=agent` runs a
+bounded tool loop over allowlisted evidence tools with one
+validation/repair attempt), validates, and stores a draft artifact with its
+agent trace. Identical evidence replays the same artifact (`200 replayed`)
+instead of regenerating. It requires a `pending_review`
+case. The officer review page shows the memo above the decision panel
+(sections/claims with citation chips, open items, officer questions, an
+explicit-confirm approval, and the metadata-only agent trace); the panel
+hides while the flag is off. `POST /api/assist/cases/:id/adverse-action` (EN-08 / E4) is the
 declined-case counterpart: it selects 3-4 principal reasons from the decision
 reason codes via the EN-08 taxonomy and stores an `adverse_action_letter`
 draft under the configured jurisdiction profile (`ASSIST_ADVERSE_*`; see
@@ -168,8 +175,9 @@ recorded and retention still runs. The validator and evidence
 contract are pure exports from `@credit/core`; the applications module is
 `apps/applications/src/assist/`. Tests: `pnpm --filter @credit/applications
 test:integration` (real Postgres; route tests use a fake research upstream).
-`e2e/assist.spec.ts` runs the happy path when the flag is on and the
-flag-off 404 case when it is off.
+`e2e/assist.spec.ts` runs the happy path when the flag is on (draft with
+trace assertions, idempotent replay, approval, plus a review-UI memo/trace
+assertion) and the flag-off 404 case when it is off.
 
 ## Demo customer fixtures (T17/D2a, CLI-only)
 

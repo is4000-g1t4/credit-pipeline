@@ -10,7 +10,7 @@ import {
 	type WorkflowGateway,
 } from "@credit/service-kit";
 import type { ApplicationsEnv } from "./env.js";
-import { assistRoutes, type AssistConfig } from "./assist/index.js";
+import { assistRoutes, type AssistConfig, type MemoModel } from "./assist/index.js";
 import {
 	buildDocumentService,
 	configFromEnv,
@@ -42,9 +42,10 @@ export interface ApplicationsDeps {
 	context?: Partial<ContextConfig>;
 	/** Test seam: research purge callback target without touching env. */
 	research?: { url?: string };
-	/** Test seam: EN-01/02/03 assist config, clock, and research fetch. */
+	/** Test seam: EN-01/02/03 assist config, clock, research fetch, memo model. */
 	assist?: {
 		config?: Partial<AssistConfig>;
+		memoModel?: MemoModel;
 		now?: () => Date;
 		researchFetchImpl?: typeof fetch;
 	};
@@ -106,6 +107,7 @@ export function createApp(deps: ApplicationsDeps): ServiceApp {
 	const assistRuntime = {
 		config: { ...deps.env.assist, ...deps.assist?.config },
 		documentsEnabled: documentConfig.featureEnabled,
+		memoModel: deps.assist?.memoModel,
 		now: deps.assist?.now ?? (() => new Date()),
 		researchFetchImpl: deps.assist?.researchFetchImpl,
 	};

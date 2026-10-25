@@ -4,6 +4,7 @@ import { useState } from "react";
 import { CaseView } from "../../../components/CaseView";
 import { DecisionPanel } from "../../../components/DecisionPanel";
 import { DocumentPanel } from "../../../components/DocumentPanel";
+import { MemoPanel } from "../../../components/MemoPanel";
 import { ResearchPanel } from "../../../components/ResearchPanel";
 import { EmptyState, ErrorBox, Page, Skeleton } from "../../../components/ui";
 import {
@@ -66,18 +67,22 @@ function ReviewCase() {
 						onSelectionChange={setResearchSelection}
 					/>
 					{detail.data.application.status === "pending_review" ? (
-						<DecisionPanel
-							applicationId={id}
-							requestedAmountCents={detail.data.application.amountCents}
-							requestedTermMonths={detail.data.application.termMonths}
-							maxAmountCents={
-								detail.data.policyEvaluation?.maxAmountCents ?? detail.data.application.amountCents
-							}
-							product={detail.data.application.product}
-							researchSelection={researchSelection}
-							onResearchStale={() => setResearchSelection(null)}
-							onDecided={() => void navigate({ to: "/officer/review" })}
-						/>
+						<>
+							<MemoPanel applicationId={id} caseStatus={detail.data.application.status} />
+							<DecisionPanel
+								applicationId={id}
+								requestedAmountCents={detail.data.application.amountCents}
+								requestedTermMonths={detail.data.application.termMonths}
+								maxAmountCents={
+									detail.data.policyEvaluation?.maxAmountCents ??
+									detail.data.application.amountCents
+								}
+								product={detail.data.application.product}
+								researchSelection={researchSelection}
+								onResearchStale={() => setResearchSelection(null)}
+								onDecided={() => void navigate({ to: "/officer/review" })}
+							/>
+						</>
 					) : (
 						<p className="text-sm text-gray-500">
 							Case is {detail.data.application.status} — no decision needed.

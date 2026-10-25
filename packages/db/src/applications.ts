@@ -353,6 +353,11 @@ export const generatedArtifacts = pgTable(
 		content: jsonb("content").notNull(),
 		citations: jsonb("citations").notNull(),
 		contentHash: text("content_hash").notNull(),
+		// Agentic memo provenance (nullable: deterministic writers leave both
+		// null). `evidenceHash` mirrors `agentTrace.evidenceHash` for indexed
+		// idempotent-replay lookup.
+		agentTrace: jsonb("agent_trace"),
+		evidenceHash: text("evidence_hash"),
 		model: text("model").notNull(),
 		promptVersion: text("prompt_version").notNull(),
 		// Cross-DB reference to credit_auth.users — plain uuid, never an FK.
@@ -377,6 +382,7 @@ export const generatedArtifacts = pgTable(
 			.on(t.applicationId, t.type)
 			.where(sql`${t.status} = 'draft'`),
 		index("generated_artifacts_case_type_created_idx").on(t.applicationId, t.type, t.createdAt),
+		index("generated_artifacts_case_type_evidence_idx").on(t.applicationId, t.type, t.evidenceHash),
 		index("generated_artifacts_retention_idx")
 			.on(t.retentionUntil)
 			.where(sql`${t.status} <> 'deleted'`),

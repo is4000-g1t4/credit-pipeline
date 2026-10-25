@@ -1,0 +1,159 @@
+{
+  "summary": {
+    "feature": "agentic credit memo",
+    "archetype": "bounded tool loop over the evidence bundle (scripted model)",
+    "model": "scripted-fake",
+    "costUsd": 0,
+    "n": 8,
+    "trials": 3,
+    "passAt1": 1,
+    "passAt3": 1,
+    "accepted": 4,
+    "toolUseRate": 1,
+    "sourceTypeCoverage": 1,
+    "gapRetrievals": 2,
+    "repairRate": 0.5,
+    "citationCoverage": 1,
+    "unsupportedClaims": 2,
+    "safetyPass": 1,
+    "failures": []
+  },
+  "cases": [
+    {
+      "id": "happy-tool-use",
+      "expected": "accept",
+      "observed": "accept",
+      "pass": true,
+      "tags": [
+        "happy"
+      ],
+      "steps": 2,
+      "toolCalls": 1,
+      "sourceTypes": [
+        "case_fact",
+        "context_signal",
+        "document",
+        "external_evidence",
+        "policy_section",
+        "score_reason"
+      ],
+      "repairAttempted": false
+    },
+    {
+      "id": "gap-second-retrieval",
+      "expected": "accept",
+      "observed": "accept",
+      "pass": true,
+      "tags": [
+        "happy",
+        "gap-retrieval"
+      ],
+      "steps": 4,
+      "toolCalls": 3,
+      "sourceTypes": [
+        "case_fact",
+        "context_signal",
+        "document",
+        "external_evidence",
+        "policy_section",
+        "score_reason"
+      ],
+      "repairAttempted": false
+    },
+    {
+      "id": "repair-then-valid",
+      "expected": "accept",
+      "observed": "accept",
+      "pass": true,
+      "tags": [
+        "repair"
+      ],
+      "steps": 3,
+      "toolCalls": 1,
+      "sourceTypes": [
+        "case_fact",
+        "context_signal",
+        "document",
+        "external_evidence",
+        "policy_section",
+        "score_reason"
+      ],
+      "repairAttempted": true
+    },
+    {
+      "id": "no-tool-failure",
+      "expected": "NO_TOOL_USE",
+      "observed": "NO_TOOL_USE",
+      "pass": true,
+      "tags": [
+        "failure"
+      ],
+      "steps": null,
+      "toolCalls": null,
+      "sourceTypes": [],
+      "repairAttempted": null
+    },
+    {
+      "id": "invalid-after-repair",
+      "expected": "INVALID_OUTPUT",
+      "observed": "INVALID_OUTPUT",
+      "pass": true,
+      "tags": [
+        "failure"
+      ],
+      "steps": null,
+      "toolCalls": null,
+      "sourceTypes": [],
+      "repairAttempted": null
+    },
+    {
+      "id": "bound-exceeded",
+      "expected": "TOOL_CALL_LIMIT",
+      "observed": "TOOL_CALL_LIMIT",
+      "pass": true,
+      "tags": [
+        "failure",
+        "bound"
+      ],
+      "steps": null,
+      "toolCalls": null,
+      "sourceTypes": [],
+      "repairAttempted": null
+    },
+    {
+      "id": "citation-mismatch",
+      "expected": "INVALID_OUTPUT",
+      "observed": "INVALID_OUTPUT",
+      "pass": true,
+      "tags": [
+        "failure",
+        "citation"
+      ],
+      "steps": null,
+      "toolCalls": null,
+      "sourceTypes": [],
+      "repairAttempted": null
+    },
+    {
+      "id": "decision-language-repair",
+      "expected": "accept",
+      "observed": "accept",
+      "pass": true,
+      "tags": [
+        "repair",
+        "safety"
+      ],
+      "steps": 4,
+      "toolCalls": 2,
+      "sourceTypes": [
+        "case_fact",
+        "context_signal",
+        "document",
+        "external_evidence",
+        "policy_section",
+        "score_reason"
+      ],
+      "repairAttempted": true
+    }
+  ]
+}

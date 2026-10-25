@@ -2,7 +2,7 @@ import { createDb } from "@credit/db";
 import { createLogger, createTemporalGateway } from "@credit/service-kit";
 import { assertDemoBoot } from "@credit/core";
 import { createApp } from "./app.js";
-import { startArtifactRetention } from "./assist/index.js";
+import { createOpenRouterMemoModel, startArtifactRetention } from "./assist/index.js";
 import { configFromEnv } from "./documents/index.js";
 import { startDocumentMaintenance } from "./documents/retention.js";
 import { loadEnv } from "./env.js";
@@ -23,7 +23,27 @@ assertDemoBoot({
 	customerStorageDir: env.customer.storageDir,
 });
 
-const app = createApp({ db, sql, env, gateway, logger });
+const app = createApp({
+	db,
+	sql,
+	env,
+	gateway,
+	logger,
+	// Agent writer only: without an OpenRouter key there is no model, so the
+	// memo route fails closed with a typed 503. Never fail process startup.
+	assist:
+		env.assist.memoWriter === "agent" && env.assist.openRouterApiKey
+			? {
+					memoModel: createOpenRouterMemoModel({
+						apiKey: env.assist.openRouterApiKey,
+						baseUrl: env.assist.openRouterBaseUrl,
+						model: env.assist.memoModel,
+						maxOutputTokens: env.assist.memoMaxOutputTokens,
+						timeoutMs: env.assist.memoTimeoutMs,
+					}),
+				}
+			: undefined,
+});
 
 // D1b document maintenance (SPEC-t01-t02 §6): boot + daily sweep of
 // document orphans and retention. Retention runs even with the upload

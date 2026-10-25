@@ -90,6 +90,19 @@ const parsed = createEnv({
 		ASSIST_RESEARCH_TIMEOUT_MS: z.coerce.number().int().min(500).max(30_000).default(5_000),
 		ASSIST_MODEL: z.string().min(1).default("deterministic"),
 		ASSIST_PROMPT_VERSION: z.string().min(1).default("memo-template-v1"),
+		// Agentic credit-memo writer (SPEC agentic-memo, wave B). `agent`
+		// runs the bounded OpenRouter tool loop; default stays deterministic.
+		ASSIST_MEMO_WRITER: z.enum(["deterministic", "agent"]).default("deterministic"),
+		ASSIST_MEMO_MODEL: z.string().min(1).default("deepseek/deepseek-v4.1-flash-1017"),
+		ASSIST_MEMO_PROMPT_VERSION: z.string().min(1).default("memo-agent-v1"),
+		ASSIST_MEMO_AGENT_VERSION: z.string().min(1).default("memo-agent-v1"),
+		ASSIST_MEMO_MAX_STEPS: z.coerce.number().int().min(1).max(64).default(8),
+		ASSIST_MEMO_MAX_TOOL_CALLS: z.coerce.number().int().min(1).max(100).default(12),
+		ASSIST_MEMO_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(300_000).default(45_000),
+		ASSIST_MEMO_MAX_COST_USD: z.coerce.number().min(0).default(0.25),
+		ASSIST_MEMO_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(256).max(32_000).default(4_000),
+		OPENROUTER_API_KEY: z.string().min(1).optional(),
+		OPENROUTER_BASE_URL: z.string().url().default("https://openrouter.ai/api/v1"),
 		// EN-08 adverse-action taxonomy/profile. SG is the v1 default; US is
 		// available but must be selected explicitly. An unsupported value
 		// disables the adverse-action route with a typed error.
@@ -171,6 +184,17 @@ export const env = {
 		internalSecret: parsed.INTERNAL_SECRET,
 		model: parsed.ASSIST_MODEL,
 		promptVersion: parsed.ASSIST_PROMPT_VERSION,
+		memoWriter: parsed.ASSIST_MEMO_WRITER,
+		memoModel: parsed.ASSIST_MEMO_MODEL,
+		memoPromptVersion: parsed.ASSIST_MEMO_PROMPT_VERSION,
+		memoAgentVersion: parsed.ASSIST_MEMO_AGENT_VERSION,
+		memoMaxSteps: parsed.ASSIST_MEMO_MAX_STEPS,
+		memoMaxToolCalls: parsed.ASSIST_MEMO_MAX_TOOL_CALLS,
+		memoTimeoutMs: parsed.ASSIST_MEMO_TIMEOUT_MS,
+		memoMaxCostUsd: parsed.ASSIST_MEMO_MAX_COST_USD,
+		memoMaxOutputTokens: parsed.ASSIST_MEMO_MAX_OUTPUT_TOKENS,
+		openRouterApiKey: parsed.OPENROUTER_API_KEY ?? null,
+		openRouterBaseUrl: parsed.OPENROUTER_BASE_URL,
 		adverseJurisdiction: parsed.ASSIST_ADVERSE_JURISDICTION,
 		adverseContactPath: parsed.ASSIST_ADVERSE_CONTACT_PATH,
 		adversePromptVersion: parsed.ASSIST_ADVERSE_PROMPT_VERSION,

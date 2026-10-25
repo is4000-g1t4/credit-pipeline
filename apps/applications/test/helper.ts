@@ -12,7 +12,7 @@ import { createDb } from "@credit/db";
 import { createLogger, signInternalHeaders } from "@credit/service-kit";
 import { stubGateway, type FakeGateway } from "@credit/service-kit/test";
 import { createApp } from "../src/app.js";
-import type { AssistConfig } from "../src/assist/index.js";
+import type { AssistConfig, MemoModel } from "../src/assist/index.js";
 import type { CustomerConfig } from "../src/customer/service.js";
 import type { OcrAdapter } from "../src/documents/ocr.js";
 import type { ScannerAdapter } from "../src/documents/scanner.js";
@@ -48,9 +48,10 @@ export interface SetupOpts {
 	};
 	/** App blob root shorthand (lands in documents.config.storageDir unless set there). */
 	storageDir?: string;
-	/** EN-01/02/03 assist overrides (flag, clock, research upstream). */
+	/** EN-01/02/03 assist overrides (flag, clock, research upstream, memo model). */
 	assist?: {
 		config?: Partial<AssistConfig>;
+		memoModel?: MemoModel;
 		now?: () => Date;
 		researchFetchImpl?: typeof fetch;
 	};

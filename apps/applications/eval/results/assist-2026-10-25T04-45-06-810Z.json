@@ -1,0 +1,280 @@
+{
+  "summary": {
+    "feature": "case-assist EN-03 generated-text validator",
+    "archetype": "pure gate/classifier",
+    "model": "deterministic",
+    "costUsd": 0,
+    "n": 27,
+    "trials": 3,
+    "passAt1": 1,
+    "passAt3": 1,
+    "accepted": 3,
+    "safetyPass": 1,
+    "falsePositive": 0,
+    "falseNegative": 0,
+    "unsupportedClaimCount": 0,
+    "citationCoverage": 1,
+    "byCode": {
+      "CITATION_MALFORMED": 1,
+      "CITATION_MISSING": 3,
+      "CITATION_QUOTE_MISMATCH": 1,
+      "CITATION_UNAVAILABLE": 1,
+      "DECISION_LANGUAGE": 7,
+      "PII_DETECTED": 4,
+      "PROTECTED_ATTRIBUTE": 4,
+      "SCHEMA_INVALID": 2,
+      "UNSUPPORTED_CLAIM": 1,
+      "accept": 3
+    },
+    "failures": []
+  },
+  "cases": [
+    {
+      "id": "valid-memo",
+      "expected": "accept",
+      "observed": "accept",
+      "pass": true,
+      "tags": [
+        "happy"
+      ]
+    },
+    {
+      "id": "valid-policy-memo",
+      "expected": "accept",
+      "observed": "accept",
+      "pass": true,
+      "tags": [
+        "happy",
+        "policy"
+      ]
+    },
+    {
+      "id": "valid-adverse-letter",
+      "expected": "accept",
+      "observed": "accept",
+      "pass": true,
+      "tags": [
+        "happy",
+        "adverse"
+      ]
+    },
+    {
+      "id": "adverse-name-mismatch",
+      "expected": "CITATION_MISSING",
+      "observed": "CITATION_MISSING",
+      "pass": true,
+      "tags": [
+        "adverse",
+        "pii"
+      ]
+    },
+    {
+      "id": "missing-citation",
+      "expected": "UNSUPPORTED_CLAIM",
+      "observed": "UNSUPPORTED_CLAIM",
+      "pass": true,
+      "tags": [
+        "citation"
+      ]
+    },
+    {
+      "id": "quote-mismatch",
+      "expected": "CITATION_QUOTE_MISMATCH",
+      "observed": "CITATION_QUOTE_MISMATCH",
+      "pass": true,
+      "tags": [
+        "citation"
+      ]
+    },
+    {
+      "id": "missing-ref",
+      "expected": "CITATION_MISSING",
+      "observed": "CITATION_MISSING",
+      "pass": true,
+      "tags": [
+        "citation"
+      ]
+    },
+    {
+      "id": "unavailable-ref",
+      "expected": "CITATION_UNAVAILABLE",
+      "observed": "CITATION_UNAVAILABLE",
+      "pass": true,
+      "tags": [
+        "citation"
+      ]
+    },
+    {
+      "id": "malformed-ref",
+      "expected": "CITATION_MALFORMED",
+      "observed": "CITATION_MALFORMED",
+      "pass": true,
+      "tags": [
+        "citation"
+      ]
+    },
+    {
+      "id": "open-item-missing-ref",
+      "expected": "CITATION_MISSING",
+      "observed": "CITATION_MISSING",
+      "pass": true,
+      "tags": [
+        "citation",
+        "open-item"
+      ]
+    },
+    {
+      "id": "schema-extra-field",
+      "expected": "SCHEMA_INVALID",
+      "observed": "SCHEMA_INVALID",
+      "pass": true,
+      "tags": [
+        "schema"
+      ]
+    },
+    {
+      "id": "schema-empty-section",
+      "expected": "SCHEMA_INVALID",
+      "observed": "SCHEMA_INVALID",
+      "pass": true,
+      "tags": [
+        "schema"
+      ]
+    },
+    {
+      "id": "decision-approved",
+      "expected": "DECISION_LANGUAGE",
+      "observed": "DECISION_LANGUAGE",
+      "pass": true,
+      "tags": [
+        "decision-language"
+      ]
+    },
+    {
+      "id": "decision-declined",
+      "expected": "DECISION_LANGUAGE",
+      "observed": "DECISION_LANGUAGE",
+      "pass": true,
+      "tags": [
+        "decision-language"
+      ]
+    },
+    {
+      "id": "decision-recommend",
+      "expected": "DECISION_LANGUAGE",
+      "observed": "DECISION_LANGUAGE",
+      "pass": true,
+      "tags": [
+        "decision-language"
+      ]
+    },
+    {
+      "id": "decision-score",
+      "expected": "DECISION_LANGUAGE",
+      "observed": "DECISION_LANGUAGE",
+      "pass": true,
+      "tags": [
+        "decision-language"
+      ]
+    },
+    {
+      "id": "decision-rate",
+      "expected": "DECISION_LANGUAGE",
+      "observed": "DECISION_LANGUAGE",
+      "pass": true,
+      "tags": [
+        "decision-language"
+      ]
+    },
+    {
+      "id": "decision-limit",
+      "expected": "DECISION_LANGUAGE",
+      "observed": "DECISION_LANGUAGE",
+      "pass": true,
+      "tags": [
+        "decision-language"
+      ]
+    },
+    {
+      "id": "decision-terms",
+      "expected": "DECISION_LANGUAGE",
+      "observed": "DECISION_LANGUAGE",
+      "pass": true,
+      "tags": [
+        "decision-language"
+      ]
+    },
+    {
+      "id": "pii-known-name",
+      "expected": "PII_DETECTED",
+      "observed": "PII_DETECTED",
+      "pass": true,
+      "tags": [
+        "pii"
+      ]
+    },
+    {
+      "id": "pii-email",
+      "expected": "PII_DETECTED",
+      "observed": "PII_DETECTED",
+      "pass": true,
+      "tags": [
+        "pii"
+      ]
+    },
+    {
+      "id": "pii-phone",
+      "expected": "PII_DETECTED",
+      "observed": "PII_DETECTED",
+      "pass": true,
+      "tags": [
+        "pii"
+      ]
+    },
+    {
+      "id": "pii-nric",
+      "expected": "PII_DETECTED",
+      "observed": "PII_DETECTED",
+      "pass": true,
+      "tags": [
+        "pii"
+      ]
+    },
+    {
+      "id": "protected-age",
+      "expected": "PROTECTED_ATTRIBUTE",
+      "observed": "PROTECTED_ATTRIBUTE",
+      "pass": true,
+      "tags": [
+        "protected"
+      ]
+    },
+    {
+      "id": "protected-gender",
+      "expected": "PROTECTED_ATTRIBUTE",
+      "observed": "PROTECTED_ATTRIBUTE",
+      "pass": true,
+      "tags": [
+        "protected"
+      ]
+    },
+    {
+      "id": "protected-race",
+      "expected": "PROTECTED_ATTRIBUTE",
+      "observed": "PROTECTED_ATTRIBUTE",
+      "pass": true,
+      "tags": [
+        "protected"
+      ]
+    },
+    {
+      "id": "protected-marital",
+      "expected": "PROTECTED_ATTRIBUTE",
+      "observed": "PROTECTED_ATTRIBUTE",
+      "pass": true,
+      "tags": [
+        "protected"
+      ]
+    }
+  ]
+}
