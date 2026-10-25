@@ -163,7 +163,7 @@ Every environment variable, its consumers, and its default. Audience: developer 
 | Review        | 4002                      | Stateless; no database                                                                                                                               |
 | Loans         | 4003                      | `DEMO_MODE` default true                                                                                                                             |
 | Portfolio     | 4004                      | Kafka consumer; no Temporal                                                                                                                          |
-| Research      | 4005                      | Node (never Bun); officer-gated advisory briefs                                                                                                      |
+| Research      | 4005                      | Node here for Grafana/OTel; Agents is Bun-compatible; officer-gated advisory briefs                                                                                                      |
 | Policy        | 4006                      | Bun; officer navigator + case review, `POLICY_ASSIST_ENABLED` only                                                                                   |
 | Postgres 18   | 5432                      | One cluster: six service databases plus the Temporal pair                                                                                            |
 | Kafka (KRaft) | 9092 host, 29092 internal | `PLAINTEXT_HOST` outside, `PLAINTEXT` inside compose; host listener is local-dev/test only — production Kafka must use SASL/ACL or a private network |

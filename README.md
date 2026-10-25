@@ -248,7 +248,7 @@ reports those seams instead of failing on them.
 | review         | 4002 | stateless: queue + officer decisions (no DB)                                                                                                                                                                                                               |
 | loans          | 4003 | P1a microservice: loans, alerts, demo controls, internal loan lookup                                                                                                                                                                                       |
 | portfolio      | 4004 | dashboard summary + Kafka consumer                                                                                                                                                                                                                         |
-| research       | 4005 | Phase 2 advisory briefs (Node, never Bun — Agents/Grafana SDKs are Node-only); owns `credit_research`; runs only when `AGENTS_ENABLED` + `AGENT_CASE_BRIEF_ENABLED`                                                                                        |
+| research       | 4005 | Phase 2 advisory briefs (Node here for the Grafana/OpenTelemetry stack; Agents itself runs on Bun); owns `credit_research`; runs only when `AGENTS_ENABLED` + `AGENT_CASE_BRIEF_ENABLED`                                                                                        |
 | policy         | 4006 | credit-policy register + officer navigator (Bun); owns `credit_policy`; answers only when `POLICY_ASSIST_ENABLED=true`                                                                                                                                     |
 
 Environment files are loaded explicitly ? Bun's dev scripts pass
@@ -346,8 +346,9 @@ unchanged (paths, envelopes, cookie session, health shape + `services`).
   `APPLICATIONS_URL`/`LOANS_URL`/`RESEARCH_URL` instead), `PORT` (own
   default), `INTERNAL_SECRET` at boot (plus `TEMPORAL_ADDRESS`, and
   `DEMO_MODE` for loans). `pnpm dev:services` runs gateway + all four pipeline services.
-- `apps/research` (4005, **Node — never Bun**: the Agents/Grafana SDKs are
-  Node-only): advisory cited briefs on `pending_review` cases with AI
+- `apps/research` (4005, **Node here for the Grafana/OpenTelemetry stack**;
+  `@openai/agents` itself runs under Bun): advisory cited briefs on
+  `pending_review` cases with AI
   research consent. Owns `credit_research`; runs only when `AGENTS_ENABLED` +
   `AGENT_CASE_BRIEF_ENABLED`. Served by stdlib `node:http` + `app.fetch`
   (no extra server dep). Grafana observability is best-effort: a degraded

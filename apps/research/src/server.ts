@@ -1,5 +1,5 @@
-// Research service entry (Node 22+; the Agents/Grafana SDKs are
-// Node-only — never Bun). Stdlib http + app.fetch, no extra server dep.
+// Research service entry (Node 22+ here for the Grafana/OpenTelemetry stack;
+// `@openai/agents` itself runs on Bun). Stdlib http + app.fetch, no extra server dep.
 import { createDb } from "@credit/db/research";
 import { createLogger } from "@credit/service-kit";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
