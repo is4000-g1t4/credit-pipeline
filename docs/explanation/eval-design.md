@@ -229,16 +229,17 @@ Gaps worth closing, in order:
 Add one row when a feature lands. A feature with no row is an experiment, not
 a supported capability.
 
-| Feature                                       | Archetype                       | Dataset                                         | Command                                           | Status                                          |
-| --------------------------------------------- | ------------------------------- | ----------------------------------------------- | ------------------------------------------------- | ----------------------------------------------- |
-| Policy navigator (`apps/policy`)              | Retrieval-augmented answer      | `apps/policy/eval/answer-cases.json` (33 cases) | `pnpm --filter @credit/policy eval:answers`       | passing: held-out 8/8, dev 22/25 at pass^3      |
-| Case policy review (`apps/research` → policy) | Explain/classify                | inline demo personas + edge case                | `pnpm --filter @credit/research eval:policy`      | planned                                         |
-| External case brief (`apps/research`)         | Tool-using research             | inline 3-case fixture in `brief-eval.ts`        | `pnpm --filter @credit/research eval:brief`       | passing: 9/9, in-sample                         |
-| Context analyst (`apps/research`)             | Structured extraction/selection | demo personas in `fixtures.ts`                  | `pnpm --filter @credit/research eval:context`     | passing: 9/9, in-sample                         |
-| Advisory-only invariant                       | System invariant                | demo personas                                   | existing e2e/demo suite                           | partial: snapshot test only                     |
-| Case-assist validator (`apps/applications`)   | Pure gate/classifier            | 27 code-defined cases in `eval/assist-eval.ts`  | `pnpm --filter @credit/applications eval:assist`  | passing: 27/27 at pass^3, 0 unsafe pass-through |
-| Adverse-action letter (`apps/applications`)   | Pure gate/classifier            | 19 code-defined cases in `eval/adverse-eval.ts` | `pnpm --filter @credit/applications eval:adverse` | passing: 19/19 at pass^3, 0 unsafe pass-through |
-| Future feature                                | Pick §1.2                       | `apps/<app>/eval/cases.json`                    | `pnpm --filter @credit/<app> eval:<feature>`      | required                                        |
+| Feature                                       | Archetype                                | Dataset                                            | Command                                             | Status                                          |
+| --------------------------------------------- | ---------------------------------------- | -------------------------------------------------- | --------------------------------------------------- | ----------------------------------------------- |
+| Policy navigator (`apps/policy`)              | Retrieval-augmented answer               | `apps/policy/eval/answer-cases.json` (33 cases)    | `pnpm --filter @credit/policy eval:answers`         | passing: held-out 8/8, dev 22/25 at pass^3      |
+| Case policy review (`apps/research` → policy) | Explain/classify                         | inline demo personas + edge case                   | `pnpm --filter @credit/research eval:policy`        | planned                                         |
+| External case brief (`apps/research`)         | Tool-using research                      | inline 3-case fixture in `brief-eval.ts`           | `pnpm --filter @credit/research eval:brief`         | passing: 9/9, in-sample                         |
+| Context analyst (`apps/research`)             | Structured extraction/selection          | demo personas in `fixtures.ts`                     | `pnpm --filter @credit/research eval:context`       | passing: 9/9, in-sample                         |
+| Advisory-only invariant                       | System invariant                         | demo personas                                      | existing e2e/demo suite                             | partial: snapshot test only                     |
+| Case-assist validator (`apps/applications`)   | Pure gate/classifier                     | 27 code-defined cases in `eval/assist-eval.ts`     | `pnpm --filter @credit/applications eval:assist`    | passing: 27/27 at pass^3, 0 unsafe pass-through |
+| Adverse-action letter (`apps/applications`)   | Pure gate/classifier                     | 19 code-defined cases in `eval/adverse-eval.ts`    | `pnpm --filter @credit/applications eval:adverse`   | passing: 19/19 at pass^3, 0 unsafe pass-through |
+| Document integrity (`apps/applications`)      | Explain/classify + structured extraction | `apps/applications/eval/integrity-cases.json` (28) | `pnpm --filter @credit/applications eval:integrity` | passing: dev 19/19, held-out 9/9 at pass^3      |
+| Future feature                                | Pick §1.2                                | `apps/<app>/eval/cases.json`                       | `pnpm --filter @credit/<app> eval:<feature>`        | required                                        |
 
 Update the status column to `baseline`, `passing`, `saturated`, or
 `directional` after each run. Keep the command in the row so the next person
@@ -439,15 +440,17 @@ is the remaining half of the invariant.
 
 ### 5.7 Recorded results (2026-10-24)
 
-| Feature             | Run                   | Headline                                                              |    Cost | Caveat                                                             |
-| ------------------- | --------------------- | --------------------------------------------------------------------- | ------: | ------------------------------------------------------------------ |
-| Policy navigator    | 33 cases × 3 trials   | held-out 8/8 cases, dev 22/25 at pass^3; 99/99 status-correct trials  | $0.3093 | judge uncalibrated; dev failures are completeness                  |
-| External case brief | 3 cases × 3 trials    | 9/9 trials, 3/3 pass^3; adverse/collision correct, citation/PII clean | $0.2387 | 3 synthetic cases, in-sample; registry/support reported, not gated |
-| Context analyst     | 3 personas × 3 trials | 9/9 trials, 3/3 pass^3, first-pass 9/9, 0 dropped signals             | $0.7546 | 3 demo personas, in-sample; coverage validator-enforced            |
+| Feature             | Run                   | Headline                                                              |    Cost | Caveat                                                               |
+| ------------------- | --------------------- | --------------------------------------------------------------------- | ------: | -------------------------------------------------------------------- |
+| Policy navigator    | 33 cases × 3 trials   | held-out 8/8 cases, dev 22/25 at pass^3; 99/99 status-correct trials  | $0.3093 | judge uncalibrated; dev failures are completeness                    |
+| External case brief | 3 cases × 3 trials    | 9/9 trials, 3/3 pass^3; adverse/collision correct, citation/PII clean | $0.2387 | 3 synthetic cases, in-sample; registry/support reported, not gated   |
+| Context analyst     | 3 personas × 3 trials | 9/9 trials, 3/3 pass^3, first-pass 9/9, 0 dropped signals             | $0.7546 | 3 demo personas, in-sample; coverage validator-enforced              |
+| Document integrity  | 28 cases × 3 trials   | dev 19/19 pass^3; held-out 9/9 pass^3; 0 safety failures; $0.60 total | $0.6004 | synthetic fixtures; judge-free code graders; held-out inspected once |
 
 Details: `apps/policy/eval/ANSWER-RESULTS.md`,
 `apps/research/eval/BRIEF-RESULTS.md`,
-`apps/research/eval/CONTEXT-RESULTS.md`.
+`apps/research/eval/CONTEXT-RESULTS.md`,
+`apps/applications/eval/INTEGRITY-RESULTS.md`.
 
 ## 6. Graders
 

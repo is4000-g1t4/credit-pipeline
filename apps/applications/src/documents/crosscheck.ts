@@ -26,6 +26,7 @@ import {
 	type Db,
 	type Tx,
 } from "@credit/db/applications";
+import { codePointLength, codePointSlice, utf16IndexToCodePoint } from "@credit/core";
 import { HttpError, writeAudit } from "@credit/service-kit";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { lockApplication } from "./access.js";
@@ -40,21 +41,10 @@ export interface CrosscheckConfig {
 }
 
 // --- Code-point offsets (quotes index raw `document_pages.text` by Unicode
-// code point, never UTF-16 — surrogate pairs count as one) ---
+// code point, never UTF-16 — surrogate pairs count as one). Shared with the
+// web integrity panel via @credit/core so the highlight cannot drift. ---
 
-/** Slice `text` by Unicode code-point indices (String.prototype tolerant). */
-export function codePointSlice(text: string, start: number, end: number): string {
-	return [...text].slice(start, end).join("");
-}
-
-export function codePointLength(text: string): number {
-	return [...text].length;
-}
-
-/** UTF-16 index (e.g. RegExp `match.index`) → code-point index. */
-export function utf16IndexToCodePoint(text: string, utf16Index: number): number {
-	return Array.from(text.slice(0, utf16Index)).length;
-}
+export { codePointLength, codePointSlice, utf16IndexToCodePoint };
 
 export function quoteHashFor(quote: string): string {
 	return sha256Hex(Buffer.from(quote, "utf8"));

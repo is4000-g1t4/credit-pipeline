@@ -10,6 +10,23 @@ export interface LocatedQuote {
 	quoteEnd: number;
 }
 
+// --- Code-point offsets (quotes index raw stored text by Unicode code
+// point, never UTF-16 — surrogate pairs count as one) ---
+
+/** Slice `text` by Unicode code-point indices (String.prototype tolerant). */
+export function codePointSlice(text: string, start: number, end: number): string {
+	return [...text].slice(start, end).join("");
+}
+
+export function codePointLength(text: string): number {
+	return [...text].length;
+}
+
+/** UTF-16 index (e.g. RegExp `match.index`) → code-point index. */
+export function utf16IndexToCodePoint(text: string, utf16Index: number): number {
+	return Array.from(text.slice(0, utf16Index)).length;
+}
+
 export function locateQuote(
 	text: string,
 	quote: string,

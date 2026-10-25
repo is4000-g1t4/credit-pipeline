@@ -111,6 +111,34 @@ const parsed = createEnv({
 		// with 422 rather than pointing applicants at a placeholder domain.
 		ASSIST_ADVERSE_CONTACT_PATH: z.string().default(""),
 		ASSIST_ADVERSE_PROMPT_VERSION: z.string().min(1).default("adverse-letter-v1"),
+		// E2 document integrity + EN-05 fraud review. Flags default off; the
+		// deterministic panel works without a model. Triage requires both
+		// feature flags and its own agent flag.
+		DOCUMENT_INTEGRITY_ENABLED: z.enum(["true", "false"]).default("false"),
+		FRAUD_REVIEW_ENABLED: z.enum(["true", "false"]).default("false"),
+		DOCUMENT_INTEGRITY_AGENT_ENABLED: z.enum(["true", "false"]).default("false"),
+		DOCUMENT_INTEGRITY_TRIAGE_ENABLED: z.enum(["true", "false"]).default("false"),
+		DOCUMENT_INTEGRITY_MODEL: z.string().min(1).default("deepseek/deepseek-v4.1-flash-1017"),
+		DOCUMENT_INTEGRITY_PROMPT_VERSION: z.string().min(1).default("integrity-analysis-v1"),
+		DOCUMENT_INTEGRITY_AGENT_VERSION: z.string().min(1).default("integrity-agent-v1"),
+		DOCUMENT_INTEGRITY_TRIAGE_PROMPT_VERSION: z.string().min(1).default("integrity-triage-v1"),
+		DOCUMENT_INTEGRITY_MAX_STEPS: z.coerce.number().int().min(1).max(64).default(24),
+		DOCUMENT_INTEGRITY_MAX_TOOL_CALLS: z.coerce.number().int().min(1).max(100).default(32),
+		DOCUMENT_INTEGRITY_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(300_000).default(90_000),
+		DOCUMENT_INTEGRITY_MAX_COST_USD: z.coerce.number().min(0).default(0.25),
+		DOCUMENT_INTEGRITY_MAX_OUTPUT_TOKENS: z.coerce
+			.number()
+			.int()
+			.min(256)
+			.max(32_000)
+			.default(4_000),
+		DOCUMENT_INTEGRITY_FLAG_SEVERITY: z.enum(["low", "medium", "high"]).default("high"),
+		DOCUMENT_INTEGRITY_RETENTION_DAYS: z.coerce.number().int().positive().default(365),
+		DOCUMENT_INTEGRITY_SYSTEM_USER_ID: z
+			.string()
+			.uuid()
+			.default("00000000-0000-0000-0000-000000000000"),
+		DOCUMENT_INTEGRITY_MAX_RUNS_PER_HASH: z.coerce.number().int().min(1).max(10).default(3),
 		// HTTP body cap for the multipart upload path only (10 MB file +
 		// overhead); every other /api/* route keeps the 100 KB JSON bound.
 		DOCUMENT_UPLOAD_MAX_BYTES: z.coerce.number().int().positive().default(MAX_UPLOAD_BYTES),
@@ -198,6 +226,27 @@ export const env = {
 		adverseJurisdiction: parsed.ASSIST_ADVERSE_JURISDICTION,
 		adverseContactPath: parsed.ASSIST_ADVERSE_CONTACT_PATH,
 		adversePromptVersion: parsed.ASSIST_ADVERSE_PROMPT_VERSION,
+	},
+	integrity: {
+		enabled: parsed.DOCUMENT_INTEGRITY_ENABLED === "true",
+		fraudReviewEnabled: parsed.FRAUD_REVIEW_ENABLED === "true",
+		agentEnabled: parsed.DOCUMENT_INTEGRITY_AGENT_ENABLED === "true",
+		triageEnabled: parsed.DOCUMENT_INTEGRITY_TRIAGE_ENABLED === "true",
+		model: parsed.DOCUMENT_INTEGRITY_MODEL,
+		promptVersion: parsed.DOCUMENT_INTEGRITY_PROMPT_VERSION,
+		agentVersion: parsed.DOCUMENT_INTEGRITY_AGENT_VERSION,
+		triagePromptVersion: parsed.DOCUMENT_INTEGRITY_TRIAGE_PROMPT_VERSION,
+		maxSteps: parsed.DOCUMENT_INTEGRITY_MAX_STEPS,
+		maxToolCalls: parsed.DOCUMENT_INTEGRITY_MAX_TOOL_CALLS,
+		timeoutMs: parsed.DOCUMENT_INTEGRITY_TIMEOUT_MS,
+		maxCostUsd: parsed.DOCUMENT_INTEGRITY_MAX_COST_USD,
+		maxOutputTokens: parsed.DOCUMENT_INTEGRITY_MAX_OUTPUT_TOKENS,
+		flagSeverity: parsed.DOCUMENT_INTEGRITY_FLAG_SEVERITY,
+		retentionDays: parsed.DOCUMENT_INTEGRITY_RETENTION_DAYS,
+		systemUserId: parsed.DOCUMENT_INTEGRITY_SYSTEM_USER_ID,
+		maxRunsPerHash: parsed.DOCUMENT_INTEGRITY_MAX_RUNS_PER_HASH,
+		openRouterApiKey: parsed.OPENROUTER_API_KEY ?? null,
+		openRouterBaseUrl: parsed.OPENROUTER_BASE_URL,
 	},
 	nodeEnv: parsed.NODE_ENV,
 };

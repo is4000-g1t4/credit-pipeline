@@ -36,7 +36,11 @@ const INSTRUCTION_RE =
 
 /** Zero-width/format chars interleaved to split keywords. Stripped after
  * NFKC (which folds fullwidth homoglyphs to ASCII) before matching. */
-const ZW_RE = /[\u200B\u200C\u200D\uFEFF\u2060\u180E]/g;
+const ZW_CODE_POINTS = [0x200b, 0x200c, 0x200d, 0xfeff, 0x2060, 0x180e] as const;
+const ZW_RE = new RegExp(
+	`[${ZW_CODE_POINTS.map((codePoint) => String.fromCharCode(codePoint)).join("")}]`,
+	"g",
+);
 
 function normalizeForScan(text: string): string {
 	return text.normalize("NFKC").replace(ZW_RE, "");

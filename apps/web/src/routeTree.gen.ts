@@ -18,6 +18,8 @@ import { Route as LoansIndexRouteImport } from './routes/loans/index'
 import { Route as LoansIdRouteImport } from './routes/loans/$id'
 import { Route as OfficerIndexRouteImport } from './routes/officer/index'
 import { Route as OfficerPoliciesRouteImport } from './routes/officer/policies'
+import { Route as OfficerFraudReviewIndexRouteImport } from './routes/officer/fraud-review/index'
+import { Route as OfficerFraudReviewIdRouteImport } from './routes/officer/fraud-review/$id'
 import { Route as OfficerReviewIndexRouteImport } from './routes/officer/review/index'
 import { Route as OfficerReviewIdRouteImport } from './routes/officer/review/$id'
 
@@ -66,6 +68,16 @@ const OfficerPoliciesRoute = OfficerPoliciesRouteImport.update({
   path: '/officer/policies',
   getParentRoute: () => rootRouteImport,
 } as any)
+const OfficerFraudReviewIndexRoute = OfficerFraudReviewIndexRouteImport.update({
+  id: '/officer/fraud-review/',
+  path: '/officer/fraud-review/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OfficerFraudReviewIdRoute = OfficerFraudReviewIdRouteImport.update({
+  id: '/officer/fraud-review/$id',
+  path: '/officer/fraud-review/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const OfficerReviewIndexRoute = OfficerReviewIndexRouteImport.update({
   id: '/officer/review/',
   path: '/officer/review/',
@@ -87,7 +99,9 @@ export interface FileRoutesByFullPath {
   '/applications/': typeof ApplicationsIndexRoute
   '/loans/': typeof LoansIndexRoute
   '/officer/': typeof OfficerIndexRoute
+  '/officer/fraud-review/$id': typeof OfficerFraudReviewIdRoute
   '/officer/review/$id': typeof OfficerReviewIdRoute
+  '/officer/fraud-review/': typeof OfficerFraudReviewIndexRoute
   '/officer/review/': typeof OfficerReviewIndexRoute
 }
 export interface FileRoutesByTo {
@@ -100,7 +114,9 @@ export interface FileRoutesByTo {
   '/applications': typeof ApplicationsIndexRoute
   '/loans': typeof LoansIndexRoute
   '/officer': typeof OfficerIndexRoute
+  '/officer/fraud-review/$id': typeof OfficerFraudReviewIdRoute
   '/officer/review/$id': typeof OfficerReviewIdRoute
+  '/officer/fraud-review': typeof OfficerFraudReviewIndexRoute
   '/officer/review': typeof OfficerReviewIndexRoute
 }
 export interface FileRoutesById {
@@ -114,7 +130,9 @@ export interface FileRoutesById {
   '/applications/': typeof ApplicationsIndexRoute
   '/loans/': typeof LoansIndexRoute
   '/officer/': typeof OfficerIndexRoute
+  '/officer/fraud-review/$id': typeof OfficerFraudReviewIdRoute
   '/officer/review/$id': typeof OfficerReviewIdRoute
+  '/officer/fraud-review/': typeof OfficerFraudReviewIndexRoute
   '/officer/review/': typeof OfficerReviewIndexRoute
 }
 export interface FileRouteTypes {
@@ -129,7 +147,9 @@ export interface FileRouteTypes {
     | '/applications/'
     | '/loans/'
     | '/officer/'
+    | '/officer/fraud-review/$id'
     | '/officer/review/$id'
+    | '/officer/fraud-review/'
     | '/officer/review/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -142,7 +162,9 @@ export interface FileRouteTypes {
     | '/applications'
     | '/loans'
     | '/officer'
+    | '/officer/fraud-review/$id'
     | '/officer/review/$id'
+    | '/officer/fraud-review'
     | '/officer/review'
   id:
     | '__root__'
@@ -155,7 +177,9 @@ export interface FileRouteTypes {
     | '/applications/'
     | '/loans/'
     | '/officer/'
+    | '/officer/fraud-review/$id'
     | '/officer/review/$id'
+    | '/officer/fraud-review/'
     | '/officer/review/'
   fileRoutesById: FileRoutesById
 }
@@ -169,7 +193,9 @@ export interface RootRouteChildren {
   ApplicationsIndexRoute: typeof ApplicationsIndexRoute
   LoansIndexRoute: typeof LoansIndexRoute
   OfficerIndexRoute: typeof OfficerIndexRoute
+  OfficerFraudReviewIdRoute: typeof OfficerFraudReviewIdRoute
   OfficerReviewIdRoute: typeof OfficerReviewIdRoute
+  OfficerFraudReviewIndexRoute: typeof OfficerFraudReviewIndexRoute
   OfficerReviewIndexRoute: typeof OfficerReviewIndexRoute
 }
 
@@ -238,6 +264,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OfficerPoliciesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/officer/fraud-review/': {
+      id: '/officer/fraud-review/'
+      path: '/officer/fraud-review'
+      fullPath: '/officer/fraud-review/'
+      preLoaderRoute: typeof OfficerFraudReviewIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/officer/fraud-review/$id': {
+      id: '/officer/fraud-review/$id'
+      path: '/officer/fraud-review/$id'
+      fullPath: '/officer/fraud-review/$id'
+      preLoaderRoute: typeof OfficerFraudReviewIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/officer/review/': {
       id: '/officer/review/'
       path: '/officer/review'
@@ -265,7 +305,9 @@ const rootRouteChildren: RootRouteChildren = {
   ApplicationsIndexRoute: ApplicationsIndexRoute,
   LoansIndexRoute: LoansIndexRoute,
   OfficerIndexRoute: OfficerIndexRoute,
+  OfficerFraudReviewIdRoute: OfficerFraudReviewIdRoute,
   OfficerReviewIdRoute: OfficerReviewIdRoute,
+  OfficerFraudReviewIndexRoute: OfficerFraudReviewIndexRoute,
   OfficerReviewIndexRoute: OfficerReviewIndexRoute,
 }
 export const routeTree = rootRouteImport

@@ -1,0 +1,2 @@
+# Eval artifacts are local-only; keep harness scripts and the dataset.
+*.json

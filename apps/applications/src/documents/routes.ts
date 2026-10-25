@@ -55,6 +55,12 @@ export interface DocumentRouteDeps {
 	t17: { demoMode: boolean; demoAsOf: Date };
 	/** Application blob retention for reuse copies. */
 	appRetentionDays: number;
+	/** E2 hook: re-evaluate integrity after an officer/service mutation. */
+	onDocumentMutation?: (input: {
+		applicationId: string;
+		actor: { id: string; role: string };
+		action: "upload" | "reuse" | "crosscheck" | "retry_ocr";
+	}) => Promise<void>;
 }
 
 /** Metadata only — never page text, nonces, tags, or storage keys. */
@@ -108,6 +114,28 @@ export function documentRoutes(deps: DocumentRouteDeps): ServiceApp {
 				payload: { applicationId, role: user.role, attemptedAction: action },
 			});
 		});
+	};
+
+	/** Best-effort integrity evaluation after a successful mutation. The
+	 * primary document action must never fail because a review item could not
+	 * be created; the route-level `evaluate` endpoint is the retry. */
+	const notifyMutation = async (
+		applicationId: string,
+		user: { id: string; role: string },
+		action: "upload" | "reuse" | "crosscheck" | "retry_ocr",
+	): Promise<void> => {
+		try {
+			await deps.onDocumentMutation?.({ applicationId, actor: user, action });
+		} catch (err) {
+			logger.warn(
+				{
+					applicationId,
+					action,
+					errorCode: err instanceof HttpError ? err.code : "unknown",
+				},
+				"integrity evaluation failed",
+			);
+		}
 	};
 
 	/** Feature → access → consent gate shared by every document route.
@@ -197,6 +225,7 @@ export function documentRoutes(deps: DocumentRouteDeps): ServiceApp {
 		});
 		noStore(c);
 		logger.info({ crosscheckId: (result.crosscheck as { id: string }).id }, "document crosscheck");
+		await notifyMutation(applicationId, me, "crosscheck");
 		return c.json(result, 200);
 	});
 
@@ -260,6 +289,7 @@ export function documentRoutes(deps: DocumentRouteDeps): ServiceApp {
 		});
 		noStore(c);
 		logger.info({ documentFileId: outcome.file.id, replayed: outcome.replayed }, "document upload");
+		if (!outcome.replayed) await notifyMutation(applicationId, me, "upload");
 		return c.json({ file: presentFile(outcome.file) }, outcome.httpStatus as 200 | 201);
 	});
 
@@ -312,6 +342,7 @@ export function documentRoutes(deps: DocumentRouteDeps): ServiceApp {
 			{ applicationId, reused: outcome.files.length, created: outcome.created },
 			"document reuse",
 		);
+		if (outcome.created) await notifyMutation(applicationId, me, "reuse");
 		return c.json({ files: outcome.files }, outcome.created ? 201 : 200);
 	});
 
@@ -402,6 +433,7 @@ export function documentRoutes(deps: DocumentRouteDeps): ServiceApp {
 		const { file } = await service.retryOcr({ applicationId, fileId, userId: me.id });
 		noStore(c);
 		logger.info({ documentFileId: file.id }, "document retry-ocr");
+		await notifyMutation(applicationId, me, "retry_ocr");
 		return c.json({ file: presentFile(file) }, 200);
 	});
 

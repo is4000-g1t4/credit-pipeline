@@ -17,6 +17,7 @@ export const ARTIFACT_TYPES = [
 	"credit_memo",
 	"policy_exception_memo",
 	"adverse_action_letter",
+	"document_integrity_brief",
 ] as const;
 
 export type ArtifactType = (typeof ARTIFACT_TYPES)[number];
@@ -33,6 +34,8 @@ export const VALIDATION_CODES = [
 	"PROTECTED_ATTRIBUTE",
 	"FAIR_LENDING_PROXY",
 	"INTERNAL_REFERENCE",
+	"DEFINITIVE_FRAUD_LANGUAGE",
+	"CROSS_CUSTOMER_REFERENCE",
 ] as const;
 
 export type ValidationCode = (typeof VALIDATION_CODES)[number];
@@ -206,10 +209,43 @@ export const adverseActionLetterContentSchema = z
 
 export type AdverseActionLetterContent = z.infer<typeof adverseActionLetterContentSchema>;
 
+const briefClaimSchema = z
+	.object({
+		text: z.string().min(1).max(1_200),
+		citations: z.array(citationSchema).min(1).max(5),
+	})
+	.strict();
+
+/** US-INT-3 reviewer brief. Every statement is a cited claim; gaps are typed
+ * open items. `questionsForReviewer` may ask about fraud/tampering but may not
+ * state it; the validator scans statements only. */
+export const documentIntegrityBriefContentSchema = z
+	.object({
+		title: z.string().min(1).max(200),
+		summary: briefClaimSchema,
+		candidateContradictions: z.array(briefClaimSchema).max(20),
+		alternativeExplanations: z.array(briefClaimSchema).max(10),
+		missingEvidence: z.array(openItemSchema).max(20),
+		questionsForReviewer: z
+			.array(
+				z
+					.string()
+					.min(1)
+					.max(500)
+					.refine((value) => value.trim().endsWith("?"), "must be a question"),
+			)
+			.max(10),
+		suggestedPriority: z.enum(["low", "medium", "high"]),
+	})
+	.strict();
+
+export type DocumentIntegrityBriefContent = z.infer<typeof documentIntegrityBriefContentSchema>;
+
 export type GeneratedContent =
 	| CreditMemoContent
 	| PolicyExceptionMemoContent
-	| AdverseActionLetterContent;
+	| AdverseActionLetterContent
+	| DocumentIntegrityBriefContent;
 
 export type ValidationResult =
 	| { ok: true; artifactType: ArtifactType; content: GeneratedContent; citations: CitationRecord[] }
@@ -219,6 +255,7 @@ const SCHEMAS = {
 	credit_memo: creditMemoContentSchema,
 	policy_exception_memo: policyExceptionMemoContentSchema,
 	adverse_action_letter: adverseActionLetterContentSchema,
+	document_integrity_brief: documentIntegrityBriefContentSchema,
 } as const;
 
 const DECISION_LANGUAGE_RE =
@@ -239,6 +276,38 @@ function scanNormalize(text: string): string {
  * list cannot leave the test asserting an old copy. */
 export function containsDecisionLanguage(text: string): boolean {
 	return DECISION_LANGUAGE_RE.test(scanNormalize(text));
+}
+
+/** Internal reviewer briefs may legitimately discuss a credit limit, rate, or
+ * terms on a statement. Ban only action/decision language, not descriptors. */
+const BRIEF_DECISION_LANGUAGE_RE =
+	/\b(?:approv(?:e|ed|es|al|ing)|declin(?:e|ed|es|ing)|reject(?:ed|ion|ing|s)?|recommend(?:ed|ation|ations|ing|s)?|decision(?:s)?)\b/i;
+
+export function containsBriefDecisionLanguage(text: string): boolean {
+	return BRIEF_DECISION_LANGUAGE_RE.test(scanNormalize(text));
+}
+
+/** Definitive assertions, not the words themselves: “fraud review” and
+ * “possible tampering” are allowed; “confirmed fraud” is not. */
+const DEFINITIVE_FRAUD_RE =
+	/\b(?:confirmed|proven|actual|definite|clearly|obviously|evidence of|indicates?|demonstrates?)\s+(?:\w+\s+){0,2}(?:fraud|tampering|forgery|fabrication)\b|\b(?:is|are|was|were)\s+(?:fraud|fraudulent|tampered|forged|fabricated|counterfeit|fake)\b|\b(?:forged|fabricated|counterfeit|fake)\s+(?:document|statement|signature|invoice)\b/i;
+
+export function containsDefinitiveFraudLanguage(text: string): boolean {
+	return DEFINITIVE_FRAUD_RE.test(scanNormalize(text));
+}
+
+const APP_REF_RE = /\bAPP-\d{4}-[A-Z2-7]{6}\b/i;
+
+export function containsApplicationReference(text: string): boolean {
+	return APP_REF_RE.test(text);
+}
+
+const INTERROGATIVE_START_RE =
+	/^(?:could|does|do|is|are|was|were|what|which|why|how|has|have|can|should)\b/i;
+
+export function isReviewerQuestion(text: string): boolean {
+	const trimmed = text.trim();
+	return trimmed.endsWith("?") && INTERROGATIVE_START_RE.test(trimmed);
 }
 
 const EMAIL_RE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
@@ -282,6 +351,8 @@ interface TextNode {
 	skipFairLending?: boolean;
 	/** The same structured fields are not internal-reference prose. */
 	skipInternalReference?: boolean;
+	/** A reviewer question may ask about fraud/tampering without asserting it. */
+	question?: boolean;
 }
 
 /** Case-scoped PII values the generated prose must not repeat. The evidence
@@ -311,6 +382,25 @@ function escapeRegExp(value: string): string {
 
 function citationNodes(artifactType: ArtifactType, content: GeneratedContent): ClaimNode[] {
 	const nodes: ClaimNode[] = [];
+	if (artifactType === "document_integrity_brief") {
+		const brief = content as DocumentIntegrityBriefContent;
+		nodes.push({ path: "summary", citations: brief.summary.citations, requiresCitation: true });
+		for (const [index, claim] of brief.candidateContradictions.entries()) {
+			nodes.push({
+				path: `candidateContradictions.${index}`,
+				citations: claim.citations,
+				requiresCitation: true,
+			});
+		}
+		for (const [index, claim] of brief.alternativeExplanations.entries()) {
+			nodes.push({
+				path: `alternativeExplanations.${index}`,
+				citations: claim.citations,
+				requiresCitation: true,
+			});
+		}
+		return nodes;
+	}
 	if (artifactType === "adverse_action_letter") {
 		const letter = content as AdverseActionLetterContent;
 		for (const [index, reason] of letter.principalReasons.entries()) {
@@ -340,19 +430,77 @@ function openItemRefs(
 	content: GeneratedContent,
 ): Array<{ path: string; ref: string }> {
 	const refs: Array<{ path: string; ref: string }> = [];
+	const prefix = artifactType === "document_integrity_brief" ? "missingEvidence" : "openItems";
 	const items =
-		artifactType === "adverse_action_letter"
-			? (content as AdverseActionLetterContent).openItems
-			: (content as CreditMemoContent | PolicyExceptionMemoContent).openItems;
+		artifactType === "document_integrity_brief"
+			? (content as DocumentIntegrityBriefContent).missingEvidence
+			: artifactType === "adverse_action_letter"
+				? (content as AdverseActionLetterContent).openItems
+				: (content as CreditMemoContent | PolicyExceptionMemoContent).openItems;
 	for (const [index, item] of items.entries()) {
 		if (item.sourceRef !== undefined) {
-			refs.push({ path: `openItems.${index}.sourceRef`, ref: item.sourceRef });
+			refs.push({ path: `${prefix}.${index}.sourceRef`, ref: item.sourceRef });
 		}
 	}
 	return refs;
 }
 
 function textNodes(artifactType: ArtifactType, content: GeneratedContent): TextNode[] {
+	if (artifactType === "document_integrity_brief") {
+		const brief = content as DocumentIntegrityBriefContent;
+		const nodes: TextNode[] = [
+			{
+				path: "title",
+				text: brief.title,
+				skipInternalReference: true,
+				// Reviewer-facing internal brief: the applicant-facing
+				// fair-lending deny list (which includes common words such as
+				// "single") is not the right control. PII/direct identifiers and
+				// cross-customer refs are still scanned.
+				skipFairLending: true,
+			},
+			{
+				path: "summary.text",
+				text: brief.summary.text,
+				skipInternalReference: true,
+				skipFairLending: true,
+			},
+		];
+		for (const [index, claim] of brief.candidateContradictions.entries()) {
+			nodes.push({
+				path: `candidateContradictions.${index}.text`,
+				text: claim.text,
+				skipInternalReference: true,
+				skipFairLending: true,
+			});
+		}
+		for (const [index, claim] of brief.alternativeExplanations.entries()) {
+			nodes.push({
+				path: `alternativeExplanations.${index}.text`,
+				text: claim.text,
+				skipInternalReference: true,
+				skipFairLending: true,
+			});
+		}
+		for (const [index, item] of brief.missingEvidence.entries()) {
+			nodes.push({
+				path: `missingEvidence.${index}.text`,
+				text: item.text,
+				skipInternalReference: true,
+				skipFairLending: true,
+			});
+		}
+		for (const [index, question] of brief.questionsForReviewer.entries()) {
+			nodes.push({
+				path: `questionsForReviewer.${index}`,
+				text: question,
+				skipInternalReference: true,
+				skipFairLending: true,
+				question: true,
+			});
+		}
+		return nodes;
+	}
 	// Memos are officer-facing and may legitimately cite policy sections;
 	// the internal-reference scan is an applicant-letter control.
 	const memoNode = artifactType !== "adverse_action_letter";
@@ -435,6 +583,9 @@ export function validateGeneratedText(input: {
 	artifactType: ArtifactType;
 	content: unknown;
 	evidence: EvidenceBundle;
+	/** Extra values that must not appear in a reviewer brief (other-application
+	 * refs/names). Case-scoped evidence handles the current applicant. */
+	forbiddenValues?: string[];
 }): ValidationResult {
 	const schema = SCHEMAS[input.artifactType];
 	const parsed = schema.safeParse(input.content);
@@ -579,14 +730,58 @@ export function validateGeneratedText(input: {
 	}
 
 	const piiValues = knownPii(input.evidence).map((value) => scanNormalize(value).toLowerCase());
+	const isBrief = input.artifactType === "document_integrity_brief";
+	const forbidden = isBrief
+		? (input.forbiddenValues ?? [])
+				.map((value) => value.trim().toLowerCase())
+				.filter((value) => value.length >= 4)
+		: [];
 	for (const node of textNodes(input.artifactType, content)) {
 		const scanned = scanNormalize(node.text);
-		if (!node.allowDecisionLanguage && containsDecisionLanguage(node.text)) {
+		const decisionLanguage = isBrief
+			? containsBriefDecisionLanguage(node.text)
+			: containsDecisionLanguage(node.text);
+		if (!node.allowDecisionLanguage && decisionLanguage) {
 			issues.push({
 				code: "DECISION_LANGUAGE",
 				path: node.path,
 				message: "text contains decision language",
 			});
+		}
+		if (isBrief && node.question) {
+			if (!isReviewerQuestion(node.text)) {
+				issues.push({
+					code: "SCHEMA_INVALID",
+					path: node.path,
+					message: "reviewer question must start with an interrogative",
+				});
+			}
+			if (/\b(?:confirmed|proven|actual|definitely|clearly)\b/i.test(node.text)) {
+				issues.push({
+					code: "DEFINITIVE_FRAUD_LANGUAGE",
+					path: node.path,
+					message: "reviewer question states a definitive finding",
+				});
+			}
+		} else if (isBrief && containsDefinitiveFraudLanguage(node.text)) {
+			issues.push({
+				code: "DEFINITIVE_FRAUD_LANGUAGE",
+				path: node.path,
+				message: "text states or implies fraud/tampering is confirmed",
+			});
+		}
+		if (isBrief) {
+			const lowered = node.text.toLowerCase();
+			if (
+				containsApplicationReference(node.text) ||
+				forbidden.some((value) => lowered.includes(value))
+			) {
+				issues.push({
+					code: "CROSS_CUSTOMER_REFERENCE",
+					path: node.path,
+					message: "text references another application or customer",
+				});
+			}
 		}
 		if (!node.skipFairLending && PROTECTED_ATTRIBUTE_RE.test(scanned)) {
 			issues.push({

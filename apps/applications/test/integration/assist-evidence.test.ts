@@ -13,11 +13,17 @@ import { randomUUID } from "node:crypto";
 import { createDb } from "@credit/db";
 import {
 	applications,
+	documentConsistencyCandidates,
 	documentCrosschecks,
+	documentFieldCandidates,
 	documentFiles,
+	documentFingerprints,
 	documentFindings,
+	documentIntegrityRuns,
 	documentLegalHolds,
 	documentPages,
+	fraudReviews,
+	generatedArtifacts,
 	policyEvaluations,
 	scores,
 } from "@credit/db/applications";
@@ -271,6 +277,14 @@ afterAll(async () => {
 		await db.delete(documentCrosschecks).where(eq(documentCrosschecks.applicationId, id));
 		await db.delete(documentPages).where(eq(documentPages.documentFileId, id));
 		await db.delete(documentLegalHolds).where(eq(documentLegalHolds.applicationId, id));
+		await db.delete(documentFieldCandidates).where(eq(documentFieldCandidates.applicationId, id));
+		await db
+			.delete(documentConsistencyCandidates)
+			.where(eq(documentConsistencyCandidates.applicationId, id));
+		await db.delete(fraudReviews).where(eq(fraudReviews.applicationId, id));
+		await db.delete(documentIntegrityRuns).where(eq(documentIntegrityRuns.applicationId, id));
+		await db.delete(generatedArtifacts).where(eq(generatedArtifacts.applicationId, id));
+		await db.delete(documentFingerprints).where(eq(documentFingerprints.applicationId, id));
 		await db.delete(documentFiles).where(eq(documentFiles.applicationId, id));
 		await db.delete(scores).where(eq(scores.applicationId, id));
 		await db.delete(policyEvaluations).where(eq(policyEvaluations.applicationId, id));

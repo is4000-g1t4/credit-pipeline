@@ -4,6 +4,7 @@
 import { createHash } from "node:crypto";
 import {
 	documentLegalHolds,
+	fraudReviews,
 	generatedArtifactHolds,
 	generatedArtifacts,
 	withTx,
@@ -758,7 +759,7 @@ export async function releaseArtifactHold(
 
 export async function runArtifactRetention(
 	db: Db,
-	input: { now?: Date; limit?: number },
+	input: { now?: Date; limit?: number; fraudReviewEnabled?: boolean },
 ): Promise<{ checked: number; deleted: number; skippedHolds: number }> {
 	const now = input.now ?? new Date();
 	const limit = input.limit ?? 500;
@@ -788,6 +789,22 @@ export async function runArtifactRetention(
 			if (await hasActiveHold(tx, fresh.id, fresh.applicationId)) {
 				result.skippedHolds++;
 				return;
+			}
+			if (input.fraudReviewEnabled ?? true) {
+				const activeReview = await tx
+					.select({ id: fraudReviews.id })
+					.from(fraudReviews)
+					.where(
+						and(
+							eq(fraudReviews.applicationId, fresh.applicationId),
+							sql`${fraudReviews.status} IN ('open','needs_info')`,
+						),
+					)
+					.limit(1);
+				if (activeReview.length > 0) {
+					result.skippedHolds++;
+					return;
+				}
 			}
 			await tx
 				.update(generatedArtifacts)

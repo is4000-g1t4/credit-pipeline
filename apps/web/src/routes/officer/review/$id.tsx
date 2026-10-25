@@ -4,6 +4,7 @@ import { useState } from "react";
 import { CaseView } from "../../../components/CaseView";
 import { DecisionPanel } from "../../../components/DecisionPanel";
 import { DocumentPanel } from "../../../components/DocumentPanel";
+import { IntegrityPanel } from "../../../components/IntegrityPanel";
 import { MemoPanel } from "../../../components/MemoPanel";
 import { ResearchPanel } from "../../../components/ResearchPanel";
 import { EmptyState, ErrorBox, Page, Skeleton } from "../../../components/ui";
@@ -66,6 +67,7 @@ function ReviewCase() {
 						aiResearchConsent={detail.data.application.aiResearchConsent}
 						onSelectionChange={setResearchSelection}
 					/>
+					<IntegrityPanel applicationId={id} />
 					{detail.data.application.status === "pending_review" ? (
 						<>
 							<MemoPanel applicationId={id} caseStatus={detail.data.application.status} />

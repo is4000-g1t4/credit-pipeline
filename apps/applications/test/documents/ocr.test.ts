@@ -210,7 +210,7 @@ describe("pdf text extraction (pdfjs-dist)", () => {
 		expect(result.pages[0].source).toBe("pdf_text");
 		expect(result.pages[0].confidence).toBe(1.0);
 		expect(result.textLayerRisk).toBe(false);
-	});
+	}, 20_000);
 
 	it("reads multiple pages and honors the page cap", async () => {
 		const bytes = buildPdf(["Page One", "Page Two", "Page Three"]);

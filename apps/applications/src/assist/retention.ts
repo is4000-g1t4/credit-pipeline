@@ -10,12 +10,17 @@ export interface ArtifactRetentionDeps {
 	logger?: Pick<Logger, "info" | "warn">;
 	intervalMs?: number;
 	now?: () => Date;
+	/** E2: keep briefs while a fraud review is active. */
+	fraudReviewEnabled?: boolean;
 }
 
 export async function runArtifactRetentionOnce(
 	deps: ArtifactRetentionDeps,
 ): Promise<{ checked: number; deleted: number; skippedHolds: number }> {
-	return runArtifactRetention(deps.db, { now: deps.now?.() });
+	return runArtifactRetention(deps.db, {
+		now: deps.now?.(),
+		fraudReviewEnabled: deps.fraudReviewEnabled,
+	});
 }
 
 export function startArtifactRetention(deps: ArtifactRetentionDeps): () => void {

@@ -344,6 +344,10 @@ export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
 		if (!isUuid(id)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const artifact = await getArtifact(db, id);
 		if (!artifact) throw new HttpError(404, "NOT_FOUND", "not found");
+		// Integrity briefs are reviewer-only; the fraud route is the sole reader.
+		if (artifact.type === "document_integrity_brief") {
+			throw new HttpError(404, "NOT_FOUND", "not found");
+		}
 		return artifact;
 	};
 
@@ -825,6 +829,13 @@ export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
 				"adverse-action letters must be generated from a declined case",
 			);
 		}
+		if (parsed.data.type === "document_integrity_brief") {
+			throw new HttpError(
+				422,
+				"DEDICATED_ROUTE_REQUIRED",
+				"document integrity briefs are created by the triage agent",
+			);
+		}
 		const evidence = await assembleFor(kase, actor);
 		const validation = validateGeneratedText({
 			artifactType: parsed.data.type,
@@ -865,9 +876,9 @@ export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
 			applicationId,
 			rawType === undefined ? undefined : (rawType as ArtifactType),
 		);
-		const visible = kase.assignedToMe
-			? items
-			: items.filter((artifact) => !hasDocumentCitation(artifact));
+		const visible = (
+			kase.assignedToMe ? items : items.filter((artifact) => !hasDocumentCitation(artifact))
+		).filter((artifact) => artifact.type !== "document_integrity_brief");
 		return c.json({ items: visible });
 	});
 

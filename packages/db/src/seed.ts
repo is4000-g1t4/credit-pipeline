@@ -8,7 +8,8 @@ dotenv.config({
 	path: fileURLToPath(new URL("../../../.env", import.meta.url)),
 });
 
-import { count } from "drizzle-orm";
+import { count, eq } from "drizzle-orm";
+import { fraudReviewerGrants } from "./applications.js";
 import * as authSchema from "./auth.js";
 import { createDb } from "./client.js";
 import { hashPassword } from "./password.js";
@@ -60,6 +61,29 @@ try {
 	console.log(
 		`db:seed: inserted ${inserted.length}, skipped ${SEED_USERS.length - inserted.length}, users total ${total}`,
 	);
+
+	// Demo fraud reviewer: the seeded officer may resolve review items. This is
+	// a dev/demo seed only; production grants go through the audited internal
+	// route. Skip when the applications DB is not configured (Phase 1 setup).
+	const applicationsUrl = process.env.APPLICATIONS_DATABASE_URL;
+	if (applicationsUrl) {
+		const [officer] = await db
+			.select({ id: users.id })
+			.from(users)
+			.where(eq(users.email, "officer@example.com"));
+		if (officer) {
+			const apps = createDb(applicationsUrl);
+			try {
+				await apps.db
+					.insert(fraudReviewerGrants)
+					.values({ userId: officer.id })
+					.onConflictDoNothing();
+				console.log("db:seed: demo fraud reviewer grant ensured");
+			} finally {
+				await apps.sql.end();
+			}
+		}
+	}
 } finally {
 	await sql.end();
 }

@@ -56,6 +56,24 @@ const FORBIDDEN_KEYS = new Set([
 	"revenue",
 	"registrationnumber",
 	"registration_number",
+	// E2 generated/derived text and provenance must never enter the
+	// append-only audit log (keys are lowercased before the check).
+	"quote",
+	"value",
+	"text",
+	"note",
+	"pagetext",
+	"producer",
+	"creator",
+	"accountnumber",
+	"accountholdername",
+	"resolutionnote",
+	"candidatevalue",
+	"leftvalue",
+	"rightvalue",
+	"leftquote",
+	"rightquote",
+	"explanation",
 ]);
 
 function assertAllowlisted(value: unknown): void {

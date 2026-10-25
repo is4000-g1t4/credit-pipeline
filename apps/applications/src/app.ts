@@ -5,6 +5,7 @@ import {
 	checkOutbox,
 	checkTemporal,
 	createService,
+	writeAudit,
 	type Logger,
 	type ServiceApp,
 	type WorkflowGateway,
@@ -17,6 +18,9 @@ import {
 	documentRoutes,
 	type DocumentAdapters,
 } from "./documents/index.js";
+import { evaluateIntegrity, requeueActiveReviewForEvidenceChange } from "./integrity/evaluate.js";
+import { integrityRoutes } from "./integrity/routes.js";
+import type { IntegrityAgentRunner, IntegrityConfig } from "./integrity/types.js";
 import { resolveContextConfig, type ContextConfig } from "./context/index.js";
 import { type CustomerConfig } from "./customer/index.js";
 import { applicationsRoutes } from "./routes/applications.js";
@@ -48,6 +52,12 @@ export interface ApplicationsDeps {
 		memoAgentRunner?: MemoAgentRunner;
 		now?: () => Date;
 		researchFetchImpl?: typeof fetch;
+	};
+	/** Test seam: E2 integrity config/runner/clock. */
+	integrity?: {
+		config?: Partial<IntegrityConfig>;
+		agentRunner?: IntegrityAgentRunner;
+		now?: () => Date;
 	};
 }
 
@@ -101,6 +111,10 @@ export function createApp(deps: ApplicationsDeps): ServiceApp {
 				storageDir: documentConfig.storageDir,
 				lockTimeoutMs: documentConfig.lockTimeoutMs,
 			},
+			integrity: {
+				fraudReviewEnabled:
+					deps.integrity?.config?.fraudReviewEnabled ?? deps.env.integrity.fraudReviewEnabled,
+			},
 			context: resolveContextConfig(deps.env, deps.context),
 		}),
 	);
@@ -120,6 +134,27 @@ export function createApp(deps: ApplicationsDeps): ServiceApp {
 		}),
 	);
 	const documentService = buildDocumentService(deps.db, documentConfig, deps.documents ?? {});
+	const integrityRuntime = {
+		config: { ...deps.env.integrity, ...deps.integrity?.config },
+		documentsEnabled: documentConfig.featureEnabled,
+		agentRunner: deps.integrity?.agentRunner ?? null,
+		now: deps.integrity?.now ?? (() => new Date()),
+	};
+	const integrityDeps = {
+		db: deps.db,
+		config: integrityRuntime.config,
+		runner: integrityRuntime.agentRunner,
+		logger: deps.logger,
+		now: integrityRuntime.now,
+	};
+	routes.route(
+		"/",
+		integrityRoutes({
+			db: deps.db,
+			runtime: integrityRuntime,
+			logger: deps.logger,
+		}),
+	);
 	routes.route(
 		"/",
 		documentRoutes({
@@ -130,6 +165,40 @@ export function createApp(deps: ApplicationsDeps): ServiceApp {
 			customer: customerConfig,
 			t17,
 			appRetentionDays: documentConfig.retentionDays,
+			onDocumentMutation: async ({ applicationId, actor, action }) => {
+				try {
+					if (actor.role === "applicant") {
+						await requeueActiveReviewForEvidenceChange(integrityDeps, {
+							applicationId,
+							requestedBy: actor.id,
+						});
+						return;
+					}
+					if (actor.role !== "officer" && actor.role !== "service") return;
+					await evaluateIntegrity(integrityDeps, {
+						applicationId,
+						actor: { id: actor.id, role: actor.role },
+						actorRole: actor.role,
+					});
+				} catch (err) {
+					const errorCode =
+						err !== null && typeof err === "object" && "code" in err
+							? String((err as { code: unknown }).code)
+							: "unknown";
+					deps.logger.warn({ applicationId, action, errorCode }, "integrity evaluation failed");
+					await deps.db
+						.transaction(async (tx) => {
+							await writeAudit(tx, {
+								applicationId,
+								actor: "system:integrity-evaluate",
+								action: "integrity.evaluate_failed",
+								entity: "document_integrity_run",
+								payload: { feature: "document_integrity", action, errorCode },
+							});
+						})
+						.catch(() => {});
+				}
+			},
 		}),
 	);
 	return createService({

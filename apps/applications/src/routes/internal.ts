@@ -62,6 +62,8 @@ export interface InternalRouteDeps {
 	sql: Sql;
 	/** Document retention/hold storage + lock bound (D1b). */
 	documents: { storageDir: string; lockTimeoutMs: number };
+	/** E2: active fraud reviews block document retention. */
+	integrity?: { fraudReviewEnabled: boolean };
 	/** T18 internal context reads (D3a): thresholds, window, cursor secret, caps. */
 	context: ContextConfig;
 }
@@ -409,6 +411,7 @@ export function internalRoutes(deps: InternalRouteDeps): ServiceApp {
 				lockTimeoutMs: docLockMs,
 				storageDir,
 				applicationId: id,
+				fraudReviewEnabled: deps.integrity?.fraudReviewEnabled ?? false,
 			}),
 		);
 		return c.json(counts, 200);
@@ -907,7 +910,7 @@ export function internalRoutes(deps: InternalRouteDeps): ServiceApp {
 				// half (e.g. a decision stamped before as-of on a row
 				// decided after it).
 				const known = !(
-					(d != null && d.decidedAt > kase.asOf) ||
+					(d !== null && d !== undefined && d.decidedAt > kase.asOf) ||
 					(p.decidedAt !== null && p.decidedAt > kase.asOf)
 				);
 				const decided = known ? (d ?? null) : null;

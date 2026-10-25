@@ -23,6 +23,7 @@ import {
 	documentFiles,
 	documents,
 	externalReports,
+	fraudReviews,
 	idempotencyKeys,
 	kycChecks,
 	policyEvaluations,
@@ -420,6 +421,24 @@ export function applicationsRoutes(deps: ApplicationsRouteDeps): ServiceApp {
 							sql`CAST(${documentFiles.status} AS text) != 'deleted'`,
 						),
 					);
+				// A withdrawn consent invalidates reviewer-facing evidence too:
+				// the brief is stale (and the fraud route withholds it).
+				await tx
+					.update(fraudReviews)
+					.set({ briefStaleAt: now, updatedAt: now })
+					.where(
+						and(
+							eq(fraudReviews.applicationId, id),
+							sql`${fraudReviews.status} IN ('open','needs_info')`,
+						),
+					);
+				await writeAudit(tx, {
+					applicationId: id,
+					actor: me.id,
+					action: "integrity.review_staled",
+					entity: "fraud_review",
+					payload: { feature: "document_integrity", reason: "consent_withdrawn" },
+				});
 			}
 			await writeAudit(tx, {
 				applicationId: id,

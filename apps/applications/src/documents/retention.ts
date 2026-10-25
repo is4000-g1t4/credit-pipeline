@@ -15,20 +15,26 @@ import {
 	applications,
 	chaseRequestFindings,
 	chaseRequests,
+	documentConsistencyCandidates,
 	documentCrosschecks,
+	documentFieldCandidates,
 	documentFiles,
 	documentFindings,
+	documentFingerprints,
 	documentLegalHolds,
 	documentPages,
+	fraudReviews,
+	generatedArtifacts,
 	withTx,
 	type Db,
 } from "@credit/db/applications";
 import { writeAudit, HttpError, type Logger } from "@credit/service-kit";
-import { and, eq, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { lockApplication } from "./access.js";
 import { sweepDocumentOrphans, type SweepResult } from "./service.js";
 import { deleteBlob, purgeBlob } from "./storage.js";
 import { runCustomerRetention, type CustomerRetentionResult } from "../customer/retention.js";
+import { tombstoneDraftBrief } from "../integrity/store.js";
 
 export interface RetentionResult {
 	checked: number;
@@ -48,6 +54,9 @@ export interface RetentionDeps {
 	/** Scopes the sweep to one application (internal retention/run route). */
 	applicationId?: string;
 	limit?: number;
+	/** E2: while the fraud feature is on, an active review blocks document
+	 * retention so the cited evidence survives the investigation. */
+	fraudReviewEnabled?: boolean;
 }
 
 type FileRow = typeof documentFiles.$inferSelect;
@@ -99,6 +108,80 @@ async function tombstoneFile(
 			.where(inArray(documentCrosschecks.id, crosscheckIds));
 	}
 	await tx.delete(documentPages).where(eq(documentPages.documentFileId, file.id));
+	// US-INT retention: AI candidate quotes, deterministic duplicate metadata,
+	// and any draft brief that cited this file must not outlive the evidence.
+	await tx
+		.update(documentFieldCandidates)
+		.set({ value: "", normalizedValue: "", quote: "", redactedAt: now })
+		.where(eq(documentFieldCandidates.documentFileId, file.id));
+	await tx
+		.update(documentConsistencyCandidates)
+		.set({
+			leftValue: "redacted",
+			leftQuote: "redacted",
+			leftLabel: "redacted",
+			rightValue: "redacted",
+			rightQuote: "redacted",
+			rightLabel: "redacted",
+			explanation: null,
+			explanationVerified: false,
+			status: "rejected",
+			kind: null,
+			redactedAt: now,
+		})
+		.where(
+			or(
+				eq(documentConsistencyCandidates.leftDocumentFileId, file.id),
+				eq(documentConsistencyCandidates.rightDocumentFileId, file.id),
+			),
+		);
+	await tx
+		.update(documentFingerprints)
+		.set({
+			producer: "unknown",
+			creator: "unknown",
+			metadataCreatedAt: null,
+			metadataModifiedAt: null,
+			metadataSource: "unknown",
+			editCodes: [],
+			redactedAt: now,
+		})
+		.where(eq(documentFingerprints.documentFileId, file.id));
+	const draftBriefs = await tx
+		.select({ id: generatedArtifacts.id, citations: generatedArtifacts.citations })
+		.from(generatedArtifacts)
+		.where(
+			and(
+				eq(generatedArtifacts.applicationId, file.applicationId),
+				eq(generatedArtifacts.type, "document_integrity_brief"),
+				eq(generatedArtifacts.status, "draft"),
+			),
+		);
+	const refPrefix = `document:${file.id}:`;
+	for (const brief of draftBriefs) {
+		const citations = Array.isArray(brief.citations) ? brief.citations : [];
+		if (
+			citations.some(
+				(citation) =>
+					typeof citation === "object" &&
+					citation !== null &&
+					"ref" in citation &&
+					typeof citation.ref === "string" &&
+					citation.ref.startsWith(refPrefix),
+			)
+		) {
+			await tombstoneDraftBrief(tx, brief.id, file.applicationId, "system:retention", now);
+		}
+	}
+	await tx
+		.update(fraudReviews)
+		.set({ briefStaleAt: now, updatedAt: now })
+		.where(
+			and(
+				eq(fraudReviews.applicationId, file.applicationId),
+				inArray(fraudReviews.status, ["open", "needs_info"]),
+			),
+		);
 	await tx
 		.update(documentFiles)
 		.set({
@@ -131,6 +214,15 @@ export async function runDocumentRetention(deps: RetentionDeps): Promise<Retenti
 		blobsPending: 0,
 	};
 	const scope = deps.applicationId ? [eq(documentFiles.applicationId, deps.applicationId)] : [];
+	const reviewScope = deps.fraudReviewEnabled
+		? [
+				sql`NOT EXISTS (
+					SELECT 1 FROM fraud_reviews fr
+					WHERE fr.application_id = ${documentFiles.applicationId}
+						AND fr.status IN ('open','needs_info')
+				)`,
+			]
+		: [];
 	const expired = await db
 		.select()
 		.from(documentFiles)
@@ -139,6 +231,7 @@ export async function runDocumentRetention(deps: RetentionDeps): Promise<Retenti
 				sql`${documentFiles.status} != 'deleted'`,
 				lte(documentFiles.retentionUntil, now),
 				...scope,
+				...reviewScope,
 			),
 		)
 		.orderBy(documentFiles.retentionUntil)
@@ -177,6 +270,22 @@ export async function runDocumentRetention(deps: RetentionDeps): Promise<Retenti
 					.limit(1);
 				const fresh = rows[0];
 				if (!fresh || fresh.status === "deleted" || fresh.retentionUntil > now) continue;
+				if (deps.fraudReviewEnabled) {
+					const [activeReview] = await tx
+						.select({ id: fraudReviews.id })
+						.from(fraudReviews)
+						.where(
+							and(
+								eq(fraudReviews.applicationId, applicationId),
+								inArray(fraudReviews.status, ["open", "needs_info"]),
+							),
+						)
+						.limit(1);
+					if (activeReview) {
+						result.skippedHolds++;
+						continue;
+					}
+				}
 				const holds = await tx
 					.select({ documentFileId: documentLegalHolds.documentFileId })
 					.from(documentLegalHolds)
@@ -356,6 +465,8 @@ export interface MaintenanceDeps {
 	/** Fixture clock for fixture-owned customer rows (SPEC-t17-t18 §2.5):
 	 * set from DEMO_AS_OF in demo mode, unset otherwise. */
 	customerDemoAsOf?: Date;
+	/** E2: skip customer evidence while a review is active. */
+	fraudReviewEnabled?: boolean;
 	logger?: Pick<Logger, "info" | "warn">;
 	intervalMs?: number;
 }
@@ -379,6 +490,7 @@ export async function runDocumentMaintenanceOnce(
 		db: deps.db,
 		lockTimeoutMs: deps.lockTimeoutMs,
 		storageDir: deps.storageDir,
+		fraudReviewEnabled: deps.fraudReviewEnabled,
 	});
 	// The customer sweep is independent (disjoint root, per-customer locks):
 	// an app-sweep failure never blocks it and vice versa.
@@ -389,6 +501,7 @@ export async function runDocumentMaintenanceOnce(
 			lockTimeoutMs: deps.lockTimeoutMs,
 			storageDir: deps.customerStorageDir,
 			demoAsOf: deps.customerDemoAsOf,
+			fraudReviewEnabled: deps.fraudReviewEnabled,
 		});
 	}
 	deps.logger?.info(

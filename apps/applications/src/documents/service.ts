@@ -15,16 +15,19 @@ import {
 	applications,
 	chaseRequestFindings,
 	chaseRequests,
+	documentConsistencyCandidates,
 	documentCrosschecks,
+	documentFieldCandidates,
 	documentFiles,
 	documentFindings,
 	documentPages,
+	fraudReviews,
 	withTx,
 	type Db,
 	type Tx,
 } from "@credit/db/applications";
 import { HttpError, writeAudit } from "@credit/service-kit";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import {
 	CRYPTO_VERSION,
 	encryptDocument,
@@ -47,9 +50,11 @@ import {
 	type DetectedType,
 	type DocumentKind,
 } from "./pipeline.js";
-import { createOcrAdapter, OcrFailed, type OcrAdapter } from "./ocr.js";
+import { createOcrAdapter, OcrFailed, type OcrAdapter, type PdfProvenance } from "./ocr.js";
 import { resolveScanner, ScannerUnavailable, type ScannerAdapter } from "./scanner.js";
 import { lockApplication } from "./access.js";
+import { buildFingerprint, type FingerprintValues } from "../integrity/fingerprint.js";
+import { updateFingerprint, writeFingerprint } from "../integrity/store.js";
 import {
 	deleteBlob,
 	ensureStorageDir,
@@ -174,6 +179,7 @@ interface PendingExtraction {
 	}>;
 	textLayerRisk: boolean;
 	pageCount?: number;
+	provenance?: PdfProvenance;
 }
 
 export interface UploadOutcome {
@@ -274,6 +280,8 @@ export class DocumentService {
 		}>;
 		auditAction: "document.uploaded" | "document.rejected";
 		auditPayload: Record<string, unknown>;
+		/** EN-04 fingerprint; ready rows only. */
+		fingerprint?: FingerprintValues;
 	}): Promise<UploadOutcome> {
 		const { db } = this.deps;
 		const fileId = randomUUID();
@@ -295,6 +303,9 @@ export class DocumentService {
 					.insert(documentFiles)
 					.values(opts.build(fileId, new Date()))
 					.returning();
+				if (opts.fingerprint) {
+					await writeFingerprint(tx, opts.fingerprint);
+				}
 				if (opts.pages.length > 0) {
 					await tx.insert(documentPages).values(
 						opts.pages.map((p) => ({
@@ -445,6 +456,7 @@ export class DocumentService {
 								})),
 								textLayerRisk: r.textLayerRisk,
 								pageCount: r.pageCount,
+								provenance: r.provenance,
 							},
 						};
 					}
@@ -459,6 +471,7 @@ export class DocumentService {
 							})),
 							textLayerRisk: r.textLayerRisk,
 							pageCount: r.pageCount,
+							provenance: r.provenance,
 						},
 					};
 				} catch (err) {
@@ -535,6 +548,16 @@ export class DocumentService {
 				: extraction === null
 					? ("unsupported" as const)
 					: extraction.status;
+		let idProvenance: PdfProvenance | undefined;
+		if (kind === "id" && detected === "pdf" && this.deps.ocr.extractMetadata) {
+			try {
+				const metadata = await this.deps.ocr.extractMetadata(bytes, this.ocrLimits());
+				idProvenance = metadata.provenance;
+			} catch {
+				// Provenance is optional; a corrupt metadata block must not fail
+				// the upload. The fingerprint records `unknown`, never a guess.
+			}
+		}
 		const pages =
 			kind === "id"
 				? []
@@ -554,6 +577,22 @@ export class DocumentService {
 
 		// Encrypt after extraction; storage failure leaves no row.
 		const fileId = randomUUID();
+		const mimeType = mimeForType(detected);
+		const fingerprint = buildFingerprint(
+			{
+				documentFileId: fileId,
+				applicationId: input.applicationId,
+				sha256,
+				sizeBytes: bytes.length,
+				mimeType,
+				pageCount,
+				ocrConfidence,
+			},
+			{
+				kind,
+				provenance: kind === "id" ? idProvenance : extraction?.provenance,
+			},
+		);
 		const storageKey = storageKeyFor(input.applicationId, fileId);
 		const activeKey = keys.get(config.keyId);
 		if (!activeKey) {
@@ -587,7 +626,7 @@ export class DocumentService {
 				ocrStatus,
 				textLayerRisk: extraction?.textLayerRisk ?? false,
 				originalFilename: this.sanitizedFilename(input.originalFilename),
-				mimeType: mimeForType(detected),
+				mimeType,
 				sizeBytes: bytes.length,
 				sha256,
 				storageKey,
@@ -607,6 +646,7 @@ export class DocumentService {
 				documentDateSource: statementDates.dateSource,
 			}),
 			pages,
+			fingerprint,
 			auditAction: "document.uploaded",
 			auditPayload: {
 				kind,
@@ -731,6 +771,7 @@ export class DocumentService {
 					})),
 					textLayerRisk: r.textLayerRisk,
 					pageCount: r.pageCount,
+					provenance: r.provenance,
 				};
 			} catch (err) {
 				if (err instanceof HttpError) throw err;
@@ -805,6 +846,47 @@ export class DocumentService {
 						})),
 					);
 				}
+				// A retry can change page text: prior AI candidates and any brief
+				// that cited them are stale. The active review stays open and the
+				// route hook re-queues triage after this transaction.
+				await tx
+					.delete(documentFieldCandidates)
+					.where(eq(documentFieldCandidates.documentFileId, file.id));
+				await tx
+					.delete(documentConsistencyCandidates)
+					.where(
+						or(
+							eq(documentConsistencyCandidates.leftDocumentFileId, file.id),
+							eq(documentConsistencyCandidates.rightDocumentFileId, file.id),
+						),
+					);
+				await tx
+					.update(fraudReviews)
+					.set({ briefStaleAt: new Date(), updatedAt: new Date() })
+					.where(
+						and(
+							eq(fraudReviews.applicationId, input.applicationId),
+							inArray(fraudReviews.status, ["open", "needs_info"]),
+						),
+					);
+				await updateFingerprint(
+					tx,
+					buildFingerprint(
+						{
+							documentFileId: file.id,
+							applicationId: input.applicationId,
+							sha256: file.sha256,
+							sizeBytes: file.sizeBytes,
+							mimeType: file.mimeType,
+							pageCount,
+							ocrConfidence:
+								pages.length === 0
+									? null
+									: pages.reduce((sum, page) => sum + page.confidence, 0) / pages.length,
+						},
+						{ kind: file.kind, provenance: extraction.provenance },
+					),
+				);
 				// A retry can change page text; old citations must not survive.
 				const stale = await tx
 					.select({ id: documentFindings.id, crosscheckId: documentFindings.crosscheckId })

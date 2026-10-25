@@ -540,6 +540,7 @@ describe("retention", () => {
 			db: ctx.db,
 			lockTimeoutMs: configFromEnv(env).lockTimeoutMs,
 			storageDir: ctx.storageDir,
+			applicationId: appId,
 			deleteBlobFn: failing,
 		});
 		expect(first.deletedFiles).toBe(1);
@@ -559,6 +560,7 @@ describe("retention", () => {
 			db: ctx.db,
 			lockTimeoutMs: configFromEnv(env).lockTimeoutMs,
 			storageDir: ctx.storageDir,
+			applicationId: appId,
 		});
 		expect(second.deletedFiles).toBe(0);
 		expect(second.blobsPurged).toBe(1);

@@ -17,9 +17,16 @@ import {
 	customerDocuments,
 	customerProfiles,
 	customerTransactions,
+	documentConsistencyCandidates,
+	documentFieldCandidates,
 	documentFiles,
+	documentFingerprints,
+	documentIntegrityRuns,
+	documentDuplicateExplanations,
 	documents,
 	externalReports,
+	fraudReviews,
+	generatedArtifacts,
 	idempotencyKeys,
 	kycChecks,
 	outboxEvents,
@@ -252,6 +259,25 @@ async function cleanupFixtures(): Promise<void> {
 		await ctx.db.delete(scores).where(inArray(scores.applicationId, appIds));
 		await ctx.db.delete(policyEvaluations).where(inArray(policyEvaluations.applicationId, appIds));
 		await ctx.db.delete(kycChecks).where(inArray(kycChecks.applicationId, appIds));
+		await ctx.db
+			.delete(documentDuplicateExplanations)
+			.where(inArray(documentDuplicateExplanations.applicationId, appIds));
+		await ctx.db
+			.delete(documentFieldCandidates)
+			.where(inArray(documentFieldCandidates.applicationId, appIds));
+		await ctx.db
+			.delete(documentConsistencyCandidates)
+			.where(inArray(documentConsistencyCandidates.applicationId, appIds));
+		await ctx.db.delete(fraudReviews).where(inArray(fraudReviews.applicationId, appIds));
+		await ctx.db
+			.delete(documentIntegrityRuns)
+			.where(inArray(documentIntegrityRuns.applicationId, appIds));
+		await ctx.db
+			.delete(generatedArtifacts)
+			.where(inArray(generatedArtifacts.applicationId, appIds));
+		await ctx.db
+			.delete(documentFingerprints)
+			.where(inArray(documentFingerprints.applicationId, appIds));
 		await ctx.db.delete(documentFiles).where(inArray(documentFiles.applicationId, appIds));
 		await ctx.db
 			.delete(applicationProfileConfirmations)
@@ -318,6 +344,18 @@ async function cleanupFixtures(): Promise<void> {
 				console.log(
 					`[cleanup] removing fixture-evidence copies from surviving applications: ${pins.map((p) => p.applicationId).join(", ")}`,
 				);
+				const copyFiles = await ctx.db
+					.select({ id: documentFiles.id })
+					.from(documentFiles)
+					.where(and(...copyScope));
+				if (copyFiles.length > 0) {
+					await ctx.db.delete(documentFingerprints).where(
+						inArray(
+							documentFingerprints.documentFileId,
+							copyFiles.map((file) => file.id),
+						),
+					);
+				}
 				await ctx.db.delete(documentFiles).where(and(...copyScope));
 			}
 		}
@@ -727,6 +765,18 @@ describe("breadtalk draft lifecycle", () => {
 			.update(applications)
 			.set({ purpose: manifest.personas.alex.case.purpose })
 			.where(eq(applications.id, alex.draftId));
+		const markerFiles = await ctx.db
+			.select({ id: documentFiles.id })
+			.from(documentFiles)
+			.where(eq(documentFiles.sha256, "upload-source-marker"));
+		if (markerFiles.length > 0) {
+			await ctx.db.delete(documentFingerprints).where(
+				inArray(
+					documentFingerprints.documentFileId,
+					markerFiles.map((file) => file.id),
+				),
+			);
+		}
 		await ctx.db.delete(documentFiles).where(eq(documentFiles.sha256, "upload-source-marker"));
 	});
 });

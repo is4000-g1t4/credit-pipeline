@@ -24,12 +24,66 @@ export interface ExtractedPage {
 	pageNumber?: number;
 }
 
+/** PDF provenance (EN-04). Raw strings are sanitized by the fingerprint layer;
+ * this module only reads them. Never reads Author/Title/Subject/Keywords. */
+export interface PdfProvenance {
+	producer?: string;
+	creator?: string;
+	createdAt?: Date;
+	modifiedAt?: Date;
+	incrementalUpdate?: boolean;
+}
+
 export interface ExtractionResult {
 	status: Exclude<OcrStatus, "not_applicable">;
 	pages: ExtractedPage[];
 	textLayerRisk: boolean;
 	/** Actual source page count when known (may exceed extracted pages). */
 	pageCount?: number;
+	provenance?: PdfProvenance;
+}
+
+/** PDF info dates are `D:YYYYMMDDHHmmSS(+HH'mm')`; tolerate bare dates and
+ * reject impossible values rather than inventing one. */
+export function parsePdfDate(raw: unknown): Date | undefined {
+	if (typeof raw !== "string") return undefined;
+	const text = raw.trim();
+	const match =
+		/^D?:?(\d{4})(\d{2})?(\d{2})?(\d{2})?(\d{2})?(\d{2})?([+-])?(\d{2})?'?(\d{2})?'?/.exec(text);
+	if (!match) return undefined;
+	const [, y, mo = "01", d = "01", h = "00", mi = "00", s = "00", sign, oh, om] = match;
+	const parts = [Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s)] as const;
+	const base = new Date(Date.UTC(...parts));
+	if (
+		base.getUTCFullYear() !== parts[0] ||
+		base.getUTCMonth() !== parts[1] ||
+		base.getUTCDate() !== parts[2] ||
+		base.getUTCHours() !== parts[3] ||
+		base.getUTCMinutes() !== parts[4] ||
+		base.getUTCSeconds() !== parts[5]
+	) {
+		return undefined;
+	}
+	const offsetMinutes =
+		sign === undefined ? 0 : (sign === "+" ? 1 : -1) * (Number(oh ?? "0") * 60 + Number(om ?? "0"));
+	return new Date(base.getTime() - offsetMinutes * 60_000);
+}
+
+export function readPdfProvenance(
+	info: Record<string, unknown> | null | undefined,
+	bytes: Buffer,
+): PdfProvenance {
+	const text = (value: unknown): string | undefined =>
+		typeof value === "string" && value.trim() !== "" ? value.trim().slice(0, 500) : undefined;
+	const eofCount = bytes.toString("latin1").split("%%EOF").length - 1;
+	const hasPrev = /\/Prev\s+\d+/.test(bytes.toString("latin1"));
+	return {
+		producer: text(info?.Producer),
+		creator: text(info?.Creator),
+		createdAt: parsePdfDate(info?.CreationDate),
+		modifiedAt: parsePdfDate(info?.ModDate),
+		incrementalUpdate: eofCount > 1 || hasPrev,
+	};
 }
 
 export interface OcrLimits {
@@ -48,6 +102,11 @@ export interface OcrAdapter {
 		imageType: "png" | "jpeg",
 		limits: OcrLimits,
 	): Promise<ExtractionResult>;
+	/** Metadata-only PDF read (`kind=id` skips text extraction). */
+	extractMetadata?(
+		bytes: Buffer,
+		limits: OcrLimits,
+	): Promise<{ provenance: PdfProvenance; pageCount?: number }>;
 }
 
 export class OcrFailed extends Error {
@@ -232,7 +291,7 @@ async function withTimeout<T>(
 	}
 }
 
-export function createPdfOcrAdapter(): Pick<OcrAdapter, "extractPdf"> {
+export function createPdfOcrAdapter(): Pick<OcrAdapter, "extractPdf" | "extractMetadata"> {
 	return {
 		async extractPdf(bytes: Buffer, limits: OcrLimits): Promise<ExtractionResult> {
 			try {
@@ -243,6 +302,11 @@ export function createPdfOcrAdapter(): Pick<OcrAdapter, "extractPdf"> {
 					});
 					const doc = await loadingTask.promise;
 					try {
+						const metadata = await doc.getMetadata().catch(() => null);
+						const provenance = readPdfProvenance(
+							(metadata?.info ?? null) as Record<string, unknown> | null,
+							bytes,
+						);
 						const count = Math.min(doc.numPages, limits.maxPages);
 						const pages: ExtractedPage[] = [];
 						let total = 0;
@@ -290,6 +354,7 @@ export function createPdfOcrAdapter(): Pick<OcrAdapter, "extractPdf"> {
 								pages: [],
 								textLayerRisk: risk,
 								pageCount: doc.numPages,
+								provenance,
 							};
 						}
 						return {
@@ -297,6 +362,7 @@ export function createPdfOcrAdapter(): Pick<OcrAdapter, "extractPdf"> {
 							pages,
 							textLayerRisk: risk,
 							pageCount: doc.numPages,
+							provenance,
 						};
 					} finally {
 						await loadingTask.destroy().catch(() => {});
@@ -305,6 +371,33 @@ export function createPdfOcrAdapter(): Pick<OcrAdapter, "extractPdf"> {
 			} catch (err) {
 				if (err instanceof OcrFailed) throw err;
 				throw new OcrFailed(err instanceof Error ? err.message : "pdf extraction failed");
+			}
+		},
+		async extractMetadata(
+			bytes: Buffer,
+			limits: OcrLimits,
+		): Promise<{ provenance: PdfProvenance; pageCount?: number }> {
+			try {
+				return await withTimeout(limits.timeoutMs, async () => {
+					const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+					const loadingTask = pdfjs.getDocument({ data: new Uint8Array(bytes) });
+					const doc = await loadingTask.promise;
+					try {
+						const metadata = await doc.getMetadata().catch(() => null);
+						return {
+							provenance: readPdfProvenance(
+								(metadata?.info ?? null) as Record<string, unknown> | null,
+								bytes,
+							),
+							pageCount: doc.numPages,
+						};
+					} finally {
+						await loadingTask.destroy().catch(() => {});
+					}
+				});
+			} catch (err) {
+				if (err instanceof OcrFailed) throw err;
+				throw new OcrFailed(err instanceof Error ? err.message : "pdf metadata failed");
 			}
 		},
 	};

@@ -92,6 +92,13 @@
       "when": 1792902100000,
       "tag": "0013_draft_supersede_fix",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1792952481967,
+      "tag": "0014_famous_karnak",
+      "breakpoints": true
     }
   ]
 }

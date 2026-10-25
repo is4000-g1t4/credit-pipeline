@@ -539,6 +539,204 @@ Internal service-only routes: `POST /internal/assist/artifacts/:id/holds`,
 officer-facing flag is off so legal holds can be recorded and retention still
 runs; they require the signed `service` identity.
 
+## Document integrity (E2 / EN-04/EN-05)
+
+Officer only. All routes proxy to the applications service, which enforces
+assigned-case access plus document-processing consent (applicants 403; drafts,
+missing, or stranger cases non-leaking 404; consent missing 403
+`CONSENT_REQUIRED`). Fraud-review brief content, assign, resolve,
+resolution-draft, and duplicate lookup/explain need the fraud-reviewer grant
+(403 `REVIEWER_REQUIRED`); an assigned officer gets a minimal item DTO, never
+the brief. `DOCUMENT_INTEGRITY_ENABLED=false` makes every
+`/api/applications/:id/integrity*` route 404; `FRAUD_REVIEW_ENABLED=false`
+makes flags, fraud review, and duplicate routes 404 (same no-store, error
+envelope, and `x-request-id` conventions as above). All responses carry
+`Cache-Control: no-store`.
+
+| Method and path                                                          | Access                           | Purpose                                                       |
+| ------------------------------------------------------------------------ | -------------------------------- | ------------------------------------------------------------- |
+| `GET /api/applications/:id/integrity`                                    | Assigned officer                 | Panel: fingerprints, signals, candidates, consistency, review |
+| `POST /api/applications/:id/integrity/analyses`                          | Assigned officer                 | Start an extraction/consistency run; `202` new, `200` replay  |
+| `GET /api/applications/:id/integrity/analyses/:runId`                    | Assigned officer                 | One analysis run trace                                        |
+| `PATCH /api/applications/:id/integrity/candidates/:candidateId`          | Assigned officer                 | `{ "action": "confirm"\|"reject" }` on one candidate          |
+| `POST /api/applications/:id/integrity/consistency/:candidateId/escalate` | Assigned officer                 | Escalate a confirmed mismatch to fraud review                 |
+| `POST /api/applications/:id/integrity/flags`                             | Assigned officer                 | Manual flag → fraud review + triage                           |
+| `POST /api/applications/:id/integrity/evaluate`                          | Assigned officer                 | Re-run deterministic evaluation                               |
+| `GET /api/fraud-review/me`                                               | Officer                          | Grant check: `{ "reviewer", "canViewQueue" }`                 |
+| `GET /api/fraud-review/queue`                                            | Officer (grant-filtered)         | Review queue, newest first                                    |
+| `GET /api/fraud-review/:id`                                              | Reviewer full / assigned minimal | One review; brief content reviewer-only                       |
+| `PATCH /api/fraud-review/:id/assign`                                     | Reviewer                         | Assign to a reviewer (version-guarded)                        |
+| `POST /api/fraud-review/:id/resolve`                                     | Reviewer                         | Resolve `cleared` / `confirmed` / `needs_info`                |
+| `GET /api/fraud-review/:id/resolution-draft`                             | Reviewer                         | Server-composed draft note + citations                        |
+| `POST /api/fraud-review/duplicates/lookup`                               | Reviewer                         | Hash lookup: counts + internal refs                           |
+| `POST /api/fraud-review/duplicates/explain`                              | Reviewer                         | Mark a duplicate explained                                    |
+
+### Integrity panel
+
+`GET /api/applications/:id/integrity` response `200 { "panel" }`:
+
+```json
+{
+	"panel": {
+		"documents": [
+			{
+				"documentFileId": "<uuid>",
+				"kind": "bank_statement",
+				"status": "ready",
+				"ocrStatus": "ready",
+				"originalFilename": "<name>",
+				"fingerprint": {
+					"sha256": "<hex>",
+					"sizeBytes": 12345,
+					"mimeType": "application/pdf",
+					"pageCount": 4,
+					"ocrConfidence": 0.97,
+					"producer": "Adobe Acrobat",
+					"creator": "unknown",
+					"metadataCreatedAt": "<iso>",
+					"metadataModifiedAt": "<iso>",
+					"metadataSource": "pdf",
+					"editSignal": "not_detected",
+					"editCodes": [],
+					"fingerprintVersion": "document-fingerprint-v1"
+				},
+				"signals": [
+					{
+						"code": "editor_producer",
+						"severity": "medium",
+						"documentFileId": "<uuid>",
+						"summary": "...",
+						"sourceRef": "context_signal:integrity:editor_producer:<uuid>"
+					}
+				],
+				"duplicateCount": 1,
+				"crossApplicationRestricted": false,
+				"candidates": [],
+				"consistency": []
+			}
+		],
+		"caseSignals": [
+			{
+				"code": "duplicate_hash_cross_application",
+				"severity": "high",
+				"documentFileId": null,
+				"summary": "...",
+				"sourceRef": "context_signal:integrity:duplicate_hash_cross_application",
+				"count": 1
+			}
+		],
+		"latestAnalysis": {
+			"id": "<uuid>",
+			"feature": "document_analysis",
+			"status": "succeeded",
+			"model": "...",
+			"promptVersion": "...",
+			"agentVersion": "...",
+			"steps": 5,
+			"toolCalls": [],
+			"sourceRefs": [],
+			"repairAttempted": false,
+			"repairSucceeded": false,
+			"usage": { "inputTokens": 1, "outputTokens": 1, "costUsd": 0.01 },
+			"errorCode": null,
+			"createdAt": "<iso>",
+			"finishedAt": "<iso>"
+		},
+		"openReview": {
+			"id": "<uuid>",
+			"status": "open",
+			"severity": "high",
+			"reasonCode": "document_integrity",
+			"createdAt": "<iso>"
+		}
+	}
+}
+```
+
+`fingerprint` is `null` only when no row exists yet. `duplicateCount` is the
+same-application count; any cross-applicant match shows only as
+`crossApplicationRestricted: true`. `latestAnalysis` and `openReview` are
+`null` when absent. Candidates carry `id`, `documentFileId`, `field` (one of
+`document_type`, `issuer`, `document_date`, `statement_period_start`,
+`statement_period_end`, `registration_number`, `account_number`,
+`account_holder_name`, `material_amount`, `other`), `value`, `pageNumber`,
+`offsetStart`/`offsetEnd`, `confidence`, `status`
+(`candidate`/`validated`/`confirmed`/`rejected`), `validationCodes`,
+`confirmedAt`, and `stale` (true when the quote no longer matches live page
+text). Consistency items carry `id`, `field`, `proposedKind`,
+`findingState` (`match`/`mismatch`/`needs_chase`), `severity`, `left`/`right`
+(`documentFileId`, `pageNumber`, `value`, `label`, `currency`, `quote`,
+`offsetStart`/`offsetEnd`), `explanation`, and `reason`.
+
+### Analyses, candidates, consistency, flags, evaluate
+
+- `POST .../integrity/analyses` (empty body) needs the agent flag plus a
+  configured key, else 503 `INTEGRITY_AGENT_UNAVAILABLE`. Success `202
+  { "run" }` (new) or `200 { "run", "replayed": true }` (identical evidence).
+  Past the per-hash run cap: 429 `RETRY_LIMIT`.
+- `PATCH .../candidates/:candidateId` with `{ "action": "confirm"|"reject" }`
+  returns `200 { "candidate": { "id", "status", "confirmedAt" } }`. Already
+  decided → 409 `CANDIDATE_NOT_ACTIVE`; quote drift (e.g. retry-OCR rewrite)
+  → 409 `CANDIDATE_STALE`.
+- `POST .../consistency/:candidateId/escalate` takes `{ "note?": "5-500 chars" }`
+  and returns the created `{ "review" }` summary. Only a `confirmed` +
+  `mismatch` finding escalates, else 409 `NOT_CONFIRMED_MISMATCH`.
+- `POST .../integrity/flags` body: `{ "reasonCode":
+  "document_integrity"|"duplicate_document"|"metadata_inconsistency"|"other",
+  "note": "5-2000 chars", "documentFileIds?": ["<uuid>", max 20],
+  "severity?": "low"|"medium"|"high" (default `medium`) }`. Unknown or
+  non-ready document ids → 422 `DOCUMENT_NOT_AVAILABLE`. Returns the created
+  `{ "review" }` summary and queues triage.
+- `POST .../integrity/evaluate` (empty body) re-runs the deterministic
+  evaluation and returns `200 { "result": { "flagged", "severity",
+  "reviewId" } }` (signal details stay server-side).
+
+### Fraud review
+
+- `GET /api/fraud-review/queue?status=active|all` returns `200
+  { "items": [{ "id", "applicationId", "applicationReference", "status",
+  "severity", "reasonCode", "briefAvailable", "briefStale", "createdAt",
+  "updatedAt", "version" }], "reviewer" }`. Non-reviewer officers see only
+  granted cases.
+- `GET /api/fraud-review/:id`: reviewers get the full DTO (`review` summary
+  plus `note`, `assigneeUserId`, `signalCodes`, `documentRefs`,
+  `briefArtifactId`, `briefStale`, `agentRunId`, model/prompt/agent versions,
+  `resolvedBy`, `resolvedAt`, `resolutionNote`, and `brief`
+  (`id`/`status`/`content`/`citations`/`agentTrace`/`model`/`promptVersion`/`createdAt`)
+  - `brief` is `null` when absent, stale, or consent-withdrawn; `briefUnavailable`
+    is `missing`, `stale`, or `consent_withdrawn`). Assigned officers get the minimal
+    DTO (`review` summary plus `applicationId`, `reasonCode`,
+    `briefAvailable`, `briefStale`). Reads are audited as
+    `fraud_review.viewed`.
+- `PATCH /api/fraud-review/:id/assign` body `{ "assigneeUserId": "<uuid>",
+  "expectedVersion": <int> }`. The assignee must hold the reviewer grant
+  (else 422 `REVIEWER_REQUIRED`); stale versions → 409 `VERSION_CONFLICT`;
+  resolved reviews → 409 `REVIEW_NOT_ACTIVE`.
+- `POST /api/fraud-review/:id/resolve` body `{ "status":
+  "cleared"|"confirmed"|"needs_info", "note": "10-2000 chars",
+  "expectedVersion": <int> }` returns `200 { "review",
+  "decisionPath": "/officer/review/<applicationId>" }`. Resolution never
+  changes the application status, score, terms, or decision.
+- `GET /api/fraud-review/:id/resolution-draft` returns `200
+  { "note": "<server-composed draft>", "citations": [{ "ref", "quote" }] }`
+  (at most 5 citations, from the fresh brief only). The reviewer edits the
+  note and chooses the state; there is no auto-resolution.
+- `POST /api/fraud-review/duplicates/lookup` body `{ "sha256": "<64 hex>",
+  "applicationId?": "<uuid>" }` returns `200 { "sha256Prefix", "count",
+  "counts?": { "sameApplication", "sameApplicantOther", "crossApplicant" },
+  "rows": [{ "applicationReference", "documentFileId", "kind",
+  "uploadedAt", "explanationNote" }] }` (`counts` only with
+  `applicationId`). Audited with the hash prefix only.
+- `POST /api/fraud-review/duplicates/explain` body `{ "sha256": "<64 hex>",
+  "applicationId": "<uuid>", "note": "5-500 chars" }` upserts one
+  explanation per hash+case and returns `200 { "ok": true }`.
+
+Service-only internal routes (signed `service` identity, same HMAC scheme as
+below): `POST /internal/fraud-review/reviewers` (`{ "userId",
+"action": "grant"|"revoke" }` → `{ "ok": true }`) and
+`POST /internal/fraud-review/retention/run` (→
+`{ "reviewsRedacted", "explanationsRedacted" }`).
+
 ## Health
 
 | Method and path   | Access | Purpose                              |
@@ -569,46 +767,55 @@ Response `200`:
 
 ## Error codes
 
-| Code                       | Status   | Meaning                                                                                                                                                                                      |
-| -------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `UNAUTHENTICATED`          | 401      | Missing or invalid session; bad internal signature                                                                                                                                           |
-| `INVALID_CREDENTIALS`      | 401      | Wrong email or password                                                                                                                                                                      |
-| `FORBIDDEN`                | 403      | Wrong role for this endpoint                                                                                                                                                                 |
-| `ORIGIN_FORBIDDEN`         | 403      | Production origin check failed                                                                                                                                                               |
-| `DEMO_MODE_DISABLED`       | 403      | Demo endpoint called with `DEMO_MODE=false`                                                                                                                                                  |
-| `NOT_FOUND`                | 404      | Missing row, bad uuid, or cross-applicant read                                                                                                                                               |
-| `VALIDATION_ERROR`         | 400, 422 | Bad body: 400 on auth/submit/pay/age, 422 on review decisions                                                                                                                                |
-| `INVALID_JSON`             | 400      | Body is not JSON                                                                                                                                                                             |
-| `MISSING_IDEMPOTENCY_KEY`  | 400      | Submit without `Idempotency-Key`                                                                                                                                                             |
-| `INVALID_CURSOR`           | 400      | Cursor is not `<ISO-8601>,<uuid>`                                                                                                                                                            |
-| `BODY_TOO_LARGE`           | 413      | Body over 100,000 bytes                                                                                                                                                                      |
-| `RATE_LIMITED`             | 429      | Login or submit limit hit                                                                                                                                                                    |
-| `IDEMPOTENCY_CONFLICT`     | 409      | Key reused with a different payload                                                                                                                                                          |
-| `TOO_MANY_APPLICATIONS`    | 409      | 3 non-terminal applications already                                                                                                                                                          |
-| `DRAFT_REQUIRED`           | 409      | Profiled applicant used direct create; use draft → submit                                                                                                                                    |
-| `TOO_MANY_DRAFTS`          | 409      | 3 active drafts already                                                                                                                                                                      |
-| `NOT_DRAFT`                | 409      | Submit called on a non-draft application                                                                                                                                                     |
-| `REQUIREMENTS_INCOMPLETE`  | 409      | Draft has hard blockers; `fields` maps `field:<path>` / `document:<kind>` to reason codes (`required\|stale\|expired\|unknown_date\|rejected\|missing\|consent\|identity_mismatch\|invalid`) |
-| `DECISION_CONFLICT`        | 409      | Case already decided with another request                                                                                                                                                    |
-| `BOOKING_INCOMPLETE`       | 409      | Approved decision not yet booked; saga still converging                                                                                                                                      |
-| `CASE_NOT_PENDING`         | 409      | Case is not awaiting a decision                                                                                                                                                              |
-| `CASE_NOT_RUNNING`         | 409      | Workflow is not running                                                                                                                                                                      |
-| `DECISION_REJECTED`        | 422      | Workflow rejected the decision terms                                                                                                                                                         |
-| `CONSENT_REQUIRED`         | 403      | AI research consent missing                                                                                                                                                                  |
-| `RESEARCH_DISABLED`        | 404      | Agentic research feature flag off                                                                                                                                                            |
-| `POLICY_DISABLED`          | 503      | Policy assist flag off; retry with the flag on or decide without policy                                                                                                                      |
-| `RUN_NOT_SUCCEEDED`        | 409      | Finding reviewed before its run succeeded                                                                                                                                                    |
-| `RESEARCH_UNAVAILABLE`     | 503      | Research bundle unfetchable; retry or decide without research                                                                                                                                |
-| `RESEARCH_SELECTION_STALE` | 409      | Selection no longer resolves; re-review or decide without                                                                                                                                    |
-| `ALREADY_PAID`             | 409      | Installment is already paid                                                                                                                                                                  |
-| `MEMO_AGENT_TIMEOUT`       | 504      | Memo tool loop hit its deadline; retry or decide without a memo                                                                                                                              |
-| `MEMO_AGENT_UNAVAILABLE`   | 502, 503 | Memo model error (502), or agent writer with no key (503); retry or decide without                                                                                                           |
-| `MEMO_AGENT_BUDGET`        | 422      | Memo step, tool-call, or cost budget exceeded                                                                                                                                                |
-| `MEMO_AGENT_INVALID`       | 422      | Memo output failed validation after repair; nothing persisted                                                                                                                                |
-| `ALERT_NOT_OPEN`           | 409      | Alert is not open                                                                                                                                                                            |
-| `BAD_GATEWAY`              | 502      | Downstream service or lookup failed                                                                                                                                                          |
-| `DECISION_FAILED`          | 500      | Officer decision failed                                                                                                                                                                      |
-| `INTERNAL_ERROR`           | 500      | Unhandled error                                                                                                                                                                              |
+| Code                          | Status   | Meaning                                                                                                                                                                                      |
+| ----------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `UNAUTHENTICATED`             | 401      | Missing or invalid session; bad internal signature                                                                                                                                           |
+| `INVALID_CREDENTIALS`         | 401      | Wrong email or password                                                                                                                                                                      |
+| `FORBIDDEN`                   | 403      | Wrong role for this endpoint                                                                                                                                                                 |
+| `ORIGIN_FORBIDDEN`            | 403      | Production origin check failed                                                                                                                                                               |
+| `DEMO_MODE_DISABLED`          | 403      | Demo endpoint called with `DEMO_MODE=false`                                                                                                                                                  |
+| `NOT_FOUND`                   | 404      | Missing row, bad uuid, or cross-applicant read                                                                                                                                               |
+| `VALIDATION_ERROR`            | 400, 422 | Bad body: 400 on auth/submit/pay/age, 422 on review decisions                                                                                                                                |
+| `INVALID_JSON`                | 400      | Body is not JSON                                                                                                                                                                             |
+| `MISSING_IDEMPOTENCY_KEY`     | 400      | Submit without `Idempotency-Key`                                                                                                                                                             |
+| `INVALID_CURSOR`              | 400      | Cursor is not `<ISO-8601>,<uuid>`                                                                                                                                                            |
+| `BODY_TOO_LARGE`              | 413      | Body over 100,000 bytes                                                                                                                                                                      |
+| `RATE_LIMITED`                | 429      | Login or submit limit hit                                                                                                                                                                    |
+| `IDEMPOTENCY_CONFLICT`        | 409      | Key reused with a different payload                                                                                                                                                          |
+| `TOO_MANY_APPLICATIONS`       | 409      | 3 non-terminal applications already                                                                                                                                                          |
+| `DRAFT_REQUIRED`              | 409      | Profiled applicant used direct create; use draft → submit                                                                                                                                    |
+| `TOO_MANY_DRAFTS`             | 409      | 3 active drafts already                                                                                                                                                                      |
+| `NOT_DRAFT`                   | 409      | Submit called on a non-draft application                                                                                                                                                     |
+| `REQUIREMENTS_INCOMPLETE`     | 409      | Draft has hard blockers; `fields` maps `field:<path>` / `document:<kind>` to reason codes (`required\|stale\|expired\|unknown_date\|rejected\|missing\|consent\|identity_mismatch\|invalid`) |
+| `DECISION_CONFLICT`           | 409      | Case already decided with another request                                                                                                                                                    |
+| `BOOKING_INCOMPLETE`          | 409      | Approved decision not yet booked; saga still converging                                                                                                                                      |
+| `CASE_NOT_PENDING`            | 409      | Case is not awaiting a decision                                                                                                                                                              |
+| `CASE_NOT_RUNNING`            | 409      | Workflow is not running                                                                                                                                                                      |
+| `DECISION_REJECTED`           | 422      | Workflow rejected the decision terms                                                                                                                                                         |
+| `CONSENT_REQUIRED`            | 403      | AI research consent or document-processing consent missing                                                                                                                                   |
+| `RESEARCH_DISABLED`           | 404      | Agentic research feature flag off                                                                                                                                                            |
+| `POLICY_DISABLED`             | 503      | Policy assist flag off; retry with the flag on or decide without policy                                                                                                                      |
+| `RUN_NOT_SUCCEEDED`           | 409      | Finding reviewed before its run succeeded                                                                                                                                                    |
+| `RESEARCH_UNAVAILABLE`        | 503      | Research bundle unfetchable; retry or decide without research                                                                                                                                |
+| `RESEARCH_SELECTION_STALE`    | 409      | Selection no longer resolves; re-review or decide without                                                                                                                                    |
+| `INTEGRITY_AGENT_UNAVAILABLE` | 503      | Integrity agent off or keyless; flag stays open, decide without the AI pass                                                                                                                  |
+| `CANDIDATE_NOT_ACTIVE`        | 409      | Candidate already confirmed or rejected                                                                                                                                                      |
+| `CANDIDATE_STALE`             | 409      | Candidate quote no longer matches live page text (e.g. retry-OCR rewrite)                                                                                                                    |
+| `NOT_CONFIRMED_MISMATCH`      | 409      | Only a confirmed mismatch can be escalated                                                                                                                                                   |
+| `DOCUMENT_NOT_AVAILABLE`      | 422      | Flagged document id is not ready in this case                                                                                                                                                |
+| `RETRY_LIMIT`                 | 429      | Too many runs for this evidence set in 24h                                                                                                                                                   |
+| `REVIEW_NOT_ACTIVE`           | 409      | Review already resolved (or not active for assign)                                                                                                                                           |
+| `VERSION_CONFLICT`            | 409      | Review changed since read; reload and retry with the new version                                                                                                                             |
+| `REVIEWER_REQUIRED`           | 403, 422 | Fraud-reviewer grant required (403); assignee is not a reviewer (422)                                                                                                                        |
+| `ALREADY_PAID`                | 409      | Installment is already paid                                                                                                                                                                  |
+| `MEMO_AGENT_TIMEOUT`          | 504      | Memo tool loop hit its deadline; retry or decide without a memo                                                                                                                              |
+| `MEMO_AGENT_UNAVAILABLE`      | 502, 503 | Memo model error (502), or agent writer with no key (503); retry or decide without                                                                                                           |
+| `MEMO_AGENT_BUDGET`           | 422      | Memo step, tool-call, or cost budget exceeded                                                                                                                                                |
+| `MEMO_AGENT_INVALID`          | 422      | Memo output failed validation after repair; nothing persisted                                                                                                                                |
+| `ALERT_NOT_OPEN`              | 409      | Alert is not open                                                                                                                                                                            |
+| `BAD_GATEWAY`                 | 502      | Downstream service or lookup failed                                                                                                                                                          |
+| `DECISION_FAILED`             | 500      | Officer decision failed                                                                                                                                                                      |
+| `INTERNAL_ERROR`              | 500      | Unhandled error                                                                                                                                                                              |
 
 ## Curl examples
 
@@ -702,6 +909,8 @@ Headers on every internal call: `x-user-id`, `x-user-role`, `x-user-email`, `x-i
 | `GET .../audit` (auto-trigger history)            | Research      | Review          | Officer (first caller claims; later 404)                                                                                                                                                                                                          |
 | `POST .../access/grants`                          | Research      | Automation      | Service only (officer/applicant 403)                                                                                                                                                                                                              |
 | `POST .../access/revoke`                          | Research      | Automation      | Service only (officer/applicant 403)                                                                                                                                                                                                              |
+| `POST /internal/fraud-review/reviewers`           | Applications  | Automation      | Service only; grant/revoke the fraud-reviewer role; officers/applicants 403                                                                                                                                                                       |
+| `POST /internal/fraud-review/retention/run`       | Applications  | Automation      | Service only; redacts expired resolved reviews/explanations unless a legal hold applies                                                                                                                                                           |
 | `GET /health`                                     | Every service | Any             | Public                                                                                                                                                                                                                                            |
 
 `GET /internal/applications/:id/decision` returns `{ "status", "decision": { "id", "outcome", "requestId" } | null }`. `GET /internal/loans/by-application/:id` returns the loan summary with installment counts and enforces the same owner-or-officer rule as the public loan routes (cross-applicant reads are 404). `GET /internal/loans/by-applicant/:userId` is the context-analyst read instead: `?applicationId` and `?asOf` (`YYYY-MM-DD`, not in the future) are both required, `asOf` must equal the calling case's as-of day, and the loans service revalidates context consent plus applicant ownership against the applications service before reading (fail closed, no loan query on binding failure). Consent/applicant denials are 403/404 and audit `context.denied`; success audits `context.read` — ids and codes only, never PII. The stats endpoints return status-count maps for the dashboard.

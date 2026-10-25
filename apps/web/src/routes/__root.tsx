@@ -1,7 +1,8 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { createRootRoute, HeadContent, Link, Outlet, Scripts } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Toaster } from "../components/ui";
+import { fetchFraudMe } from "../lib/api";
 import { useLogout, useMe } from "../lib/auth";
 import "../styles/app.css";
 
@@ -13,6 +14,15 @@ function Header() {
 	const me = useMe();
 	const logout = useLogout();
 	const user = me.data?.user;
+	// Reviewer/queue visibility is server-computed; a null (404/flag-off)
+	// response simply hides the link. Never blocks existing nav.
+	const fraudMe = useQuery({
+		queryKey: ["fraud-me"],
+		queryFn: fetchFraudMe,
+		enabled: user?.role === "officer",
+		retry: false,
+		staleTime: 60_000,
+	});
 	return (
 		<header className="border-b border-gray-200 bg-white">
 			<div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-2 p-4">
@@ -33,6 +43,11 @@ function Header() {
 									<Link to="/officer/policies" className="text-blue-700 hover:underline">
 										Credit policy
 									</Link>
+									{fraudMe.data ? (
+										<Link to="/officer/fraud-review" className="text-blue-700 hover:underline">
+											Fraud review
+										</Link>
+									) : null}
 									<Link to="/loans" className="text-blue-700 hover:underline">
 										Loans
 									</Link>

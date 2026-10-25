@@ -147,12 +147,72 @@ export const generatedArtifactType = pgEnum("generated_artifact_type", [
 	"credit_memo",
 	"policy_exception_memo",
 	"adverse_action_letter",
+	"document_integrity_brief",
 ]);
 export const generatedArtifactStatus = pgEnum("generated_artifact_status", [
 	"draft",
 	"approved",
 	"superseded",
 	"deleted",
+]);
+
+// E2 document integrity. The fraud-review item is the flag's system of record:
+// `fraud_reviews.status` is the case-level flag state, not a boolean column.
+export const integrityCandidateStatus = pgEnum("integrity_candidate_status", [
+	"candidate",
+	"validated",
+	"confirmed",
+	"rejected",
+]);
+export const integrityConsistencyStatus = pgEnum("integrity_consistency_status", [
+	"candidate",
+	"confirmed",
+	"rejected",
+]);
+export const integrityConsistencyKind = pgEnum("integrity_consistency_kind", ["match", "mismatch"]);
+export const integrityRunFeature = pgEnum("integrity_run_feature", [
+	"document_analysis",
+	"document_triage",
+]);
+export const integrityRunStatus = pgEnum("integrity_run_status", [
+	"queued",
+	"running",
+	"succeeded",
+	"failed",
+	"cancelled",
+]);
+export const integrityEditSignal = pgEnum("integrity_edit_signal", [
+	"detected",
+	"not_detected",
+	"unknown",
+]);
+export const fraudReviewStatus = pgEnum("fraud_review_status", [
+	"open",
+	"cleared",
+	"confirmed",
+	"needs_info",
+]);
+export const fraudReviewSeverity = pgEnum("fraud_review_severity", ["low", "medium", "high"]);
+export const integrityCandidateField = pgEnum("integrity_candidate_field", [
+	"document_type",
+	"issuer",
+	"document_date",
+	"statement_period_start",
+	"statement_period_end",
+	"registration_number",
+	"account_number",
+	"account_holder_name",
+	"material_amount",
+	"other",
+]);
+export const integrityConsistencyField = pgEnum("integrity_consistency_field", [
+	"company_name",
+	"registration_number",
+	"account_holder_name",
+	"statement_period",
+	"material_amount",
+	"document_date",
+	"other",
 ]);
 
 export const applications = pgTable(
@@ -516,6 +576,11 @@ export const documentFiles = pgTable(
 	},
 	(t) => [
 		index("document_files_application_id_idx").on(t.applicationId),
+		// Cross-application duplicate lookup (EN-04). Ready rows only: a
+		// tombstoned file must not keep matching.
+		index("document_files_sha256_ready_idx")
+			.on(t.sha256)
+			.where(sql`${t.status} = 'ready'`),
 		// Same bytes + kind dedupe: re-upload replays the existing row
 		// instead of storing a second blob. Deleted rows don't collide.
 		// (No CAST in the predicate: enum::text is not immutable, and PG
@@ -670,6 +735,302 @@ export const documentLegalHolds = pgTable(
 		index("document_legal_holds_active_idx")
 			.on(t.applicationId)
 			.where(sql`${t.releasedAt} IS NULL`),
+	],
+);
+
+// --- E2 document integrity (EN-04/EN-05). Fingerprint rows carry metadata
+// only — never page text, filenames, authors, titles, or applicant data. ---
+
+export const documentFingerprints = pgTable(
+	"document_fingerprints",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		documentFileId: uuid("document_file_id")
+			.notNull()
+			.references(() => documentFiles.id, { onDelete: "restrict" }),
+		applicationId: uuid("application_id")
+			.notNull()
+			.references(() => applications.id, { onDelete: "restrict" }),
+		fingerprintVersion: text("fingerprint_version").notNull(),
+		sha256: text("sha256").notNull(),
+		sizeBytes: integer("size_bytes").notNull(),
+		mimeType: text("mime_type").notNull(),
+		pageCount: integer("page_count").notNull().default(0),
+		ocrConfidence: real("ocr_confidence"),
+		// Known-software token only; anything else is 'unknown'. Never inferred.
+		producer: text("producer").notNull().default("unknown"),
+		creator: text("creator").notNull().default("unknown"),
+		metadataCreatedAt: timestamp("metadata_created_at", { withTimezone: true, mode: "date" }),
+		metadataModifiedAt: timestamp("metadata_modified_at", { withTimezone: true, mode: "date" }),
+		metadataSource: text("metadata_source").notNull().default("unknown"),
+		editSignal: integrityEditSignal("edit_signal").notNull().default("unknown"),
+		editCodes: jsonb("edit_codes")
+			.$type<string[]>()
+			.notNull()
+			.default(sql`'[]'::jsonb`),
+		redactedAt: timestamp("redacted_at", { withTimezone: true, mode: "date" }),
+		createdAt: createdAt(),
+		updatedAt: updatedAt(),
+	},
+	(t) => [
+		uniqueIndex("document_fingerprints_file_uniq").on(t.documentFileId),
+		index("document_fingerprints_application_id_idx").on(t.applicationId),
+	],
+);
+
+export const documentFieldCandidates = pgTable(
+	"document_field_candidates",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		applicationId: uuid("application_id")
+			.notNull()
+			.references(() => applications.id, { onDelete: "restrict" }),
+		documentFileId: uuid("document_file_id")
+			.notNull()
+			.references(() => documentFiles.id, { onDelete: "restrict" }),
+		runId: uuid("run_id").notNull(),
+		field: integrityCandidateField("field").notNull(),
+		value: text("value").notNull(),
+		normalizedValue: text("normalized_value").notNull(),
+		pageNumber: integer("page_number").notNull(),
+		offsetStart: integer("offset_start").notNull(),
+		offsetEnd: integer("offset_end").notNull(),
+		quote: text("quote").notNull(),
+		quoteHash: text("quote_hash").notNull(),
+		confidence: real("confidence").notNull(),
+		status: integrityCandidateStatus("status").notNull(),
+		validationCodes: jsonb("validation_codes")
+			.$type<string[]>()
+			.notNull()
+			.default(sql`'[]'::jsonb`),
+		confirmedBy: uuid("confirmed_by"),
+		confirmedAt: timestamp("confirmed_at", { withTimezone: true, mode: "date" }),
+		redactedAt: timestamp("redacted_at", { withTimezone: true, mode: "date" }),
+		createdAt: createdAt(),
+	},
+	(t) => [
+		uniqueIndex("document_field_candidates_evidence_uniq").on(
+			t.runId,
+			t.documentFileId,
+			t.field,
+			t.pageNumber,
+			t.offsetStart,
+			t.offsetEnd,
+		),
+		index("document_field_candidates_application_id_idx").on(t.applicationId),
+		index("document_field_candidates_run_id_idx").on(t.runId),
+		check(
+			"document_field_candidates_offsets_chk",
+			sql`${t.pageNumber} >= 1 AND ${t.offsetStart} >= 0 AND ${t.offsetEnd} > ${t.offsetStart}`,
+		),
+		check(
+			"document_field_candidates_confidence_chk",
+			sql`${t.confidence} >= 0 AND ${t.confidence} <= 1`,
+		),
+	],
+);
+
+export const documentConsistencyCandidates = pgTable(
+	"document_consistency_candidates",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		applicationId: uuid("application_id")
+			.notNull()
+			.references(() => applications.id, { onDelete: "restrict" }),
+		runId: uuid("run_id").notNull(),
+		field: integrityConsistencyField("field").notNull(),
+		proposedKind: integrityConsistencyKind("proposed_kind").notNull(),
+		kind: integrityConsistencyKind("kind"),
+		severity: fraudReviewSeverity("severity").notNull(),
+		comparisonBasis: text("comparison_basis").notNull(),
+		leftDocumentFileId: uuid("left_document_file_id")
+			.notNull()
+			.references(() => documentFiles.id, { onDelete: "restrict" }),
+		leftPageNumber: integer("left_page_number").notNull(),
+		leftValue: text("left_value").notNull(),
+		leftLabel: text("left_label").notNull(),
+		leftCurrency: text("left_currency"),
+		leftQuote: text("left_quote").notNull(),
+		leftOffsetStart: integer("left_offset_start").notNull(),
+		leftOffsetEnd: integer("left_offset_end").notNull(),
+		leftQuoteHash: text("left_quote_hash").notNull(),
+		rightDocumentFileId: uuid("right_document_file_id")
+			.notNull()
+			.references(() => documentFiles.id, { onDelete: "restrict" }),
+		rightPageNumber: integer("right_page_number").notNull(),
+		rightValue: text("right_value").notNull(),
+		rightLabel: text("right_label").notNull(),
+		rightCurrency: text("right_currency"),
+		rightQuote: text("right_quote").notNull(),
+		rightOffsetStart: integer("right_offset_start").notNull(),
+		rightOffsetEnd: integer("right_offset_end").notNull(),
+		rightQuoteHash: text("right_quote_hash").notNull(),
+		explanation: text("explanation"),
+		explanationVerified: boolean("explanation_verified").notNull().default(false),
+		status: integrityConsistencyStatus("status").notNull(),
+		reason: text("reason").notNull(),
+		confirmedBy: uuid("confirmed_by"),
+		confirmedAt: timestamp("confirmed_at", { withTimezone: true, mode: "date" }),
+		redactedAt: timestamp("redacted_at", { withTimezone: true, mode: "date" }),
+		createdAt: createdAt(),
+	},
+	(t) => [
+		index("document_consistency_candidates_application_id_idx").on(t.applicationId),
+		index("document_consistency_candidates_run_id_idx").on(t.runId),
+		check(
+			"document_consistency_candidates_offsets_chk",
+			sql`${t.leftPageNumber} >= 1 AND ${t.rightPageNumber} >= 1
+				AND ${t.leftOffsetStart} >= 0 AND ${t.rightOffsetStart} >= 0
+				AND ${t.leftOffsetEnd} > ${t.leftOffsetStart}
+				AND ${t.rightOffsetEnd} > ${t.rightOffsetStart}`,
+		),
+	],
+);
+
+export const documentIntegrityRuns = pgTable(
+	"document_integrity_runs",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		applicationId: uuid("application_id")
+			.notNull()
+			.references(() => applications.id, { onDelete: "restrict" }),
+		feature: integrityRunFeature("feature").notNull(),
+		status: integrityRunStatus("status").notNull().default("queued"),
+		inputHash: text("input_hash").notNull(),
+		documentSha256: jsonb("document_sha256").$type<string[]>().notNull(),
+		fingerprintVersion: text("fingerprint_version").notNull(),
+		model: text("model").notNull(),
+		promptVersion: text("prompt_version").notNull(),
+		agentVersion: text("agent_version").notNull(),
+		attempts: integer("attempts").notNull().default(0),
+		maxAttempts: integer("max_attempts").notNull().default(2),
+		leaseToken: uuid("lease_token"),
+		leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true, mode: "date" }),
+		reviewVersion: integer("review_version"),
+		steps: integer("steps"),
+		toolCalls: jsonb("tool_calls").$type<unknown[]>(),
+		sourceRefs: jsonb("source_refs").$type<string[]>(),
+		repairAttempted: boolean("repair_attempted").notNull().default(false),
+		repairSucceeded: boolean("repair_succeeded").notNull().default(false),
+		usage: jsonb("usage").$type<{
+			inputTokens: number;
+			outputTokens: number;
+			costUsd: number;
+		}>(),
+		errorCode: text("error_code"),
+		errorDetail: text("error_detail"),
+		requestedBy: uuid("requested_by"),
+		fraudReviewId: uuid("fraud_review_id"),
+		artifactId: uuid("artifact_id").references(() => generatedArtifacts.id, {
+			onDelete: "restrict",
+		}),
+		startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }),
+		finishedAt: timestamp("finished_at", { withTimezone: true, mode: "date" }),
+		createdAt: createdAt(),
+	},
+	(t) => [
+		uniqueIndex("document_integrity_runs_active_uniq")
+			.on(t.applicationId, t.feature, t.inputHash)
+			.where(sql`${t.status} IN ('queued','running','succeeded')`),
+		index("document_integrity_runs_case_feature_created_idx").on(
+			t.applicationId,
+			t.feature,
+			t.createdAt,
+		),
+		index("document_integrity_runs_status_lease_idx")
+			.on(t.status, t.leaseExpiresAt)
+			.where(sql`${t.status} = 'running'`),
+	],
+);
+
+export const fraudReviews = pgTable(
+	"fraud_reviews",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		applicationId: uuid("application_id")
+			.notNull()
+			.references(() => applications.id, { onDelete: "restrict" }),
+		reviewType: text("review_type").notNull().default("document_integrity"),
+		status: fraudReviewStatus("status").notNull().default("open"),
+		reasonCode: text("reason_code").notNull(),
+		severity: fraudReviewSeverity("severity").notNull(),
+		note: text("note"),
+		assigneeUserId: uuid("assignee_user_id"),
+		signalCodes: jsonb("signal_codes")
+			.$type<string[]>()
+			.notNull()
+			.default(sql`'[]'::jsonb`),
+		documentRefs: jsonb("document_refs")
+			.$type<string[]>()
+			.notNull()
+			.default(sql`'[]'::jsonb`),
+		sourceHash: text("source_hash").notNull(),
+		briefArtifactId: uuid("brief_artifact_id").references(() => generatedArtifacts.id, {
+			onDelete: "restrict",
+		}),
+		briefStaleAt: timestamp("brief_stale_at", { withTimezone: true, mode: "date" }),
+		agentRunId: uuid("agent_run_id").references(() => documentIntegrityRuns.id, {
+			onDelete: "restrict",
+		}),
+		model: text("model"),
+		promptVersion: text("prompt_version"),
+		agentVersion: text("agent_version"),
+		version: integer("version").notNull().default(1),
+		// Cross-DB reference to credit_auth.users — plain uuid, never an FK.
+		createdBy: uuid("created_by").notNull(),
+		createdAt: createdAt(),
+		updatedAt: updatedAt(),
+		resolvedBy: uuid("resolved_by"),
+		resolvedAt: timestamp("resolved_at", { withTimezone: true, mode: "date" }),
+		resolutionNote: text("resolution_note"),
+		retentionUntil: timestamp("retention_until", { withTimezone: true, mode: "date" }).notNull(),
+		redactedAt: timestamp("redacted_at", { withTimezone: true, mode: "date" }),
+	},
+	(t) => [
+		uniqueIndex("fraud_reviews_active_uniq")
+			.on(t.applicationId, t.reviewType)
+			.where(sql`${t.status} IN ('open','needs_info')`),
+		index("fraud_reviews_status_created_idx").on(t.status, t.createdAt),
+		index("fraud_reviews_application_id_idx").on(t.applicationId),
+		check("fraud_reviews_version_chk", sql`${t.version} > 0`),
+	],
+);
+
+export const fraudReviewerGrants = pgTable(
+	"fraud_reviewer_grants",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		// Cross-DB reference to credit_auth.users — plain uuid, never an FK.
+		userId: uuid("user_id").notNull(),
+		grantedBy: uuid("granted_by"),
+		grantedAt: timestamp("granted_at", { withTimezone: true, mode: "date" }).defaultNow().notNull(),
+		revokedAt: timestamp("revoked_at", { withTimezone: true, mode: "date" }),
+	},
+	(t) => [
+		uniqueIndex("fraud_reviewer_grants_active_uniq")
+			.on(t.userId)
+			.where(sql`${t.revokedAt} IS NULL`),
+	],
+);
+
+export const documentDuplicateExplanations = pgTable(
+	"document_duplicate_explanations",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		sha256: text("sha256").notNull(),
+		applicationId: uuid("application_id")
+			.notNull()
+			.references(() => applications.id, { onDelete: "restrict" }),
+		note: text("note").notNull(),
+		// Cross-DB reference to credit_auth.users — plain uuid, never an FK.
+		explainedBy: uuid("explained_by").notNull(),
+		retentionUntil: timestamp("retention_until", { withTimezone: true, mode: "date" }).notNull(),
+		redactedAt: timestamp("redacted_at", { withTimezone: true, mode: "date" }),
+		createdAt: createdAt(),
+	},
+	(t) => [
+		uniqueIndex("document_duplicate_explanations_scope_uniq").on(t.sha256, t.applicationId),
+		index("document_duplicate_explanations_sha_idx").on(t.sha256),
 	],
 );
 

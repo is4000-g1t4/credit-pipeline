@@ -21,6 +21,23 @@ const STATUS_CLASSES: Record<string, string> = {
 	required: "bg-gray-200 text-gray-700",
 	open: "bg-red-100 text-red-800",
 	acknowledged: "bg-amber-100 text-amber-800",
+	// E2/EN-05 severities and workflow states.
+	low: "bg-green-100 text-green-800",
+	medium: "bg-amber-100 text-amber-800",
+	high: "bg-red-100 text-red-800",
+	candidate: "bg-gray-200 text-gray-700",
+	validated: "bg-blue-100 text-blue-800",
+	confirmed: "bg-purple-100 text-purple-800",
+	rejected: "bg-gray-200 text-gray-700",
+	cleared: "bg-green-100 text-green-800",
+	needs_info: "bg-amber-100 text-amber-800",
+	needs_chase: "bg-amber-100 text-amber-800",
+	match: "bg-green-100 text-green-800",
+	mismatch: "bg-red-100 text-red-800",
+	queued: "bg-blue-100 text-blue-800",
+	running: "bg-blue-100 text-blue-800",
+	succeeded: "bg-green-100 text-green-800",
+	cancelled: "bg-gray-200 text-gray-700",
 };
 
 export function StatusBadge({ status }: { status: string }) {

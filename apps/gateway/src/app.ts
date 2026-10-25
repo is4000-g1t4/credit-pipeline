@@ -246,6 +246,36 @@ export function createApp(deps: GatewayDeps): Hono<{ Variables: Variables }> {
 		);
 	});
 
+	// E2 document integrity (officer only). The applications service owns the
+	// flag and the assigned-case check; this proxy only binds identity/path.
+	for (const pattern of ["/api/applications/:id/integrity", "/api/applications/:id/integrity/*"]) {
+		app.all(pattern, officer, async (c) => {
+			const path = new URL(c.req.url).pathname;
+			return proxyTo(
+				c,
+				deps,
+				c.var.user,
+				{ baseUrl: deps.env.applicationsUrl, path },
+				DOCUMENT_UPSTREAM_TIMEOUT_MS,
+			);
+		});
+	}
+
+	// EN-05 fraud review (officer only). Reviewer-grant checks live in the
+	// applications service; applicants are denied before the upstream call.
+	for (const pattern of ["/api/fraud-review", "/api/fraud-review/*"]) {
+		app.all(pattern, officer, async (c) => {
+			const path = new URL(c.req.url).pathname;
+			return proxyTo(
+				c,
+				deps,
+				c.var.user,
+				{ baseUrl: deps.env.applicationsUrl, path },
+				LONG_UPSTREAM_TIMEOUT_MS,
+			);
+		});
+	}
+
 	app.all("/api/loans/*", user, async (c) => {
 		const path = new URL(c.req.url).pathname;
 		return proxyTo(c, deps, c.var.user, { baseUrl: deps.env.loansUrl, path });

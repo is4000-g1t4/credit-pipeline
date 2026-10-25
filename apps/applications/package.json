@@ -11,7 +11,8 @@
 		"test:integration": "vitest run --config vitest.integration.config.ts",
 		"eval:assist": "tsx eval/assist-eval.ts",
 		"eval:adverse": "tsx eval/adverse-eval.ts",
-		"eval:memo-agent": "tsx eval/memo-agent-eval.ts"
+		"eval:memo-agent": "tsx eval/memo-agent-eval.ts",
+		"eval:integrity": "tsx eval/integrity-eval.ts"
 	},
 	"dependencies": {
 		"@credit/core": "workspace:*",

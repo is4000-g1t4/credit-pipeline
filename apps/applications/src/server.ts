@@ -3,6 +3,8 @@ import { createLogger, createTemporalGateway } from "@credit/service-kit";
 import { assertDemoBoot } from "@credit/core";
 import { createApp } from "./app.js";
 import { createAgentsMemoRunner, startArtifactRetention } from "./assist/index.js";
+import { createAgentsIntegrityRunner } from "./integrity/agent-sdk.js";
+import { startIntegrityWorker } from "./integrity/runs.js";
 import { configFromEnv } from "./documents/index.js";
 import { startDocumentMaintenance } from "./documents/retention.js";
 import { loadEnv } from "./env.js";
@@ -22,6 +24,18 @@ assertDemoBoot({
 	documentStorageDir: configFromEnv(env).storageDir,
 	customerStorageDir: env.customer.storageDir,
 });
+
+const integrityRunner =
+	env.integrity.agentEnabled && env.integrity.openRouterApiKey
+		? createAgentsIntegrityRunner({
+				apiKey: env.integrity.openRouterApiKey,
+				baseUrl: env.integrity.openRouterBaseUrl,
+				model: env.integrity.model,
+				maxToolCalls: env.integrity.maxToolCalls,
+				maxOutputTokens: env.integrity.maxOutputTokens,
+				timeoutMs: env.integrity.timeoutMs,
+			})
+		: null;
 
 const app = createApp({
 	db,
@@ -44,6 +58,7 @@ const app = createApp({
 					}),
 				}
 			: undefined,
+	integrity: { agentRunner: integrityRunner ?? undefined },
 });
 
 // D1b document maintenance (SPEC-t01-t02 §6): boot + daily sweep of
@@ -63,12 +78,29 @@ startDocumentMaintenance({
 	// Fixture-owned customer rows expire on the fixture clock in demo mode;
 	// live rows always use the wall clock.
 	customerDemoAsOf: env.demo.mode ? env.demo.asOf : undefined,
+	fraudReviewEnabled: env.integrity.fraudReviewEnabled,
 	logger,
 });
 
 // EN-02 artifact retention: boot + daily tombstone sweep. It runs even when
 // the assist flag is off so a disabled feature still honours retention.
-startArtifactRetention({ db, logger });
+startArtifactRetention({
+	db,
+	logger,
+	fraudReviewEnabled: env.integrity.fraudReviewEnabled,
+});
+
+// E2 queued analysis/triage runs. Start only when a model runner exists; a
+// disabled feature can still recover a stale row but cannot claim new work
+// without a runner.
+if (integrityRunner && (env.integrity.enabled || env.integrity.fraudReviewEnabled)) {
+	startIntegrityWorker({
+		db,
+		config: env.integrity,
+		runner: integrityRunner,
+		logger,
+	});
+}
 
 // Bun entry: `bun --watch --env-file=../../.env src/server.ts` (see
 // package.json dev). Bun serves the default export; `app.ts` stays a pure

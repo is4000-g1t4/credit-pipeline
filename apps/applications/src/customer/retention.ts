@@ -7,10 +7,13 @@
 // `status='deleted'` for audit — including rows referenced by reused app
 // copies (the FK is RESTRICT; app copies carry their own blobs/retention).
 import {
+	applications,
 	customerDocumentPages,
 	customerDocuments,
 	customerLegalHolds,
 	customerProfiles,
+	fraudReviews,
+	generatedArtifacts,
 	withTx,
 	type Db,
 } from "@credit/db/applications";
@@ -18,6 +21,7 @@ import { HttpError, writeAudit } from "@credit/service-kit";
 import { and, eq, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { lockApplication } from "../documents/access.js";
 import { deleteBlob, purgeBlob } from "../documents/storage.js";
+import { tombstoneDraftBrief } from "../integrity/store.js";
 
 export interface CustomerRetentionResult {
 	checked: number;
@@ -41,6 +45,9 @@ export interface CustomerRetentionDeps {
 	/** Scopes the sweep to one customer. */
 	customerId?: string;
 	limit?: number;
+	/** E2: an active review for this customer's applications blocks evidence
+	 * retention so the cited source survives the investigation. */
+	fraudReviewEnabled?: boolean;
 }
 
 type CustomerDocRow = typeof customerDocuments.$inferSelect;
@@ -57,6 +64,7 @@ export function customerRetentionBlockedBy(
 async function tombstoneCustomerDocument(
 	tx: Parameters<Parameters<Db["transaction"]>[0]>[0],
 	doc: CustomerDocRow,
+	now: Date,
 ): Promise<string | null> {
 	await tx
 		.delete(customerDocumentPages)
@@ -65,6 +73,62 @@ async function tombstoneCustomerDocument(
 		.update(customerDocuments)
 		.set({ status: "deleted", originalFilename: null })
 		.where(eq(customerDocuments.id, doc.id));
+	// A brief that cited this customer page must not outlive the source.
+	const [profile] = await tx
+		.select({ userId: customerProfiles.userId })
+		.from(customerProfiles)
+		.where(eq(customerProfiles.id, doc.customerId))
+		.limit(1);
+	if (profile) {
+		const apps = await tx
+			.select({ id: applications.id })
+			.from(applications)
+			.where(eq(applications.applicantUserId, profile.userId));
+		const appIds = apps.map((app) => app.id);
+		if (appIds.length > 0) {
+			const briefs = await tx
+				.select({
+					id: generatedArtifacts.id,
+					applicationId: generatedArtifacts.applicationId,
+					citations: generatedArtifacts.citations,
+				})
+				.from(generatedArtifacts)
+				.where(
+					and(
+						eq(generatedArtifacts.type, "document_integrity_brief"),
+						eq(generatedArtifacts.status, "draft"),
+					),
+				);
+			const refPrefix = `context_signal:customer_document:${doc.id}:`;
+			for (const brief of briefs) {
+				if (!appIds.includes(brief.applicationId)) continue;
+				const citations = Array.isArray(brief.citations) ? brief.citations : [];
+				if (
+					citations.some(
+						(citation) =>
+							typeof citation === "object" &&
+							citation !== null &&
+							"ref" in citation &&
+							typeof citation.ref === "string" &&
+							citation.ref.startsWith(refPrefix),
+					)
+				) {
+					await tombstoneDraftBrief(tx, brief.id, brief.applicationId, "system:retention", now);
+				}
+			}
+			for (const appId of appIds) {
+				await tx
+					.update(fraudReviews)
+					.set({ briefStaleAt: now, updatedAt: now })
+					.where(
+						and(
+							eq(fraudReviews.applicationId, appId),
+							sql`${fraudReviews.status} IN ('open','needs_info')`,
+						),
+					);
+			}
+		}
+	}
 	await writeAudit(tx, {
 		actor: "system",
 		action: "customer.document_deleted",
@@ -104,7 +168,24 @@ export async function runCustomerRetention(
 	const expired = await db
 		.select()
 		.from(customerDocuments)
-		.where(and(sql`${customerDocuments.status} != 'deleted'`, expiry, ...scope))
+		.where(
+			and(
+				sql`${customerDocuments.status} != 'deleted'`,
+				expiry,
+				...scope,
+				...(deps.fraudReviewEnabled
+					? [
+							sql`NOT EXISTS (
+								SELECT 1 FROM fraud_reviews fr
+								JOIN applications a ON a.id = fr.application_id
+								JOIN customer_profiles cp ON cp.user_id = a.applicant_user_id
+								WHERE cp.id = ${customerDocuments.customerId}
+									AND fr.status IN ('open','needs_info')
+							)`,
+						]
+					: []),
+			),
+		)
 		.orderBy(customerDocuments.retentionUntil)
 		.limit(limit);
 	const retryBlobs = await db
@@ -158,7 +239,25 @@ export async function runCustomerRetention(
 					result.skippedHolds++;
 					continue;
 				}
-				const key = await tombstoneCustomerDocument(tx, fresh);
+				if (deps.fraudReviewEnabled) {
+					const active = await tx
+						.select({ id: fraudReviews.id })
+						.from(fraudReviews)
+						.innerJoin(applications, eq(applications.id, fraudReviews.applicationId))
+						.innerJoin(customerProfiles, eq(customerProfiles.userId, applications.applicantUserId))
+						.where(
+							and(
+								eq(customerProfiles.id, fresh.customerId),
+								sql`${fraudReviews.status} IN ('open','needs_info')`,
+							),
+						)
+						.limit(1);
+					if (active.length > 0) {
+						result.skippedHolds++;
+						continue;
+					}
+				}
+				const key = await tombstoneCustomerDocument(tx, fresh, now);
 				result.deletedDocuments++;
 				if (key) keys.push({ id: fresh.id, key });
 			}

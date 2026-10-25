@@ -13,6 +13,7 @@ import { createLogger, signInternalHeaders } from "@credit/service-kit";
 import { stubGateway, type FakeGateway } from "@credit/service-kit/test";
 import { createApp } from "../src/app.js";
 import type { AssistConfig, MemoAgentRunner } from "../src/assist/index.js";
+import type { IntegrityAgentRunner, IntegrityConfig } from "../src/integrity/types.js";
 import type { CustomerConfig } from "../src/customer/service.js";
 import type { OcrAdapter } from "../src/documents/ocr.js";
 import type { ScannerAdapter } from "../src/documents/scanner.js";
@@ -55,6 +56,12 @@ export interface SetupOpts {
 		now?: () => Date;
 		researchFetchImpl?: typeof fetch;
 	};
+	/** E2 integrity overrides (flag, clock, runner). */
+	integrity?: {
+		config?: Partial<IntegrityConfig>;
+		agentRunner?: IntegrityAgentRunner;
+		now?: () => Date;
+	};
 }
 
 export function setupApp(opts: SetupOpts = {}): TestContext {
@@ -77,6 +84,16 @@ export function setupApp(opts: SetupOpts = {}): TestContext {
 		documents,
 		customer: opts.customer,
 		assist: opts.assist,
+		// Tests are deterministic and flag-off by default; suite-specific
+		// overrides opt in explicitly (the local .env may enable demo flags).
+		integrity: opts.integrity ?? {
+			config: {
+				enabled: false,
+				fraudReviewEnabled: false,
+				agentEnabled: false,
+				triageEnabled: false,
+			},
+		},
 	});
 	return { app, db, sql, gateway, secret: env.internalSecret };
 }
