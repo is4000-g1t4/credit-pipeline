@@ -29,8 +29,10 @@ interface BunServer {
 export default {
 	port: env.apiPort,
 	hostname: env.apiHost,
-	// Bun's default 10s idle timeout would pre-empt the 45s demo/review calls.
-	idleTimeout: 60,
+	// Bun's default 10s idle timeout would pre-empt long demo/review calls;
+	// agentic memo generation can take ~80s, so keep this above the 120s
+	// assist proxy bound (max 255).
+	idleTimeout: 180,
 	fetch(req: Request, server: BunServer) {
 		// clientIp() (auth.ts) reads x-forwarded-for first: overwrite it with
 		// the real peer address so the login limiter stays per-IP. Never

@@ -89,7 +89,7 @@ export function runMemoEvidenceTool(
 			) {
 				return error("unknown sourceType");
 			}
-			const limit = clampLimit(params["limit"], 20, 50);
+			const limit = clampLimit(params["limit"], 50, 50);
 			const filtered = evidence.items.filter(
 				(item) => sourceType === undefined || item.sourceType === sourceType,
 			);
@@ -97,6 +97,9 @@ export function runMemoEvidenceTool(
 				ref: item.ref,
 				label: item.label,
 				sourceType: item.sourceType,
+				// The model can draft/cite short structured facts directly; call
+				// get_evidence only when the excerpt is truncated.
+				excerpt: item.content.slice(0, 300),
 			}));
 			const refs = items.map((item) => item.ref);
 			return {

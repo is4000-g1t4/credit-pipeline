@@ -1,16 +1,22 @@
 import { defineConfig } from "@playwright/test";
-import base from "./playwright.config.js";
 
-// Recording-only config: same stack/spec, but keeps the browser video and
-// slows the UI just enough to be watchable. Output: e2e/recordings/<test>/video.webm
+// Manual recording harness: requires ASSIST_ENABLED=true and usually
+// ASSIST_MEMO_WRITER=agent. Keeps the browser video; not part of normal e2e.
 export default defineConfig({
-	...base,
-	use: {
-		...base.use,
-		viewport: { width: 1440, height: 900 },
-		video: "on",
-		launchOptions: { slowMo: 120 },
-	},
+	testDir: "./",
+	testMatch: ["copilot-demo.record.ts"],
+	globalSetup: "./global-setup.ts",
+	globalTeardown: "./global-teardown.ts",
 	outputDir: "./recordings",
+	use: {
+		baseURL: "http://127.0.0.1:3000",
+		video: "on",
+		viewport: { width: 1440, height: 1000 },
+		trace: "off",
+	},
+	workers: 1,
+	retries: 0,
+	timeout: 300_000,
+	expect: { timeout: 60_000 },
 	reporter: [["list"]],
 });

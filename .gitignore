@@ -25,3 +25,5 @@ __pycache__/
 # Eval artifacts are local-only; keep harness scripts, datasets, and the Markdown summary.
 apps/policy/eval/results/*.json
 apps/research/eval/results/*.json
+
+e2e/recordings/

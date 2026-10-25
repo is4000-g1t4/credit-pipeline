@@ -529,7 +529,11 @@ export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
 					// Metadata only: error code plus the issue count, never
 					// generated text, quotes, or evidence.
 					logger.warn(
-						{ applicationId, code: err.code, issueCount: err.issues.length },
+						{
+							applicationId,
+							code: err.code,
+							issueCodes: err.issues.map((issue) => issue.code),
+						},
 						"assist memo agent failed",
 					);
 					if (err.code === "TIMEOUT") {
@@ -557,7 +561,7 @@ export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
 			if (!validation.ok) {
 				// A model bug must fail closed, never persist a partial memo.
 				logger.warn(
-					{ applicationId, issueCount: validation.issues.length },
+					{ applicationId, issueCodes: validation.issues.map((issue) => issue.code) },
 					"assist memo validation failed",
 				);
 				return c.json(validationFailure(validation.issues), 422);

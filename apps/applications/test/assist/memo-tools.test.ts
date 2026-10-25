@@ -53,14 +53,15 @@ describe("runMemoEvidenceTool", () => {
 		]);
 	});
 
-	it("lists evidence refs without content excerpts", () => {
+	it("lists evidence refs with short excerpts", () => {
 		const outcome = runMemoEvidenceTool("list_evidence", {}, bundle());
 		expect(outcome.resultCount).toBe(4);
 		expect(outcome.payload).toMatchObject({ total: 4 });
 		expect(outcome.sourceTypes).toEqual(["case_fact", "policy_section", "score_reason"]);
 		expect(outcome.refs).toHaveLength(4);
-		// Labels and refs only: item content never rides a listing.
-		expect(JSON.stringify(outcome.payload)).not.toContain("6000000");
+		const items = (outcome.payload as { items: Array<{ excerpt: string }> }).items;
+		expect(items.every((i) => i.excerpt.length <= 300)).toBe(true);
+		expect(JSON.stringify(outcome.payload)).toContain("6000000");
 	});
 
 	it("filters listings by source type and caps the limit", () => {

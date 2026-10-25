@@ -76,8 +76,10 @@ startArtifactRetention({ db, logger });
 export default {
 	port: env.port,
 	hostname: env.host,
-	// Bun's default 10s idle timeout would pre-empt the 45s demo/review calls.
-	idleTimeout: 60,
+	// Bun's default 10s idle timeout would pre-empt long demo/review calls;
+	// agentic memo generation can take ~80s, so keep this above the
+	// applications-side memo timeout (max 255).
+	idleTimeout: 180,
 	fetch(req: Request) {
 		return app.fetch(req);
 	},

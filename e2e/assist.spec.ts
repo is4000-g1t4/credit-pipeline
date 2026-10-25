@@ -14,7 +14,7 @@ test("officer drafts, validates, and approves a credit memo", async () => {
 	test.skip(!enabled, "set ASSIST_ENABLED=true to run the assist happy path");
 	const applicant = new Api();
 	await applicant.login("tomas@cafe-aurora.example");
-	const created = await applicant.post<{ application: { id: string } }>("/api/applications", {
+	const created = await applicant.post<{ id: string }>("/api/applications", {
 		...smeApplication({
 			amountCents: 6_000_000,
 			termMonths: 60,
@@ -40,7 +40,7 @@ test("officer drafts, validates, and approves a credit memo", async () => {
 			},
 		}),
 	});
-	const appId = created.application.id;
+	const appId = created.id;
 	await waitStatus(applicant, appId, "pending_review");
 
 	const officer = new Api();
@@ -130,7 +130,7 @@ test("officer sees the drafted memo and its trace in the review UI", async ({ pa
 	test.skip(!enabled, "set ASSIST_ENABLED=true to run the assist happy path");
 	const applicant = new Api();
 	await applicant.login("tomas@cafe-aurora.example");
-	const created = await applicant.post<{ application: { id: string } }>("/api/applications", {
+	const created = await applicant.post<{ id: string }>("/api/applications", {
 		...smeApplication({
 			amountCents: 6_000_000,
 			termMonths: 60,
@@ -156,7 +156,7 @@ test("officer sees the drafted memo and its trace in the review UI", async ({ pa
 			},
 		}),
 	});
-	const appId = created.application.id;
+	const appId = created.id;
 	await waitStatus(applicant, appId, "pending_review");
 
 	const officer = new Api();

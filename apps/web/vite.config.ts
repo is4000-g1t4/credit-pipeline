@@ -19,7 +19,11 @@ export default defineConfig({
 		// one that actually forwards, in dev and in production.
 		nitro({
 			routeRules: {
-				"/api/**": { proxy: "http://127.0.0.1:3001/api/**" },
+				// Agent memo drafts can exceed a minute; keep the dev/prod proxy
+				// bound above the applications-side memo timeout.
+				"/api/**": {
+					proxy: { to: "http://127.0.0.1:3001/api/**", timeout: 120_000 },
+				},
 			},
 		}),
 	],

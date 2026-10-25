@@ -46,8 +46,8 @@ over the pure evidence tools. The orchestrator owns bounds, validation,
 grounding, repair, and the trace; the SDK runner produces one draft per run.
 The applications service is Bun, and the Agents SDK is Bun-compatible.
 
-- Max steps (`ASSIST_MEMO_MAX_STEPS`, default 24), max tool calls
-  (`ASSIST_MEMO_MAX_TOOL_CALLS`, default 24), wall-clock timeout
+- Max steps (`ASSIST_MEMO_MAX_STEPS`, default 30), max tool calls
+  (`ASSIST_MEMO_MAX_TOOL_CALLS`, default 40), wall-clock timeout
   (`ASSIST_MEMO_TIMEOUT_MS`, default 90s), token/cost budget
   (`ASSIST_MEMO_MAX_COST_USD`, default 0.25). The gateway proxy bound for
   `/api/assist/*` is 120s.

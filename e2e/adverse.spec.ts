@@ -42,7 +42,7 @@ test("officer drafts and approves an adverse-action letter for a declined case",
 	);
 	const sam = new Api();
 	await sam.login("sam@example.com");
-	const created = await sam.post<{ application: { id: string } }>(
+	const created = await sam.post<{ id: string }>(
 		"/api/applications",
 		individualApplication({
 			amountCents: 1_000_000,
@@ -67,7 +67,7 @@ test("officer drafts and approves an adverse-action letter for a declined case",
 			},
 		}),
 	);
-	const appId = created.application.id;
+	const appId = created.id;
 	const done = await waitTerminal(sam, appId);
 	expect(done.application.status).toBe("declined");
 	expect((done.decision?.reasons ?? []).length).toBeGreaterThanOrEqual(3);
@@ -109,7 +109,7 @@ test("adverse-action route is not available while the flag is off", async () => 
 	test.skip(enabled, "set ASSIST_ENABLED=false to run the flag-off case");
 	const applicant = new Api();
 	await applicant.login("tomas@cafe-aurora.example");
-	const created = await applicant.post<{ application: { id: string } }>(
+	const created = await applicant.post<{ id: string }>(
 		"/api/applications",
 		smeApplication({
 			amountCents: 6_000_000,
@@ -138,11 +138,9 @@ test("adverse-action route is not available while the flag is off", async () => 
 	);
 	// A real pending case proves the 404 is the flag gate, not the case lookup:
 	// with the gate removed this route would return 409 CASE_NOT_DECLINED.
-	await waitStatus(applicant, created.application.id, "pending_review");
+	await waitStatus(applicant, created.id, "pending_review");
 	const officer = new Api();
 	await officer.login("officer@example.com");
-	const missing = await officer.postRaw(
-		`/api/assist/cases/${created.application.id}/adverse-action`,
-	);
+	const missing = await officer.postRaw(`/api/assist/cases/${created.id}/adverse-action`);
 	expect(missing.status).toBe(404);
 });
