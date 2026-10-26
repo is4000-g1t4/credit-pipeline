@@ -432,6 +432,7 @@ function ApplicantDocuments({
 	const refresh = (): void => {
 		void queryClient.invalidateQueries({ queryKey: ["documents", applicationId] });
 		void queryClient.invalidateQueries({ queryKey: ["application", applicationId] });
+		void queryClient.invalidateQueries({ queryKey: ["integrity", applicationId] });
 	};
 
 	async function saveConsent() {
@@ -581,6 +582,7 @@ function OfficerDocuments({ applicationId }: { applicationId: string }) {
 	const refresh = (): void => {
 		void queryClient.invalidateQueries({ queryKey: ["documents", applicationId] });
 		void queryClient.invalidateQueries({ queryKey: ["document-crosscheck", applicationId] });
+		void queryClient.invalidateQueries({ queryKey: ["integrity", applicationId] });
 	};
 
 	async function claim() {
