@@ -11,6 +11,7 @@ import {
 	type EvidenceBundle,
 	type UnavailableSource,
 } from "./evidence.js";
+import { locateQuote } from "./text.js";
 import { FAIR_LENDING_PROXY_RE, PROTECTED_ATTRIBUTE_RE } from "./fair-lending.js";
 
 export const ARTIFACT_TYPES = [
@@ -174,6 +175,34 @@ export const policyExceptionMemoContentSchema = z
 		title: z.string().min(1).max(200),
 		sections: sectionsSchema(POLICY_EXCEPTION_SECTION_KEYS),
 		openItems: z.array(openItemSchema).max(50),
+		rules: z
+			.array(
+				z
+					.object({
+						ruleId: z.string().min(1).max(64),
+						reasonCode: z.string().min(1).max(64),
+						observed: z.string().min(1).max(200),
+						threshold: z.string().min(1).max(200),
+						effect: z.enum(["decline", "refer", "informational"]),
+						persisted: z.boolean(),
+						exceptionState: z.enum([
+							"allowed",
+							"prohibited",
+							"not_applicable",
+							"structural_remedy",
+							"mapping_unavailable",
+						]),
+						approver: z.enum(["single_officer", "team_manager", "credit_committee"]).nullable(),
+						mitigantCodes: z.array(z.string().min(1).max(80)).max(10),
+						ruleSectionRefs: z
+							.array(z.object({ policyKey: z.string(), sectionId: z.string() }).strict())
+							.max(10),
+					})
+					.strict(),
+			)
+			.max(25)
+			.default([]),
+		regularisationPlanMonths: z.number().int().min(0).max(60).nullable().default(null),
 	})
 	.strict();
 
@@ -509,6 +538,7 @@ function textNodes(artifactType: ArtifactType, content: GeneratedContent): TextN
 			path: "title",
 			text: content.title,
 			skipInternalReference: memoNode,
+			skipFairLending: artifactType === "policy_exception_memo",
 			// The adverse title is profile-controlled, not free prose.
 			allowDecisionLanguage: artifactType === "adverse_action_letter",
 		},
@@ -543,22 +573,34 @@ function textNodes(artifactType: ArtifactType, content: GeneratedContent): TextN
 		return nodes;
 	}
 	const document = content as CreditMemoContent | PolicyExceptionMemoContent;
+	// Policy-exception memos are internal reviewer documents (like the
+	// integrity brief): descriptors (score/limit/rate/terms) are legitimate,
+	// only action/decision language is banned. Fair-lending proxies are not
+	// the right control here; PII/direct identifiers are still scanned.
+	const skipFairLending = artifactType === "policy_exception_memo";
 	for (const [sectionIndex, section] of document.sections.entries()) {
 		nodes.push({
 			path: `sections.${sectionIndex}.title`,
 			text: section.title,
 			skipInternalReference: true,
+			...(skipFairLending ? { skipFairLending: true as const } : {}),
 		});
 		for (const [claimIndex, claim] of section.claims.entries()) {
 			nodes.push({
 				path: `sections.${sectionIndex}.claims.${claimIndex}.text`,
 				text: claim.text,
 				skipInternalReference: true,
+				...(skipFairLending ? { skipFairLending: true as const } : {}),
 			});
 		}
 	}
 	for (const [index, item] of document.openItems.entries()) {
-		nodes.push({ path: `openItems.${index}.text`, text: item.text, skipInternalReference: true });
+		nodes.push({
+			path: `openItems.${index}.text`,
+			text: item.text,
+			skipInternalReference: true,
+			...(skipFairLending ? { skipFairLending: true as const } : {}),
+		});
 	}
 	if (artifactType === "credit_memo") {
 		const memo = content as CreditMemoContent;
@@ -699,6 +741,22 @@ export function validateGeneratedText(input: {
 				});
 				continue;
 			}
+			// Whitespace-tolerant match for long-form sources (hard-wrapped
+			// policy bodies, document spans); the stored citation keeps the
+			// canonical source excerpt.
+			if (item.sourceType === "policy_section" || item.sourceType === "document") {
+				const located = locateQuote(item.content, citation.quote);
+				if (!located) {
+					issues.push({
+						code: "CITATION_QUOTE_MISMATCH",
+						path,
+						message: "citation quote is not an exact excerpt of the source",
+					});
+					continue;
+				}
+				citations.push({ path, ref: citation.ref, quote: located.quote });
+				continue;
+			}
 			if (!item.content.includes(citation.quote)) {
 				issues.push({
 					code: "CITATION_QUOTE_MISMATCH",
@@ -738,7 +796,10 @@ export function validateGeneratedText(input: {
 		: [];
 	for (const node of textNodes(input.artifactType, content)) {
 		const scanned = scanNormalize(node.text);
-		const decisionLanguage = isBrief
+		// Explicit policy-memo profile: action-only language, like the
+		// integrity brief. The full descriptor ban stays for credit_memo.
+		const actionOnly = isBrief || input.artifactType === "policy_exception_memo";
+		const decisionLanguage = actionOnly
 			? containsBriefDecisionLanguage(node.text)
 			: containsDecisionLanguage(node.text);
 		if (!node.allowDecisionLanguage && decisionLanguage) {

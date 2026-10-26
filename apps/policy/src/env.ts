@@ -21,6 +21,10 @@ const schema = {
 	POLICY_CASE_TOKEN_SECRET: z.string().min(1).default("dev-policy-case-token-secret"),
 	POLICY_CITATION_SECRET: z.string().min(1).default("dev-policy-citation-secret"),
 	POLICY_AUDIT_HASH_SECRET: z.string().min(1).default("dev-policy-audit-secret"),
+	// EN-07 second HMAC: the policy service is the intended consumer of the
+	// applications rule-failure contract.
+	POLICY_RULE_CONTEXT_SECRET: z.string().min(16).default("dev-policy-rule-context-secret"),
+	POLICY_EXCEPTION_DAILY_BUDGET_USD: z.coerce.number().min(0).default(2),
 	OPENROUTER_API_KEY: z.string().default(""),
 	OPENROUTER_BASE_URL: z.string().url().default("https://openrouter.ai/api/v1"),
 	POLICY_ASSIST_ENABLED: z.string().default("false"),
@@ -68,6 +72,8 @@ export const env = {
 	caseTokenSecret: parsed.POLICY_CASE_TOKEN_SECRET,
 	citationSecret: parsed.POLICY_CITATION_SECRET,
 	auditHashSecret: parsed.POLICY_AUDIT_HASH_SECRET,
+	ruleContextSecret: parsed.POLICY_RULE_CONTEXT_SECRET,
+	policyExceptionDailyBudgetUsd: parsed.POLICY_EXCEPTION_DAILY_BUDGET_USD,
 	openrouterApiKey: parsed.OPENROUTER_API_KEY,
 	openrouterBaseUrl: parsed.OPENROUTER_BASE_URL,
 	assistEnabled: parsed.POLICY_ASSIST_ENABLED.trim().toLowerCase() === "true",

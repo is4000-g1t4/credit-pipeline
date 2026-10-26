@@ -1,0 +1,1 @@
+ALTER TYPE "public"."policy_budget_class" ADD VALUE 'policy_exception';

@@ -60,6 +60,7 @@ export const testChunk: PolicyChunk = {
 	policyFamily: "affordability",
 	productScope: "all",
 	jurisdiction: "SG",
+	contentHash: "chunk-content-hash",
 	embedding: [1, ...Array(1023).fill(0)],
 	embeddingModel: "voyageai/voyage-4-large",
 	embeddingDimensions: 1024,

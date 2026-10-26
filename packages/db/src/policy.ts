@@ -69,7 +69,11 @@ export const policyRole = pgEnum("policy_role", ["policy_owner", "compliance"]);
 export const policyGrantVia = pgEnum("policy_grant_via", ["bootstrap", "ops_cli"]);
 export const policyCreatedVia = pgEnum("policy_created_via", ["cli_editor", "demo_seed", "api"]);
 export const policyQueryMode = pgEnum("policy_query_mode", ["navigator", "case_explain"]);
-export const policyBudgetClass = pgEnum("policy_budget_class", ["navigator", "case"]);
+export const policyBudgetClass = pgEnum("policy_budget_class", [
+	"navigator",
+	"case",
+	"policy_exception",
+]);
 export const policyQueryStatus = pgEnum("policy_query_status", [
 	"succeeded",
 	"no_match",

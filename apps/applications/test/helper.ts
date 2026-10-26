@@ -56,6 +56,8 @@ export interface SetupOpts {
 	assist?: {
 		config?: Partial<AssistConfig>;
 		memoAgentRunner?: MemoAgentRunner;
+		policyClient?: import("../src/assist/policy-exception/types.js").PolicyClient;
+		policyExceptionAgentRunner?: import("../src/assist/policy-exception/types.js").PolicyExceptionAgentRunner;
 		now?: () => Date;
 		researchFetchImpl?: typeof fetch;
 	};

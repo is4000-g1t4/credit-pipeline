@@ -1,3 +1,4 @@
+import { selectActiveSection, type PolicySectionRow } from "@credit/core";
 import type { Sql } from "postgres";
 import type {
 	ActiveIndex,
@@ -52,6 +53,7 @@ export function createPostgresPolicyStore(sql: Sql): PolicyStore {
 					c.section_id,
 					c.heading,
 					c.text AS body,
+					c.content_hash,
 					c.embedding::text AS embedding_text,
 					c.embedding_model,
 					c.embedding_dimensions,
@@ -83,6 +85,7 @@ export function createPostgresPolicyStore(sql: Sql): PolicyStore {
 				section_id: string;
 				heading: string;
 				body: string;
+				content_hash: string;
 				embedding_text: string;
 				embedding_model: string;
 				embedding_dimensions: number;
@@ -111,6 +114,7 @@ export function createPostgresPolicyStore(sql: Sql): PolicyStore {
 				sectionId: row.section_id,
 				heading: row.heading,
 				body: row.body,
+				contentHash: row.content_hash,
 				policyFamily: row.policy_family,
 				productScope: row.product_scope,
 				jurisdiction: row.jurisdiction,
@@ -189,6 +193,130 @@ export function createPostgresPolicyStore(sql: Sql): PolicyStore {
 				body: row.body,
 				neighbours: neighbours.map((n) => ({ sectionId: n.section_id, heading: n.heading })),
 			};
+		},
+
+		async getSectionByRef(input): Promise<PolicySectionRow | null> {
+			const rows = (await sql`
+				SELECT
+					d.id AS policy_id, d.policy_key, d.title,
+					v.id AS version_id, v.version, v.status::text AS status,
+					v.effective_from::text AS effective_from,
+					v.effective_to::text AS effective_to,
+					s.section_id, s.heading, s.body, s.content_hash,
+					d.policy_family, d.product_scope::text AS product_scope,
+					d.jurisdiction, d.domain::text AS domain
+				FROM policy_sections s
+				JOIN policy_versions v ON v.id = s.version_id
+				JOIN policy_documents d ON d.id = v.policy_id
+				WHERE d.policy_key = ${input.policyKey}
+				  AND s.section_id = ${input.sectionId}
+				  AND v.status IN ('approved', 'retired')
+				  ${input.versionId ? sql`AND v.id = ${input.versionId}` : sql``}
+			`) as unknown as Array<{
+				policy_id: string;
+				policy_key: string;
+				title: string;
+				version_id: string;
+				version: string;
+				status: string;
+				effective_from: string;
+				effective_to: string | null;
+				section_id: string;
+				heading: string;
+				body: string;
+				content_hash: string;
+				policy_family: string;
+				product_scope: string;
+				jurisdiction: string;
+				domain: string;
+			}>;
+			const candidates: PolicySectionRow[] = rows.map((row) => ({
+				policyId: row.policy_id,
+				policyKey: row.policy_key,
+				title: row.title,
+				policyVersionId: row.version_id,
+				version: row.version,
+				status: (row.status === "retired" ? "retired" : "approved") as "approved" | "retired",
+				effectiveFrom: row.effective_from,
+				effectiveTo: row.effective_to,
+				sectionId: row.section_id,
+				heading: row.heading,
+				body: row.body,
+				contentHash: row.content_hash,
+				policyFamily: row.policy_family,
+				productScope: row.product_scope as PolicySectionRow["productScope"],
+				jurisdiction: row.jurisdiction,
+				domain: row.domain,
+			}));
+			return selectActiveSection(
+				candidates,
+				{ policyKey: input.policyKey, sectionId: input.sectionId, versionId: input.versionId },
+				{ asOf: input.asOf, productScope: input.productScope, jurisdiction: input.jurisdiction },
+			);
+		},
+
+		async listVersionSectionIds(versionId) {
+			const rows = (await sql`
+				SELECT section_id FROM policy_sections
+				WHERE version_id = ${versionId}
+				ORDER BY order_index
+			`) as unknown as Array<{ section_id: string }>;
+			return rows.map((row) => row.section_id);
+		},
+
+		async listVersionCorpusSections(versionId) {
+			const rows = (await sql`
+				SELECT d.policy_key, s.section_id, d.product_scope::text AS product_scope
+				FROM policy_sections s
+				JOIN policy_versions v ON v.id = s.version_id
+				JOIN policy_documents d ON d.id = v.policy_id
+				WHERE s.version_id = ${versionId}
+			`) as unknown as Array<{
+				policy_key: string;
+				section_id: string;
+				product_scope: "individual" | "sme" | "all";
+			}>;
+			return rows.map((row) => ({
+				policyKey: row.policy_key,
+				sectionId: row.section_id,
+				productScope: row.product_scope,
+			}));
+		},
+
+		async listApprovedCorpusSections() {
+			const rows = (await sql`
+				SELECT d.policy_key, s.section_id, d.product_scope::text AS product_scope
+				FROM policy_sections s
+				JOIN policy_versions v ON v.id = s.version_id
+				JOIN policy_documents d ON d.id = v.policy_id
+				WHERE v.status = 'approved' AND d.domain = 'credit'
+			`) as unknown as Array<{
+				policy_key: string;
+				section_id: string;
+				product_scope: "individual" | "sme" | "all";
+			}>;
+			return rows.map((row) => ({
+				policyKey: row.policy_key,
+				sectionId: row.section_id,
+				productScope: row.product_scope,
+			}));
+		},
+
+		async hasVersionChunks(versionId) {
+			const active = await store.getActiveIndex();
+			if (!active) return false;
+			const sections = await store.listVersionSectionIds(versionId);
+			if (sections.length === 0) return false;
+			const rows = (await sql`
+				SELECT count(*)::int AS n
+				FROM policy_chunks c
+				JOIN policy_sections s
+				  ON s.version_id = c.version_id AND s.section_id = c.section_id
+				WHERE c.version_id = ${versionId}
+				  AND c.index_version = ${active.indexVersion}
+				  AND c.content_hash = s.content_hash
+			`) as unknown as Array<{ n: number }>;
+			return (rows[0]?.n ?? 0) === sections.length;
 		},
 
 		async insertQuery(record: PolicyQueryRecord) {

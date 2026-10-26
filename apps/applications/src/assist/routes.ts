@@ -11,11 +11,13 @@ import {
 	ADVERSE_TAXONOMY_VERSION,
 	ARTIFACT_TYPES,
 	FAIR_LENDING_DENY_LIST_VERSION,
+	hashCanonical,
 	resolveAdverseJurisdictionProfile,
 	validateAdverseJurisdictionProfile,
 	validateAdverseLetterContent,
 	validateAdverseLetterDecisionBinding,
 	validateGeneratedText,
+	policyExceptionMemoContentSchema,
 	type AdverseActionLetterContent,
 	type AdverseJurisdictionProfile,
 	type ArtifactType,
@@ -50,6 +52,11 @@ import {
 	tombstoneArtifact,
 	updateArtifact,
 } from "./artifacts.js";
+import { policyExceptionRoutes } from "./policy-exception/routes.js";
+import { policyExceptionEvidenceForArtifact } from "./policy-exception/view.js";
+import { RuleContextUnavailableError, UnsupportedPolicyVersionError } from "./policy-rules.js";
+import { composePolicyMemoContent } from "./policy-exception/memo.js";
+import { validatePolicyMemoDraft } from "./policy-exception/validate.js";
 import {
 	buildAdverseActionLetter,
 	buildAdverseReasonFacts,
@@ -349,7 +356,34 @@ export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
 		if (artifact.type === "document_integrity_brief") {
 			throw new HttpError(404, "NOT_FOUND", "not found");
 		}
+		if (artifact.type === "policy_exception_memo" && !config.policyExceptionEnabled) {
+			throw new HttpError(404, "NOT_FOUND", "not found");
+		}
 		return artifact;
+	};
+
+	const rebuildPolicyExceptionEvidence = async (
+		kase: Awaited<ReturnType<typeof loadCase>>,
+		actor: AssistActor,
+		artifact: Awaited<ReturnType<typeof loadArtifact>>,
+	) => {
+		try {
+			return await policyExceptionEvidenceForArtifact({
+				db,
+				kase,
+				actor,
+				artifact,
+				runtime,
+			});
+		} catch (err) {
+			if (err instanceof RuleContextUnavailableError) {
+				throw new HttpError(409, "RULE_CONTEXT_UNAVAILABLE", err.message);
+			}
+			if (err instanceof UnsupportedPolicyVersionError) {
+				throw new HttpError(409, "UNSUPPORTED_POLICY_VERSION", err.message);
+			}
+			throw err;
+		}
 	};
 
 	const requireAdverseProfile = (): AdverseJurisdictionProfile => {
@@ -838,6 +872,13 @@ export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
 				"document integrity briefs are created by the triage agent",
 			);
 		}
+		if (parsed.data.type === "policy_exception_memo") {
+			throw new HttpError(
+				422,
+				"DEDICATED_ROUTE_REQUIRED",
+				"policy exception memos must be generated from the dedicated route",
+			);
+		}
 		const evidence = await assembleFor(kase, actor);
 		const validation = validateGeneratedText({
 			artifactType: parsed.data.type,
@@ -873,6 +914,9 @@ export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
 		if (rawType !== undefined && !(ARTIFACT_TYPES as readonly string[]).includes(rawType)) {
 			throw new HttpError(400, "VALIDATION_ERROR", "invalid artifact type");
 		}
+		if (rawType === "policy_exception_memo" && !config.policyExceptionEnabled) {
+			throw new HttpError(404, "NOT_FOUND", "not found");
+		}
 		const items = await listArtifacts(
 			db,
 			applicationId,
@@ -880,7 +924,11 @@ export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
 		);
 		const visible = (
 			kase.assignedToMe ? items : items.filter((artifact) => !hasDocumentCitation(artifact))
-		).filter((artifact) => artifact.type !== "document_integrity_brief");
+		)
+			.filter((artifact) => artifact.type !== "document_integrity_brief")
+			.filter(
+				(artifact) => artifact.type !== "policy_exception_memo" || config.policyExceptionEnabled,
+			);
 		return c.json({ items: visible });
 	});
 
@@ -898,6 +946,94 @@ export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
 		requireArtifactContentAccess(kase, artifact);
 		const parsed = updateSchema.safeParse(await readJson(c));
 		if (!parsed.success) throw invalidBody(parsed.error);
+		if (artifact.type === "policy_exception_memo") {
+			requireMemoableCase(kase);
+			const rebuilt = await rebuildPolicyExceptionEvidence(kase, actor, artifact);
+			if (rebuilt.sourceStatus === "unavailable") {
+				throw new HttpError(
+					503,
+					"POLICY_SOURCE_UNAVAILABLE",
+					"the policy source is unavailable for revalidation",
+				);
+			}
+			const candidate = policyExceptionMemoContentSchema.safeParse(parsed.data.content);
+			if (!candidate.success) {
+				throw new HttpError(
+					422,
+					"POLICY_EXCEPTION_INVALID",
+					"policy memo content failed schema validation",
+					{ issues: candidate.error.issues.map((issue) => issue.code) },
+				);
+			}
+			const prose = {
+				title: candidate.data.title,
+				sections: candidate.data.sections,
+				openItems: candidate.data.openItems,
+			};
+			const recomposed = composePolicyMemoContent(prose, rebuilt.context, rebuilt.bundle);
+			if (
+				hashCanonical(candidate.data.rules) !== hashCanonical(recomposed.rules) ||
+				hashCanonical(candidate.data.regularisationPlanMonths) !==
+					hashCanonical(recomposed.regularisationPlanMonths)
+			) {
+				throw new HttpError(
+					422,
+					"POLICY_EXCEPTION_INVALID",
+					"policy memo rules must match the deterministic block",
+				);
+			}
+			const coreValidation = validateGeneratedText({
+				artifactType: "policy_exception_memo",
+				content: recomposed,
+				evidence: rebuilt.bundle,
+			});
+			if (!coreValidation.ok) return c.json(validationFailure(coreValidation.issues), 422);
+			const memoValidation = validatePolicyMemoDraft(
+				recomposed,
+				rebuilt.context,
+				rebuilt.catalog,
+				rebuilt.bundle,
+			);
+			if (!memoValidation.ok) {
+				return c.json(
+					{
+						error: {
+							code: "POLICY_EXCEPTION_INVALID",
+							message: "policy memo failed policy validation",
+							issues: memoValidation.issues.slice(0, 100),
+						},
+					},
+					422,
+				);
+			}
+			const result = await updateArtifact(db, {
+				id: artifact.id,
+				actor: actor.id,
+				actorRole: actor.role,
+				expectedRevision: parsed.data.expectedRevision,
+				content: memoValidation.content ?? recomposed,
+				citations: coreValidation.citations,
+				documentDerived: rebuilt.bundle.items.some((item) => item.sourceType === "document"),
+				model: artifact.model,
+				promptVersion: artifact.promptVersion,
+				retentionDays: config.policyExceptionRetentionDays,
+				auditFeature: "policy_exception",
+				now: runtime.now(),
+			});
+			logger.info(
+				{
+					applicationId: artifact.applicationId,
+					artifactId: result.artifact.id,
+					version: result.artifact.version,
+					createdVersion: result.createdVersion,
+				},
+				"assist artifact updated",
+			);
+			return c.json({
+				artifact: result.artifact,
+				createdVersion: result.createdVersion,
+			});
+		}
 		const adverseContext =
 			artifact.type === "adverse_action_letter"
 				? {
@@ -1016,6 +1152,86 @@ export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
 		requireArtifactContentAccess(kase, artifact);
 		const parsed = approveSchema.safeParse(await readJson(c));
 		if (!parsed.success) throw invalidBody(parsed.error);
+		if (artifact.type === "policy_exception_memo") {
+			requireMemoableCase(kase);
+			if (artifact.status !== "draft") {
+				throw new HttpError(409, "NOT_DRAFT", "only drafts can be approved");
+			}
+			if (artifact.revision !== parsed.data.expectedRevision) {
+				throw new HttpError(409, "VERSION_CONFLICT", "the draft changed since it was read");
+			}
+			const rebuilt = await rebuildPolicyExceptionEvidence(kase, actor, artifact);
+			if (rebuilt.sourceStatus === "unavailable") {
+				throw new HttpError(
+					503,
+					"POLICY_SOURCE_UNAVAILABLE",
+					"the policy source is unavailable for revalidation",
+				);
+			}
+			const stored = artifact.content as Record<string, unknown>;
+			const prose = {
+				title: stored["title"],
+				sections: stored["sections"],
+				openItems: stored["openItems"],
+			};
+			const recomposed = composePolicyMemoContent(
+				prose as unknown as Parameters<typeof composePolicyMemoContent>[0],
+				rebuilt.context,
+				rebuilt.bundle,
+			);
+			if (
+				hashCanonical(stored["rules"] ?? []) !== hashCanonical(recomposed.rules) ||
+				hashCanonical(stored["regularisationPlanMonths"] ?? null) !==
+					hashCanonical(recomposed.regularisationPlanMonths)
+			) {
+				throw new HttpError(
+					422,
+					"POLICY_EXCEPTION_INVALID",
+					"policy memo rules must match the deterministic block",
+				);
+			}
+			const coreValidation = validateGeneratedText({
+				artifactType: "policy_exception_memo",
+				content: recomposed,
+				evidence: rebuilt.bundle,
+			});
+			if (!coreValidation.ok) return c.json(validationFailure(coreValidation.issues), 422);
+			const memoValidation = validatePolicyMemoDraft(
+				recomposed,
+				rebuilt.context,
+				rebuilt.catalog,
+				rebuilt.bundle,
+			);
+			if (!memoValidation.ok) {
+				return c.json(
+					{
+						error: {
+							code: "POLICY_EXCEPTION_INVALID",
+							message: "policy memo failed policy validation",
+							issues: memoValidation.issues.slice(0, 100),
+						},
+					},
+					422,
+				);
+			}
+			const approved = await approveArtifact(db, {
+				id: artifact.id,
+				actor: actor.id,
+				actorRole: actor.role,
+				expectedRevision: parsed.data.expectedRevision,
+				auditFeature: "policy_exception",
+				now: runtime.now(),
+			});
+			logger.info(
+				{
+					applicationId: approved.applicationId,
+					artifactId: approved.id,
+					version: approved.version,
+				},
+				"assist artifact approved",
+			);
+			return c.json({ artifact: approved });
+		}
 		if (artifact.status !== "draft") {
 			throw new HttpError(409, "NOT_DRAFT", "only drafts can be approved");
 		}
@@ -1127,6 +1343,7 @@ export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
 			actorRole: actor.role,
 			expectedRevision: parsed.data.expectedRevision,
 			reason: parsed.data.reason,
+			auditFeature: artifact.type === "policy_exception_memo" ? "policy_exception" : undefined,
 			now: runtime.now(),
 		});
 		logger.info(
@@ -1137,6 +1354,8 @@ export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
 	});
 
 	// --- Service-only retention/hold controls (never gateway-exposed). ---
+
+	app.route("/", policyExceptionRoutes({ db, runtime, logger }));
 
 	app.post("/internal/assist/artifacts/:id/holds", requireService, async (c) => {
 		const artifactId = c.req.param("id");

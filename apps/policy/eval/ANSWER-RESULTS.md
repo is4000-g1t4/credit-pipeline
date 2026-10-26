@@ -1,4 +1,29 @@
-# Policy navigator — answer eval (2026-10-24)
+# Policy navigator — answer eval
+
+## 2026-10-27 re-run (POL-CR-009 decision-engine standard)
+
+The corpus gained `POL-CR-009-decision-engine-standard.md` (9.0–9.4), so the
+corpus is now 9 policies / 40 sections and the dataset 37 cases (29 dev,
+8 held-out; four new dev cases, `nav-engine-01..04`). Commands:
+
+```powershell
+pnpm --filter @credit/policy eval:answers -- --split=dev --trials=1
+pnpm --filter @credit/policy eval:answers -- --split=heldout --trials=1
+```
+
+| Split    | Cases |    Trial pass | Status |  Citation hit | Grounded |      Mean / p95 |    Cost |
+| -------- | ----: | ------------: | -----: | ------------: | -------: | --------------: | ------: |
+| Dev      |    29 | 23/29 (0.793) |  29/29 | 20/22 (0.909) |    38/38 | 10.6 s / 25.6 s | $0.1020 |
+| Held-out |     8 |   8/8 (1.000) |    8/8 |   6/6 (1.000) |    12/12 | 12.8 s / 29.7 s | $0.0267 |
+
+This is a single-trial re-run to check corpus regression, not a pass^3
+quality claim. The four engine-standard cases: `nav-engine-01` (score band)
+and `nav-engine-04` (DSCR 1.20x) pass; `nav-engine-02` (revenue S$60k vs the
+S$200k POL-CR-003 gate) and `nav-engine-03` (TDSR 52% vs the 55% exception
+cap) are status-correct and section-complete but the judge rates one answer
+partial (completeness) and one misses the 5.2 citation. The pre-existing
+dev failures remain `nav-answerable-07` (citation), `08`/`14`/`18`
+(completeness). Status accuracy, retrieval, grounding, and safety are clean.
 
 Command:
 
@@ -17,6 +42,8 @@ suite is `pnpm --filter @credit/policy eval:answers -- --trials=3 --delay=1500`
 Model: `deepseek/deepseek-v4.1-flash-1017` (temperature 0, 6000 output
 tokens, 60 s timeout). Embeddings: `voyageai/voyage-4-large` (1024 dims).
 Corpus: 8 policies, 35 sections. Dataset: 33 cases (25 dev, 8 held-out).
+The section below is the historical 2026-10-24 run; the 2026-10-27 re-run
+above supersedes its corpus/dataset counts.
 Each trial runs the production markdown parser, retrieval ranker, answerer,
 and `validateNavigatorAnswer`; the eval bypasses HTTP auth, ACL, and budget
 reservations (recorded in the result metadata).

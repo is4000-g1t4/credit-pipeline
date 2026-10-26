@@ -1,9 +1,16 @@
 import { randomUUID } from "node:crypto";
+import {
+	hashCanonical,
+	hashQuote,
+	POLICY_ENGINE_STANDARD_HASH,
+	validateRegistryRefs,
+} from "@credit/core";
 import { HttpError, readJson, requireService, type ServiceVariables } from "@credit/service-kit";
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import { z } from "zod";
 import {
+	createDrawerToken,
 	validateCaseAnswer,
 	validateNavigatorAnswer,
 	verifyDrawerToken,
@@ -42,6 +49,133 @@ const approveSchema = z
 			.optional(),
 	})
 	.strict();
+
+const uuidSchema = z.string().uuid();
+const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+
+const exceptionBaseSchema = z
+	.object({
+		applicationId: uuidSchema,
+		actorId: uuidSchema,
+		actorRole: z.string().min(1).max(40),
+		policyAsOf: dateSchema,
+		productScope: z.enum(["individual", "sme"]),
+	})
+	.strict();
+
+const resolveSchema = exceptionBaseSchema
+	.extend({
+		refs: z
+			.array(
+				z
+					.object({
+						policyKey: z.string().min(1).max(40),
+						sectionId: z.string().min(1).max(64),
+						versionId: uuidSchema.optional(),
+					})
+					.strict(),
+			)
+			.min(1)
+			.max(20),
+	})
+	.strict();
+
+const bridgeSearchSchema = exceptionBaseSchema
+	.extend({
+		query: z.string().min(3).max(1000),
+		topK: z.number().int().min(1).max(12).optional(),
+	})
+	.strict();
+
+const SECTION_BODY_CAP = 8000;
+const TOTAL_BODY_CAP = 40000;
+const SERVICE_CASE_EXPLAIN: Actor = {
+	id: "service:case_explain",
+	role: "service",
+	policyRoles: [],
+};
+
+interface BridgeRow {
+	policyId: string;
+	policyVersionId: string;
+	policyKey: string;
+	sectionId: string;
+	version: string;
+	heading: string;
+	body: string;
+	effectiveFrom: string;
+	effectiveTo: string | null;
+	contentHash: string;
+}
+
+function capBridgeBodies(
+	rows: BridgeRow[],
+): Array<{ row: BridgeRow; body: string; truncated: boolean }> {
+	let total = 0;
+	return rows.map((row) => {
+		let body = row.body;
+		let truncated = false;
+		if (body.length > SECTION_BODY_CAP) {
+			body = body.slice(0, SECTION_BODY_CAP);
+			truncated = true;
+		}
+		if (total + body.length > TOTAL_BODY_CAP) {
+			const room = TOTAL_BODY_CAP - total;
+			if (room <= 0) {
+				body = "";
+				truncated = true;
+			} else {
+				body = body.slice(0, room);
+				truncated = true;
+			}
+		}
+		total += body.length;
+		return { row, body, truncated };
+	});
+}
+
+function toBridgeDelivery(
+	capped: { row: BridgeRow; body: string; truncated: boolean },
+	secret: string,
+	asOf: string,
+	queryId: string,
+): {
+	policyId: string;
+	policyVersionId: string;
+	policyKey: string;
+	sectionId: string;
+	version: string;
+	heading: string;
+	body: string;
+	truncated: boolean;
+	effectiveFrom: string;
+	effectiveTo: string | null;
+	contentHash: string;
+	quoteHash: string;
+	drawerToken: string;
+} {
+	const { row, body, truncated } = capped;
+	return {
+		policyId: row.policyId,
+		policyVersionId: row.policyVersionId,
+		policyKey: row.policyKey,
+		sectionId: row.sectionId,
+		version: row.version,
+		heading: row.heading,
+		body,
+		truncated,
+		effectiveFrom: row.effectiveFrom,
+		effectiveTo: row.effectiveTo,
+		contentHash: row.contentHash,
+		quoteHash: hashQuote(body),
+		drawerToken: createDrawerToken(secret, {
+			versionId: row.policyVersionId,
+			sectionId: row.sectionId,
+			asOf,
+			queryId,
+		}),
+	};
+}
 
 const requireOfficer = createMiddleware<{ Variables: ServiceVariables }>(async (c, next) => {
 	const me = c.var.user;
@@ -89,7 +223,7 @@ type QueryBase = {
 	actorId: string;
 	actorRole: string;
 	mode: "navigator" | "case_explain";
-	budgetClass: "navigator" | "case";
+	budgetClass: "navigator" | "case" | "policy_exception";
 	applicationId: string | null;
 	runId: string | null;
 	questionHmac: string | null;
@@ -460,6 +594,225 @@ export function createPolicyRoutes(deps: PolicyDeps): Hono<{ Variables: ServiceV
 		}
 	});
 
+	app.post("/internal/policy/sections/resolve", requireService, async (c) => {
+		if (!env.assistEnabled)
+			throw new HttpError(503, "POLICY_DISABLED", "policy assist is disabled");
+		const parsed = resolveSchema.safeParse(await readJson(c));
+		if (!parsed.success) throw new HttpError(422, "VALIDATION_ERROR", "invalid request");
+		const { applicationId, actorId, actorRole, policyAsOf, productScope, refs } = parsed.data;
+		const queryId = randomUUID();
+		const base: QueryBase = {
+			id: queryId,
+			actorId,
+			actorRole,
+			mode: "case_explain",
+			budgetClass: "policy_exception",
+			applicationId,
+			runId: null,
+			questionHmac: null,
+			asOf: policyAsOf,
+		};
+		try {
+			const found: Array<BridgeRow | null> = [];
+			for (const ref of refs) {
+				const row = await store.getSectionByRef({
+					policyKey: ref.policyKey,
+					sectionId: ref.sectionId,
+					asOf: policyAsOf,
+					productScope,
+					jurisdiction: env.jurisdiction,
+					versionId: ref.versionId,
+				});
+				found.push(
+					row
+						? {
+								policyId: row.policyId,
+								policyVersionId: row.policyVersionId,
+								policyKey: row.policyKey,
+								sectionId: row.sectionId,
+								version: row.version,
+								heading: row.heading,
+								body: row.body,
+								effectiveFrom: row.effectiveFrom,
+								effectiveTo: row.effectiveTo,
+								contentHash: row.contentHash,
+							}
+						: null,
+				);
+			}
+			const present = found.filter((row): row is BridgeRow => row !== null);
+			const acls = await store.loadAcls([...new Set(present.map((row) => row.policyId))]);
+			const deliverable: BridgeRow[] = [];
+			const missing: Array<{
+				policyKey: string;
+				sectionId: string;
+				reason: "not_found" | "not_effective" | "forbidden" | "truncated";
+			}> = [];
+			for (const [i, row] of found.entries()) {
+				const ref = refs[i]!;
+				if (!row) {
+					missing.push({ policyKey: ref.policyKey, sectionId: ref.sectionId, reason: "not_found" });
+					continue;
+				}
+				if (!canRead(row.policyId, SERVICE_CASE_EXPLAIN, acls)) {
+					missing.push({ policyKey: ref.policyKey, sectionId: ref.sectionId, reason: "forbidden" });
+					continue;
+				}
+				deliverable.push(row);
+			}
+			const capped = capBridgeBodies(deliverable);
+			const sections = [];
+			for (const [i, entry] of capped.entries()) {
+				if (entry.body.length === 0 && entry.truncated) {
+					const row = deliverable[i]!;
+					missing.push({ policyKey: row.policyKey, sectionId: row.sectionId, reason: "truncated" });
+					continue;
+				}
+				sections.push(toBridgeDelivery(entry, env.citationSecret, policyAsOf, queryId));
+			}
+			await logQuery(
+				store,
+				base,
+				sections.length > 0 ? "succeeded" : "no_match",
+				null,
+				sections.map((section) => `${section.policyKey}#${section.sectionId}`),
+				0,
+			);
+			return c.json({ status: missing.length === 0 ? "ok" : "partial", sections, missing });
+		} catch (err) {
+			if (err instanceof HttpError) throw err;
+			logger.error(
+				{ queryId, err: err instanceof Error ? err.message : String(err) },
+				"policy exception resolve failed",
+			);
+			try {
+				await logQuery(store, base, "failed", "policy_error", [], 0);
+			} catch {
+				// Log failures never mask the source-unavailable signal.
+			}
+			throw new HttpError(503, "POLICY_SOURCE_UNAVAILABLE", "policy source is unavailable");
+		}
+	});
+
+	app.post("/internal/policy/search", requireService, async (c) => {
+		if (!env.assistEnabled)
+			throw new HttpError(503, "POLICY_DISABLED", "policy assist is disabled");
+		const parsed = bridgeSearchSchema.safeParse(await readJson(c));
+		if (!parsed.success) throw new HttpError(422, "VALIDATION_ERROR", "invalid request");
+		const { applicationId, actorId, actorRole, policyAsOf, productScope, query } = parsed.data;
+		const topK = parsed.data.topK ?? env.retrievalTopK;
+		const trimmed = query.trim();
+		const queryId = randomUUID();
+		const base: QueryBase = {
+			id: queryId,
+			actorId,
+			actorRole,
+			mode: "case_explain",
+			budgetClass: "policy_exception",
+			applicationId,
+			runId: null,
+			questionHmac: hmacQuestion(env.auditHashSecret, trimmed),
+			asOf: policyAsOf,
+		};
+		if (classifyScope(trimmed) === "out_of_scope") {
+			await logQuery(store, { ...base, questionHmac: null }, "out_of_scope", "out_of_scope", [], 0);
+			return c.json({ status: "out_of_scope", sections: [], missing: [] });
+		}
+		if (hasDirectIdentifier(trimmed)) {
+			await logQuery(
+				store,
+				{ ...base, questionHmac: null },
+				"identifier_blocked",
+				"identifier_blocked",
+				[],
+				0,
+			);
+			return c.json({ status: "identifier_blocked", sections: [], missing: [] });
+		}
+		const reserved = await store.reserveBudget({
+			day: today(),
+			budgetClass: "policy_exception",
+			actorId,
+			maxCostUsd: 0.02,
+			dailyCapUsd: env.policyExceptionDailyBudgetUsd,
+			actorCapUsd: 0,
+			ttlSeconds: env.reservationTtlSeconds,
+		});
+		if ("error" in reserved) {
+			await logQuery(store, base, "budget_exceeded", "budget_exceeded", [], 0);
+			throw new HttpError(429, "budget_exceeded", "policy exception budget exceeded");
+		}
+		const settle = makeSettle(
+			store,
+			reserved.reservationId,
+			logger,
+			queryId,
+			"policy exception budget settle failed",
+		);
+		try {
+			const active = await requireActiveIndex(store, env);
+			const [vector] = await deps.embedder.embed([trimmed], { conversationId: queryId });
+			if (!vector) throw new Error("policy query embedding is empty");
+			const chunks = await store.loadChunks({
+				asOf: policyAsOf,
+				productScope,
+				jurisdiction: env.jurisdiction,
+				statuses: ["approved", "retired"],
+				indexVersion: active.indexVersion,
+			});
+			const acls = await store.loadAcls([...new Set(chunks.map((chunk) => chunk.policyId))]);
+			const ranked = rankChunks(
+				trimmed,
+				vector,
+				chunks.filter((chunk) => canRead(chunk.policyId, SERVICE_CASE_EXPLAIN, acls)),
+				topK,
+			);
+			const retrievedIds = ranked.map((chunk) => `${chunk.policyKey}#${chunk.sectionId}`);
+			if (ranked.length === 0) {
+				await logQuery(store, base, "no_match", null, [], 0);
+				await settle(0.0005);
+				return c.json({ status: "ok", sections: [], missing: [] });
+			}
+			const rows: BridgeRow[] = ranked.map((chunk) => ({
+				policyId: chunk.policyId,
+				policyVersionId: chunk.policyVersionId,
+				policyKey: chunk.policyKey,
+				sectionId: chunk.sectionId,
+				version: chunk.version,
+				heading: chunk.heading,
+				body: chunk.body,
+				effectiveFrom: chunk.effectiveFrom,
+				effectiveTo: chunk.effectiveTo,
+				contentHash: chunk.contentHash,
+			}));
+			const sections = [];
+			for (const entry of capBridgeBodies(rows)) {
+				if (entry.body.length === 0 && entry.truncated) continue;
+				sections.push(toBridgeDelivery(entry, env.citationSecret, policyAsOf, queryId));
+			}
+			await logQuery(store, base, "succeeded", null, retrievedIds, 0);
+			await settle(0.0005);
+			return c.json({ status: "ok", sections, missing: [] });
+		} catch (err) {
+			if (err instanceof HttpError) throw err;
+			logger.error(
+				{ queryId, err: err instanceof Error ? err.message : String(err) },
+				"policy exception search failed",
+			);
+			try {
+				await logQuery(store, base, "failed", "policy_error", [], 0);
+			} catch {
+				// Log failures never mask the source-unavailable signal.
+			}
+			try {
+				await settle(0.0005);
+			} catch {
+				// Settle failures are already warned inside makeSettle.
+			}
+			throw new HttpError(503, "POLICY_SOURCE_UNAVAILABLE", "policy source is unavailable");
+		}
+	});
+
 	app.get("/api/policy/sections/:versionId/:sectionId", requireOfficer, async (c) => {
 		const versionId = c.req.param("versionId");
 		const sectionId = c.req.param("sectionId");
@@ -503,6 +856,8 @@ export function createPolicyRoutes(deps: PolicyDeps): Hono<{ Variables: ServiceV
 		if (!parsed.success) throw new HttpError(422, "VALIDATION_ERROR", "invalid request");
 		const version = await store.getVersion(c.req.param("id"));
 		if (!version) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (version.status !== "draft")
+			throw new HttpError(409, "NOT_DRAFT", "only drafts can be approved");
 		const me = c.var.user;
 		const actor = await loadActor(store, me);
 		if (!(await canAdminPolicy(store, actor, version.policyId))) {
@@ -515,6 +870,81 @@ export function createPolicyRoutes(deps: PolicyDeps): Hono<{ Variables: ServiceV
 		const effectiveFrom = parsed.data.effectiveFrom ?? version.effectiveFrom;
 		if (effectiveFrom < today())
 			throw new HttpError(422, "BACKDATED", "effective date cannot be in the past");
+		const sectionIds = await store.listVersionSectionIds(version.id);
+		const [versionCorpus, approvedCorpus] = await Promise.all([
+			store.listVersionCorpusSections(version.id),
+			store.listApprovedCorpusSections(),
+		]);
+		const union = [...approvedCorpus];
+		const seen = new Set(union.map((s) => `${s.policyKey}#${s.sectionId}`));
+		for (const s of versionCorpus) {
+			const key = `${s.policyKey}#${s.sectionId}`;
+			if (!seen.has(key)) {
+				union.push(s);
+				seen.add(key);
+			}
+		}
+		const refs = new Set(union.map((s) => `${s.policyKey}#${s.sectionId}`));
+		for (const kind of ["individual", "sme"] as const) {
+			const validation = validateRegistryRefs(refs, union, kind, true);
+			if (
+				validation.missingRefs.length > 0 ||
+				validation.scopeMismatches.length > 0 ||
+				validation.missingExceptionRuleIds.length > 0
+			) {
+				throw new HttpError(
+					409,
+					"REGISTRY_MAPPING_MISSING",
+					`registry refs missing for ${kind}: ${[...validation.missingRefs, ...validation.scopeMismatches].join(", ")}`,
+				);
+			}
+		}
+		const STANDARD_IDS = ["9.0", "9.1", "9.2", "9.3", "9.4"];
+		const versionPolicyKey = versionCorpus[0]?.policyKey;
+		const standardBodies: Array<{ sectionId: string; body: string }> = [];
+		if (versionPolicyKey === "POL-CR-009") {
+			for (const sectionId of STANDARD_IDS) {
+				const section = await store.getSection(version.id, sectionId);
+				if (!section) {
+					throw new HttpError(
+						409,
+						"REGISTRY_MAPPING_MISSING",
+						`standard section missing: ${sectionId}`,
+					);
+				}
+				standardBodies.push({ sectionId, body: section.body });
+			}
+		} else {
+			for (const sectionId of STANDARD_IDS) {
+				const row = await store.getSectionByRef({
+					policyKey: "POL-CR-009",
+					sectionId,
+					asOf: effectiveFrom,
+					productScope: "individual",
+					jurisdiction: env.jurisdiction,
+				});
+				if (!row) {
+					throw new HttpError(
+						409,
+						"REGISTRY_MAPPING_MISSING",
+						`standard section missing: ${sectionId}`,
+					);
+				}
+				standardBodies.push({ sectionId, body: row.body });
+			}
+		}
+		void sectionIds;
+		standardBodies.sort((a, b) => (a.sectionId < b.sectionId ? -1 : 1));
+		if (hashCanonical(standardBodies) !== POLICY_ENGINE_STANDARD_HASH) {
+			throw new HttpError(409, "STANDARD_CHANGED", "decision-engine standard 9.0-9.4 has changed");
+		}
+		if (!(await store.hasVersionChunks(version.id))) {
+			throw new HttpError(
+				409,
+				"INDEX_NOT_BUILT",
+				`active index is missing chunks for version ${version.id}; run pnpm --filter @credit/policy reindex -- --version=${version.id}`,
+			);
+		}
 		await store.approveVersion(version.id, me.id, effectiveFrom);
 		return c.json({ status: "approved", effectiveFrom });
 	});

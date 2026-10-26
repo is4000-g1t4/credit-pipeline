@@ -3,6 +3,8 @@ import { createLogger, createTemporalGateway } from "@credit/service-kit";
 import { assertDemoBoot } from "@credit/core";
 import { createApp } from "./app.js";
 import { createAgentsMemoRunner, startArtifactRetention } from "./assist/index.js";
+import { createHttpPolicyClient } from "./assist/policy-exception/policy-client.js";
+import { createAgentsPolicyExceptionRunner } from "./assist/policy-exception/agent-sdk.js";
 import { createAgentsIntegrityRunner } from "./integrity/agent-sdk.js";
 import { applicationObservability } from "./observability.js";
 import { startIntegrityWorker } from "./integrity/runs.js";
@@ -52,8 +54,8 @@ const app = createApp({
 	logger,
 	// Agent writer only: without an OpenRouter key there is no runner, so
 	// the memo route fails closed with a typed 503. Never fail process startup.
-	assist:
-		env.assist.memoWriter === "agent" && env.assist.openRouterApiKey
+	assist: {
+		...(env.assist.memoWriter === "agent" && env.assist.openRouterApiKey
 			? {
 					memoAgentRunner: createAgentsMemoRunner({
 						apiKey: env.assist.openRouterApiKey,
@@ -66,7 +68,45 @@ const app = createApp({
 						timeoutMs: env.assist.memoTimeoutMs,
 					}),
 				}
-			: undefined,
+			: {}),
+		...(env.assist.policyUrl && env.assist.policyInternalSecret
+			? {
+					policyClient: createHttpPolicyClient({
+						baseUrl: env.assist.policyUrl,
+						secret: env.assist.policyInternalSecret,
+						timeoutMs: env.assist.policyTimeoutMs,
+					}),
+				}
+			: {}),
+		...(env.assist.policyExceptionEnabled &&
+		env.assist.openRouterApiKey &&
+		env.assist.policyUrl &&
+		env.assist.policyInternalSecret
+			? {
+					// ponytail: single shared runner; per-request officer identity
+					// rides the policy-client audit via the route actor when scaled.
+					policyExceptionAgentRunner: createAgentsPolicyExceptionRunner({
+						apiKey: env.assist.openRouterApiKey,
+						baseUrl: env.assist.openRouterBaseUrl,
+						model: env.assist.policyExceptionModel,
+						agentVersion: env.assist.policyExceptionAgentVersion,
+						promptVersion: env.assist.policyExceptionPromptVersion,
+						validatorVersion: env.assist.policyExceptionValidatorVersion,
+						artifactType: "policy_exception_memo",
+						maxToolCalls: env.assist.policyExceptionMaxToolCalls,
+						maxOutputTokens: env.assist.policyExceptionMaxOutputTokens,
+						timeoutMs: env.assist.policyExceptionTimeoutMs,
+						policyClient: createHttpPolicyClient({
+							baseUrl: env.assist.policyUrl,
+							secret: env.assist.policyInternalSecret,
+							timeoutMs: env.assist.policyTimeoutMs,
+						}),
+						actorId: "00000000-0000-0000-0000-000000000000",
+						actorRole: "officer",
+					}),
+				}
+			: {}),
+	},
 	integrity: { agentRunner: integrityRunner ?? undefined },
 });
 

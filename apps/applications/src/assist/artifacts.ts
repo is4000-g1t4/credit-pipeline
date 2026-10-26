@@ -39,6 +39,8 @@ export interface CreateArtifactInput {
 	/** Replay key. Defaults to `agentTrace.evidenceHash` when not supplied. */
 	evidenceHash?: string;
 	auditMetadata?: ArtifactAuditMetadata;
+	/** Audit feature tag; policy memos use "policy_exception". */
+	auditFeature?: string;
 	now?: Date;
 }
 
@@ -58,6 +60,8 @@ export interface UpdateArtifactInput {
 	/** Explicit replacement; omitted preserves the source row's hash. */
 	evidenceHash?: string;
 	auditMetadata?: ArtifactAuditMetadata;
+	/** Audit feature tag; policy memos use "policy_exception". */
+	auditFeature?: string;
 	now?: Date;
 }
 
@@ -252,7 +256,9 @@ export async function createArtifact(db: Db, input: CreateArtifactInput): Promis
 					action: "artifact.superseded",
 					entity: "generated_artifact",
 					payload: {
-						feature: "assist",
+						feature:
+							input.auditFeature ??
+							(input.type === "policy_exception_memo" ? "policy_exception" : "assist"),
 						artifactId: stale.id,
 						applicationId: input.applicationId,
 						type: input.type,
@@ -305,7 +311,9 @@ export async function createArtifact(db: Db, input: CreateArtifactInput): Promis
 			payload: {
 				...input.auditMetadata,
 				...traceAudit(trace.agentTrace),
-				feature: "assist",
+				feature:
+					input.auditFeature ??
+					(input.type === "policy_exception_memo" ? "policy_exception" : "assist"),
 				artifactId: row.id,
 				applicationId: input.applicationId,
 				type: input.type,
@@ -380,7 +388,9 @@ export async function updateArtifact(
 				payload: {
 					...input.auditMetadata,
 					...traceAudit(trace.agentTrace),
-					feature: "assist",
+					feature:
+						input.auditFeature ??
+						(row.type === "policy_exception_memo" ? "policy_exception" : "assist"),
 					artifactId: created.id,
 					baseArtifactId: row.id,
 					applicationId: row.applicationId,
@@ -431,7 +441,9 @@ export async function updateArtifact(
 			payload: {
 				...input.auditMetadata,
 				...traceAudit(trace.agentTrace),
-				feature: "assist",
+				feature:
+					input.auditFeature ??
+					(row.type === "policy_exception_memo" ? "policy_exception" : "assist"),
 				artifactId: row.id,
 				applicationId: row.applicationId,
 				type: row.type,
@@ -454,6 +466,7 @@ export async function approveArtifact(
 		actorRole?: string;
 		expectedRevision: number;
 		auditMetadata?: ArtifactAuditMetadata;
+		auditFeature?: string;
 		now?: Date;
 	},
 ): Promise<ArtifactDto> {
@@ -517,7 +530,9 @@ export async function approveArtifact(
 			entity: "generated_artifact",
 			payload: {
 				...input.auditMetadata,
-				feature: "assist",
+				feature:
+					input.auditFeature ??
+					(row.type === "policy_exception_memo" ? "policy_exception" : "assist"),
 				artifactId: row.id,
 				applicationId: row.applicationId,
 				type: row.type,
@@ -540,6 +555,7 @@ export async function tombstoneArtifact(
 		actorRole?: string;
 		expectedRevision: number;
 		reason: string;
+		auditFeature?: string;
 		now?: Date;
 	},
 ): Promise<ArtifactDto> {
@@ -552,6 +568,9 @@ export async function tombstoneArtifact(
 			.for("update");
 		const row = locked[0];
 		if (!row) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (row.type === "policy_exception_memo" && row.status === "approved") {
+			throw new HttpError(409, "ARTIFACT_IMMUTABLE", "approved policy memos cannot be tombstoned");
+		}
 		if (row.status === "deleted" || row.status === "superseded") {
 			throw new HttpError(409, "ARTIFACT_IMMUTABLE", "the artifact is terminal");
 		}
@@ -586,7 +605,9 @@ export async function tombstoneArtifact(
 			action: "artifact.tombstoned",
 			entity: "generated_artifact",
 			payload: {
-				feature: "assist",
+				feature:
+					input.auditFeature ??
+					(row.type === "policy_exception_memo" ? "policy_exception" : "assist"),
 				artifactId: row.id,
 				applicationId: row.applicationId,
 				type: row.type,
@@ -655,7 +676,14 @@ export async function findArtifactByEvidence(
 
 export async function createArtifactHold(
 	db: Db,
-	input: { artifactId: string; reason: string; createdBy: string; actorRole?: string; now?: Date },
+	input: {
+		artifactId: string;
+		reason: string;
+		createdBy: string;
+		actorRole?: string;
+		auditFeature?: string;
+		now?: Date;
+	},
 ): Promise<{ holdId: string; artifactId: string }> {
 	return artifactTx(db, async (tx) => {
 		const rows = await tx
@@ -685,7 +713,9 @@ export async function createArtifactHold(
 			action: "artifact.hold_created",
 			entity: "generated_artifact",
 			payload: {
-				feature: "assist",
+				feature:
+					input.auditFeature ??
+					(artifact.type === "policy_exception_memo" ? "policy_exception" : "assist"),
 				artifactId: artifact.id,
 				applicationId: artifact.applicationId,
 				type: artifact.type,
@@ -702,7 +732,14 @@ export async function createArtifactHold(
 
 export async function releaseArtifactHold(
 	db: Db,
-	input: { artifactId: string; holdId: string; actor: string; actorRole?: string; now?: Date },
+	input: {
+		artifactId: string;
+		holdId: string;
+		actor: string;
+		actorRole?: string;
+		auditFeature?: string;
+		now?: Date;
+	},
 ): Promise<{ holdId: string; artifactId: string }> {
 	const now = input.now ?? new Date();
 	return artifactTx(db, async (tx) => {
@@ -737,7 +774,9 @@ export async function releaseArtifactHold(
 				action: "artifact.hold_released",
 				entity: "generated_artifact",
 				payload: {
-					feature: "assist",
+					feature:
+						input.auditFeature ??
+						(artifact?.type === "policy_exception_memo" ? "policy_exception" : "assist"),
 					artifactId: hold.artifactId,
 					applicationId: hold.applicationId,
 					holdId: hold.id,
@@ -822,7 +861,7 @@ export async function runArtifactRetention(
 				action: "artifact.retention_deleted",
 				entity: "generated_artifact",
 				payload: {
-					feature: "assist",
+					feature: fresh.type === "policy_exception_memo" ? "policy_exception" : "assist",
 					artifactId: fresh.id,
 					applicationId: fresh.applicationId,
 					type: fresh.type,

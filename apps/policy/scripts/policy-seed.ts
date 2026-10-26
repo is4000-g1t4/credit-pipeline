@@ -1,10 +1,12 @@
 // Demo seed: load the reviewed Markdown corpus into credit_policy as approved
-// documents. This is intentionally a trusted local script, not an authoring
-// or approval path. Use the authenticated API for real drafts.
+// documents. Insert-only: never resurrect/retire/change status; a conflicting
+// (policy_id, version) with a different content_hash refuses and requires a
+// version bump. Validates registry refs + the 9.0-9.4 standard hash first.
 import { fileURLToPath } from "node:url";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { createDb } from "@credit/db";
+import { POLICY_ENGINE_STANDARD_HASH, hashCanonical, validateRegistryRefs } from "@credit/core";
 import postgres from "postgres";
 import { loadEnv } from "../src/env.js";
 import { parsePolicyMarkdown } from "../src/markdown.js";
@@ -53,6 +55,45 @@ const files = readdirSync(POLICY_DIR)
 	.sort();
 if (files.length === 0) throw new Error(`no policy Markdown under ${POLICY_DIR}`);
 
+const parsedAll = files.map((file) => ({
+	file,
+	parsed: parsePolicyMarkdown(readFileSync(join(POLICY_DIR, file), "utf8"), file),
+}));
+
+// Validate registry refs against the parsed corpus for both kinds before writing.
+{
+	const corpus = parsedAll.flatMap(({ parsed }) =>
+		parsed.sections.map((section) => ({
+			policyKey: parsed.frontmatter.policy_key,
+			sectionId: section.sectionId,
+			productScope: parsed.frontmatter.product_scope,
+		})),
+	);
+	const refs = new Set(corpus.map((s) => `${s.policyKey}#${s.sectionId}`));
+	for (const kind of ["individual", "sme"] as const) {
+		const v = validateRegistryRefs(refs, corpus, kind, true);
+		if (
+			v.missingRefs.length > 0 ||
+			v.scopeMismatches.length > 0 ||
+			v.missingExceptionRuleIds.length > 0
+		) {
+			throw new Error(
+				`policy seed registry validation failed for ${kind}: missing=${v.missingRefs.join(",")} scope=${v.scopeMismatches.join(",")}`,
+			);
+		}
+	}
+	const std = parsedAll.find((p) => p.parsed.frontmatter.policy_key === "POL-CR-009");
+	if (!std) throw new Error("policy seed: POL-CR-009 is missing from the corpus");
+	const bodies = std.parsed.sections
+		.filter((s) => ["9.0", "9.1", "9.2", "9.3", "9.4"].includes(s.sectionId))
+		.map((s) => ({ sectionId: s.sectionId, body: s.body }))
+		.sort((a, b) => (a.sectionId < b.sectionId ? -1 : 1));
+	if (bodies.length !== 5) throw new Error("policy seed: POL-CR-009 must have sections 9.0-9.4");
+	if (hashCanonical(bodies) !== POLICY_ENGINE_STANDARD_HASH) {
+		throw new Error("policy seed: POL-CR-009 9.0-9.4 standard hash drift (STANDARD_CHANGED)");
+	}
+}
+
 const { owner, approver } = await demoUserIds();
 const { sql } = createDb(env.databaseUrl);
 const embedder = createOpenRouterEmbedder({
@@ -79,10 +120,8 @@ try {
 		`;
 		await tx`UPDATE policy_index_meta SET status = 'retired' WHERE status = 'active' AND index_version <> ${INDEX_VERSION}`;
 		await tx`UPDATE policy_index_meta SET status = 'active', activated_at = now() WHERE index_version = ${INDEX_VERSION}`;
-		await tx`DELETE FROM policy_chunks WHERE index_version = ${INDEX_VERSION}`;
 
-		for (const file of files) {
-			const parsed = parsePolicyMarkdown(readFileSync(join(POLICY_DIR, file), "utf8"), file);
+		for (const { file, parsed } of parsedAll) {
 			const fm = parsed.frontmatter;
 			const doc = (
 				(await tx`
@@ -95,6 +134,65 @@ try {
 					RETURNING id
 				`) as unknown as Array<{ id: string }>
 			)[0]!;
+			const existing = (await tx`
+				SELECT id, status::text AS status, content_hash FROM policy_versions
+				WHERE policy_id = ${doc.id} AND version = ${fm.version}
+				LIMIT 1
+			`) as unknown as Array<{ id: string; status: string; content_hash: string }>;
+			const hit = existing[0];
+			if (hit) {
+				if (hit.status === "retired") {
+					throw new Error(
+						`policy seed refuses to resurrect retired ${fm.policy_key} ${fm.version}`,
+					);
+				}
+				if (hit.content_hash !== parsed.contentHash) {
+					throw new Error(
+						`policy seed refuses to mutate ${fm.policy_key} ${fm.version} with a different content_hash; bump the version`,
+					);
+				}
+				const chunkCount =
+					(
+						(await tx`
+						SELECT count(*)::int AS n FROM policy_chunks
+						WHERE version_id = ${hit.id} AND index_version = ${INDEX_VERSION}
+						  AND embedding_model = ${env.embeddingModel}
+						  AND embedding_dimensions = ${env.embeddingDimensions}
+						  AND chunking_version = ${CHUNKING_VERSION}
+					`) as unknown as Array<{ n: number }>
+					)[0]?.n ?? 0;
+				if (chunkCount >= parsed.sections.length) {
+					console.log(`seed: ${fm.policy_key} ${fm.version} unchanged (no-op)`);
+					continue;
+				}
+				// Unchanged policy but the active generation is missing chunks
+				// (e.g. a previous seed was interrupted): re-embed this version
+				// only, never the whole corpus.
+				await tx`DELETE FROM policy_chunks WHERE version_id = ${hit.id} AND index_version = ${INDEX_VERSION}`;
+				const vectors = await embedder.embed(
+					parsed.sections.map((section) => `${fm.title} > ${section.heading} > ${section.body}`),
+				);
+				for (const [index, section] of parsed.sections.entries()) {
+					const vector = vectors[index];
+					if (!vector)
+						throw new Error(`missing embedding for ${fm.policy_key}#${section.sectionId}`);
+					await tx`
+						INSERT INTO policy_chunks (
+							index_version, version_id, section_id, chunk_index, heading, text,
+							char_start, char_end, token_count, content_hash, chunking_version,
+							embedding, embedding_model, embedding_dimensions, embedding_version
+						) VALUES (
+							${INDEX_VERSION}, ${hit.id}, ${section.sectionId}, 0,
+							${section.heading}, ${section.body}, ${section.charStart}, ${section.charEnd},
+							${Math.max(1, Math.ceil(section.body.length / 4))}, ${section.contentHash},
+							${CHUNKING_VERSION}, ${JSON.stringify(vector)}::vector, ${env.embeddingModel},
+							${env.embeddingDimensions}, ${`${env.embeddingModel}:${env.embeddingDimensions}:${CHUNKING_VERSION}`}
+						)
+					`;
+				}
+				console.log(`seed: ${fm.policy_key} ${fm.version} chunks re-embedded`);
+				continue;
+			}
 			const version = (
 				(await tx`
 					INSERT INTO policy_versions (
@@ -108,18 +206,21 @@ try {
 						NULL, 'demo-seed', ${owner}, now(), ${approver}, now(),
 						${parsed.contentHash}, ${file}
 					)
-					ON CONFLICT (policy_id, version) DO UPDATE
-					SET status = 'approved', effective_from = EXCLUDED.effective_from, effective_to = NULL,
-						submitted_by = EXCLUDED.submitted_by, submitted_at = now(),
-						approved_by = EXCLUDED.approved_by, approved_at = now(),
-						content_hash = EXCLUDED.content_hash, source_uri = EXCLUDED.source_uri
 					RETURNING id
 				`) as unknown as Array<{ id: string }>
 			)[0]!;
-			await tx`DELETE FROM policy_sections WHERE version_id = ${version.id}`;
+			// Close prior approved windows (same window logic as approveVersion).
+			await tx`
+				UPDATE policy_versions
+				SET effective_to = (${fm.effective_from}::date - 1)
+				WHERE policy_id = ${doc.id} AND status = 'approved' AND id <> ${version.id}
+				  AND effective_from < ${fm.effective_from}::date
+				  AND (effective_to IS NULL OR effective_to >= ${fm.effective_from}::date)
+			`;
 			const vectors = await embedder.embed(
 				parsed.sections.map((section) => `${fm.title} > ${section.heading} > ${section.body}`),
 			);
+			await tx`DELETE FROM policy_chunks WHERE version_id = ${version.id} AND index_version = ${INDEX_VERSION}`;
 			for (const [index, section] of parsed.sections.entries()) {
 				const vector = vectors[index];
 				if (!vector) throw new Error(`missing embedding for ${fm.policy_key}#${section.sectionId}`);

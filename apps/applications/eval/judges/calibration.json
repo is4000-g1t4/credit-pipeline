@@ -1,0 +1,144 @@
+{
+	"examples": [
+		{
+			"claim": "The assessment value is recorded in the manual-review band.",
+			"heading": "Individual automatic-processing bands",
+			"human": "supported",
+			"id": "cal-01",
+			"quote": "The credit score is automatically processed at 700 or above, manually reviewed from 580 to 699, and declined below 580."
+		},
+		{
+			"claim": "Scores from 580 to 649 proceed with a 25% limit reduction and dual sign-off.",
+			"heading": "Credit bureau and score thresholds",
+			"human": "supported",
+			"id": "cal-02",
+			"quote": "Scores between 580 and 649 may only proceed under the exceptions policy (POL-CR-005) with a mandatory 25% limit reduction and dual sign-off."
+		},
+		{
+			"claim": "The servicing ratio cap is 55% of qualifying income.",
+			"heading": "Total debt servicing ratio for individuals",
+			"human": "supported",
+			"id": "cal-03",
+			"quote": "All individual borrowers are subject to a total debt servicing ratio (TDSR) cap of 55% of gross monthly qualifying income."
+		},
+		{
+			"claim": "Breach of the cap cannot be cured by exception.",
+			"heading": "Total debt servicing ratio for individuals",
+			"human": "supported",
+			"id": "cal-04",
+			"quote": "Breach of the 55% cap is a hard decline and cannot be cured by exception."
+		},
+		{
+			"claim": "Every exception needs dual sign-off one level above standard authority.",
+			"heading": "Exception limits and dual control",
+			"human": "supported",
+			"id": "cal-05",
+			"quote": "Every exception requires dual sign-off at least one level above the standard approval authority for that amount."
+		},
+		{
+			"claim": "Two or more breached rules require the credit committee.",
+			"heading": "Exception limits and dual control",
+			"human": "supported",
+			"id": "cal-06",
+			"quote": "Single-rule breaches only: cases breaching 2 or more policy rules require credit committee approval regardless of amount."
+		},
+		{
+			"claim": "The unsecured floor is 1.25x.",
+			"heading": "Debt service coverage ratio for business borrowers",
+			"human": "partial",
+			"id": "cal-07",
+			"quote": "Small-business term facilities require a debt service coverage ratio (DSCR) of at least 1.25x, computed as adjusted EBITDA divided by total annual debt service including the proposed facility."
+		},
+		{
+			"claim": "A ratio between 1.0x and the floor proceeds as a 12-month reviewable facility with quarterly covenant testing.",
+			"heading": "Debt service coverage ratio for business borrowers",
+			"human": "supported",
+			"id": "cal-08",
+			"quote": "DSCR between 1.0x and the applicable floor may proceed only as a 12-month reviewable facility with quarterly covenant testing."
+		},
+		{
+			"claim": "The servicing ratio is manually reviewed above 35% and up to 50%.",
+			"heading": "Individual automatic-processing bands",
+			"human": "supported",
+			"id": "cal-09",
+			"quote": "The total debt servicing ratio is automatically processed at or below 35%, manually reviewed above 35% and up to 50%."
+		},
+		{
+			"claim": "The servicing ratio is manually reviewed above 35% and up to 50% with a 55% hard cap.",
+			"heading": "Individual automatic-processing bands",
+			"human": "partial",
+			"id": "cal-10",
+			"quote": "The total debt servicing ratio is automatically processed at or below 35%, manually reviewed above 35% and up to 50%."
+		},
+		{
+			"claim": "Scores from 580 to 649 proceed with a 25% limit reduction and team manager sign-off.",
+			"heading": "Credit bureau and score thresholds",
+			"human": "partial",
+			"id": "cal-11",
+			"quote": "Scores between 580 and 649 may only proceed under the exceptions policy (POL-CR-005) with a mandatory 25% limit reduction and dual sign-off."
+		},
+		{
+			"claim": "A ratio of 1.20x meets the 1.15x secured floor.",
+			"heading": "Debt service coverage ratio for business borrowers",
+			"human": "partial",
+			"id": "cal-12",
+			"quote": "Secured facilities with qualifying collateral may use a 1.15x floor."
+		},
+		{
+			"claim": "Start-ups qualify for unsecured facilities at 50% of the standard limit.",
+			"heading": "Business eligibility and trading history",
+			"human": "unsupported",
+			"id": "cal-13",
+			"quote": "Start-ups between 12 and 24 months old qualify only for secured facilities capped at 50% of the standard limit with a full director guarantee."
+		},
+		{
+			"claim": "Scores below 580 may proceed with a pricing uplift.",
+			"heading": "Credit bureau and score thresholds",
+			"human": "unsupported",
+			"id": "cal-14",
+			"quote": "Scores between 580 and 649 may only proceed under the exceptions policy (POL-CR-005) with a mandatory 25% limit reduction and dual sign-off. Scores below 580 are an automatic decline."
+		},
+		{
+			"claim": "The automatic-processing amount is at most S$25,000 for individual facilities.",
+			"heading": "Individual automatic-processing bands",
+			"human": "unsupported",
+			"id": "cal-15",
+			"quote": "The automatic-processing amount is at most S$15,000."
+		},
+		{
+			"claim": "Trading history of 1.5 years is eligible for automatic processing.",
+			"heading": "SME automatic-processing bands",
+			"human": "unsupported",
+			"id": "cal-16",
+			"quote": "Trading history below 1 year is a decline, 1 year up to but not including 2 years is manually reviewed, and 2 years or more is eligible for automatic processing."
+		},
+		{
+			"claim": "The facility is approved.",
+			"heading": "Exception limits and dual control",
+			"human": "unsupported",
+			"id": "cal-17",
+			"quote": "Every exception requires dual sign-off at least one level above the standard approval authority for that amount."
+		},
+		{
+			"claim": "The claim has no usable quote.",
+			"heading": "Individual automatic-processing bands",
+			"human": "unknown",
+			"id": "cal-18",
+			"quote": ""
+		},
+		{
+			"claim": "The ratio sits in a reviewed band.",
+			"heading": "Individual automatic-processing bands",
+			"human": "unknown",
+			"id": "cal-19",
+			"quote": "..."
+		},
+		{
+			"claim": "The mitigant stack applies with a 20% reduction under team manager sign-off.",
+			"heading": "Pricing and structural mitigants",
+			"human": "partial",
+			"id": "cal-20",
+			"quote": "Approved exceptions carry a minimum pricing uplift of 50 basis points above the standard risk-based price, a 20% limit reduction versus the applied amount, and reviewable 12-month tenor with quarterly covenant testing."
+		}
+	]
+}

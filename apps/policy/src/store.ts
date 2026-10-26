@@ -1,3 +1,4 @@
+import type { PolicySectionRow } from "@credit/core";
 import type { PolicyCaseContext } from "./case-context.js";
 import type { AnswerCitation, RetrievedSection } from "./answer.js";
 
@@ -11,6 +12,8 @@ export interface ActiveIndex {
 export interface PolicyChunk extends RetrievedSection {
 	chunkId: string;
 	indexVersion: string;
+	/** Section body hash; used by the bridge delivery and index freshness. */
+	contentHash: string;
 	embedding: number[];
 	embeddingModel: string;
 	embeddingDimensions: number;
@@ -44,7 +47,7 @@ export interface PolicyQueryRecord {
 	actorId: string;
 	actorRole: string;
 	mode: "navigator" | "case_explain";
-	budgetClass: "navigator" | "case";
+	budgetClass: "navigator" | "case" | "policy_exception";
 	applicationId: string | null;
 	runId: string | null;
 	questionHmac: string | null;
@@ -68,6 +71,24 @@ export interface PolicyStore {
 	loadAcls(policyIds: string[]): Promise<AclRow[]>;
 	loadPolicyRoles(userId: string): Promise<Array<"policy_owner" | "compliance">>;
 	getSection(versionId: string, sectionId: string): Promise<PolicySectionDetail | null>;
+	getSectionByRef(input: {
+		policyKey: string;
+		sectionId: string;
+		asOf: string;
+		productScope: "individual" | "sme";
+		jurisdiction: string;
+		versionId?: string;
+	}): Promise<PolicySectionRow | null>;
+	listVersionSectionIds(versionId: string): Promise<string[]>;
+	listVersionCorpusSections(
+		versionId: string,
+	): Promise<
+		Array<{ policyKey: string; sectionId: string; productScope: "individual" | "sme" | "all" }>
+	>;
+	listApprovedCorpusSections(): Promise<
+		Array<{ policyKey: string; sectionId: string; productScope: "individual" | "sme" | "all" }>
+	>;
+	hasVersionChunks(versionId: string): Promise<boolean>;
 	insertQuery(record: PolicyQueryRecord): Promise<void>;
 	insertCitations(
 		queryId: string,
@@ -89,7 +110,7 @@ export interface PolicyStore {
 	retireVersion(versionId: string, actorId: string): Promise<void>;
 	reserveBudget(input: {
 		day: string;
-		budgetClass: "navigator" | "case";
+		budgetClass: "navigator" | "case" | "policy_exception";
 		actorId: string;
 		maxCostUsd: number;
 		dailyCapUsd: number;
@@ -116,6 +137,7 @@ export interface PolicyDeps {
 		navDailyBudgetUsd: number;
 		caseDailyBudgetUsd: number;
 		actorDailyBudgetUsd: number;
+		policyExceptionDailyBudgetUsd: number;
 		reservationTtlSeconds: number;
 		caseTokenSecret: string;
 		embeddingModel: string;

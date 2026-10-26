@@ -359,6 +359,9 @@ export const policyEvaluations = pgTable(
 		maxAmountCents: money("max_amount_cents"),
 		inputs: jsonb("inputs").notNull(),
 		inputHash: text("input_hash").notNull(),
+		/** Last engine run time; distinguishes a re-evaluation from the
+		 * original created_at. Null on legacy rows (fall back to created_at). */
+		evaluatedAt: timestamp("evaluated_at", { withTimezone: true, mode: "date" }),
 		createdAt: createdAt(),
 	},
 	(t) => [

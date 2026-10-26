@@ -50,6 +50,8 @@ export interface ApplicationsDeps {
 	assist?: {
 		config?: Partial<AssistConfig>;
 		memoAgentRunner?: MemoAgentRunner;
+		policyClient?: import("./assist/policy-exception/types.js").PolicyClient;
+		policyExceptionAgentRunner?: import("./assist/policy-exception/types.js").PolicyExceptionAgentRunner;
 		now?: () => Date;
 		researchFetchImpl?: typeof fetch;
 	};
@@ -116,12 +118,18 @@ export function createApp(deps: ApplicationsDeps): ServiceApp {
 					deps.integrity?.config?.fraudReviewEnabled ?? deps.env.integrity.fraudReviewEnabled,
 			},
 			context: resolveContextConfig(deps.env, deps.context),
+			policyRuleContext: {
+				enabled: deps.env.assist.enabled && deps.env.assist.policyExceptionEnabled,
+				secret: deps.env.assist.policyRuleContextSecret,
+			},
 		}),
 	);
 	const assistRuntime = {
 		config: { ...deps.env.assist, ...deps.assist?.config },
 		documentsEnabled: documentConfig.featureEnabled,
 		memoAgentRunner: deps.assist?.memoAgentRunner,
+		policyClient: deps.assist?.policyClient,
+		policyExceptionAgentRunner: deps.assist?.policyExceptionAgentRunner,
 		now: deps.assist?.now ?? (() => new Date()),
 		researchFetchImpl: deps.assist?.researchFetchImpl,
 	};

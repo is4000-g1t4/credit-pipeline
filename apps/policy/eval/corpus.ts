@@ -41,6 +41,7 @@ export function loadCorpus(): CorpusSection[] {
 				productScope: fm.product_scope,
 				jurisdiction: fm.jurisdiction,
 				status: "approved",
+				contentHash: section.contentHash,
 				embedding: [],
 				embeddingModel: "",
 				embeddingDimensions: 0,

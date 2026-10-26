@@ -6,6 +6,7 @@ import { DecisionPanel } from "../../../components/DecisionPanel";
 import { DocumentPanel } from "../../../components/DocumentPanel";
 import { IntegrityPanel } from "../../../components/IntegrityPanel";
 import { MemoPanel } from "../../../components/MemoPanel";
+import { PolicyExceptionPanel } from "../../../components/PolicyExceptionPanel";
 import { ResearchPanel } from "../../../components/ResearchPanel";
 import { EmptyState, ErrorBox, Page, Skeleton } from "../../../components/ui";
 import {
@@ -67,6 +68,7 @@ function ReviewCase() {
 						aiResearchConsent={detail.data.application.aiResearchConsent}
 						onSelectionChange={setResearchSelection}
 					/>
+					<PolicyExceptionPanel applicationId={id} caseStatus={detail.data.application.status} />
 					<IntegrityPanel applicationId={id} />
 					{detail.data.application.status === "pending_review" ? (
 						<>

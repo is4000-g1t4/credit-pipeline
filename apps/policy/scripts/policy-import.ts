@@ -1,9 +1,11 @@
 // Trusted draft import. It records the editor service as creator, never a
 // human flag; approval is a separate authenticated API (and requires the
-// active index to be rebuilt first).
+// active index to be rebuilt first). Validates registry refs + the 9.0-9.4
+// standard hash against the union of the approved corpus and this draft.
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 import { createDb } from "@credit/db";
+import { POLICY_ENGINE_STANDARD_HASH, hashCanonical, validateRegistryRefs } from "@credit/core";
 import { loadEnv } from "../src/env.js";
 import { parsePolicyMarkdown } from "../src/markdown.js";
 
@@ -35,6 +37,67 @@ try {
 
 const { sql } = createDb(env.databaseUrl);
 try {
+	// Validate before writing: approved corpus + this draft as the union.
+	const approved = (await sql`
+		SELECT d.policy_key, s.section_id, s.body, d.product_scope::text AS product_scope
+		FROM policy_sections s
+		JOIN policy_versions v ON v.id = s.version_id
+		JOIN policy_documents d ON d.id = v.policy_id
+		WHERE v.status = 'approved' AND d.domain = 'credit'
+		  AND v.effective_from <= ${fm.effective_from}::date
+		  AND (v.effective_to IS NULL OR v.effective_to >= ${fm.effective_from}::date)
+		ORDER BY d.policy_key, s.section_id, v.effective_from DESC, v.id DESC
+	`) as unknown as Array<{
+		policy_key: string;
+		section_id: string;
+		body: string;
+		product_scope: "individual" | "sme" | "all";
+	}>;
+	const draftCorpus = parsed.sections.map((section) => ({
+		policyKey: fm.policy_key,
+		sectionId: section.sectionId,
+		productScope: fm.product_scope,
+	}));
+	const union = [
+		...approved.map((row) => ({
+			policyKey: row.policy_key,
+			sectionId: row.section_id,
+			productScope: row.product_scope,
+		})),
+		...draftCorpus.filter(
+			(s) => !approved.some((r) => r.policy_key === s.policyKey && r.section_id === s.sectionId),
+		),
+	];
+	const refs = new Set(union.map((s) => `${s.policyKey}#${s.sectionId}`));
+	for (const kind of ["individual", "sme"] as const) {
+		const v = validateRegistryRefs(refs, union, kind, true);
+		if (
+			v.missingRefs.length > 0 ||
+			v.scopeMismatches.length > 0 ||
+			v.missingExceptionRuleIds.length > 0
+		) {
+			throw new Error(
+				`policy import registry validation failed for ${kind}: missing=${v.missingRefs.join(",")} scope=${v.scopeMismatches.join(",")}`,
+			);
+		}
+	}
+	// Standard hash over the union's POL-CR-009 9.0-9.4 bodies.
+	const byKey = new Map<string, string>();
+	for (const row of approved) {
+		if (row.policy_key === "POL-CR-009") byKey.set(row.section_id, row.body);
+	}
+	if (fm.policy_key === "POL-CR-009") {
+		for (const section of parsed.sections) byKey.set(section.sectionId, section.body);
+	}
+	const standardBodies = ["9.0", "9.1", "9.2", "9.3", "9.4"].map((sectionId) => {
+		const body = byKey.get(sectionId);
+		if (!body) throw new Error(`policy import: standard section missing: ${sectionId}`);
+		return { sectionId, body };
+	});
+	if (hashCanonical(standardBodies) !== POLICY_ENGINE_STANDARD_HASH) {
+		throw new Error("policy import: POL-CR-009 9.0-9.4 standard hash drift (STANDARD_CHANGED)");
+	}
+
 	await sql.begin(async (tx) => {
 		const doc = (
 			(await tx`
@@ -67,6 +130,7 @@ try {
 		if (!version)
 			throw new Error("approved/retired versions cannot be overwritten by a draft import");
 		await tx`DELETE FROM policy_sections WHERE version_id = ${version.id}`;
+		await tx`DELETE FROM policy_chunks WHERE version_id = ${version.id}`;
 		for (const section of parsed.sections) {
 			await tx`
 				INSERT INTO policy_sections (

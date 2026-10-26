@@ -152,6 +152,13 @@ declined-case counterpart: it selects 3-4 principal reasons from the decision
 reason codes via the EN-08 taxonomy and stores an `adverse_action_letter`
 draft under the configured jurisdiction profile (`ASSIST_ADVERSE_*`; see
 [docs/explanation/adverse-action.md](docs/explanation/adverse-action.md)).
+Case policy/exception navigation (EN-06/EN-07 / E3, also behind
+`ASSIST_POLICY_EXCEPTION_ENABLED`) explains engine rule failures with exact
+policy citations, resolves the deterministic exception/approval path, and
+drafts a `policy_exception_memo` the officer edits and approves; see
+[docs/explanation/policy-exception.md](docs/explanation/policy-exception.md)
+and `apps/applications/eval/POLICY-EXCEPTION-RESULTS.md`
+(`pnpm --filter @credit/applications eval:policy-exception`).
 Generic artifact routes are under `/api/assist/cases/:id/artifacts` and
 `/api/assist/artifacts/:id` (`PATCH`, `/approve`, `/tombstone`). All routes are
 officer-only; applicants get 403 and another officer's assigned case is a
@@ -248,7 +255,7 @@ reports those seams instead of failing on them.
 | review         | 4002 | stateless: queue + officer decisions (no DB)                                                                                                                                                                                                               |
 | loans          | 4003 | P1a microservice: loans, alerts, demo controls, internal loan lookup                                                                                                                                                                                       |
 | portfolio      | 4004 | dashboard summary + Kafka consumer                                                                                                                                                                                                                         |
-| research       | 4005 | Phase 2 advisory briefs (Node here for the Grafana/OpenTelemetry stack; Agents itself runs on Bun); owns `credit_research`; runs only when `AGENTS_ENABLED` + `AGENT_CASE_BRIEF_ENABLED`                                                                                        |
+| research       | 4005 | Phase 2 advisory briefs (Node here for the Grafana/OpenTelemetry stack; Agents itself runs on Bun); owns `credit_research`; runs only when `AGENTS_ENABLED` + `AGENT_CASE_BRIEF_ENABLED`                                                                   |
 | policy         | 4006 | credit-policy register + officer navigator (Bun); owns `credit_policy`; answers only when `POLICY_ASSIST_ENABLED=true`                                                                                                                                     |
 
 Environment files are loaded explicitly ? Bun's dev scripts pass

@@ -256,6 +256,8 @@ function validPolicyMemo(): PolicyExceptionMemoContent {
 			},
 		],
 		openItems: [],
+		rules: [],
+		regularisationPlanMonths: null,
 	};
 }
 
@@ -747,5 +749,104 @@ describe("safety scans", () => {
 				);
 			}
 		}
+	});
+});
+
+describe("policy-exception memo profile", () => {
+	it("accepts score/limit/term descriptors but rejects action language", () => {
+		const descriptor = validPolicyMemo();
+		descriptor.sections[0]!.claims[0]!.text =
+			"The assessment value is 620 with a limit of S$15,000 over a 12 month term.";
+		expect(
+			validateGeneratedText({
+				artifactType: "policy_exception_memo",
+				content: descriptor,
+				evidence: bundle(),
+			}).ok,
+		).toBe(true);
+
+		const action = validPolicyMemo();
+		action.sections[0]!.claims[0]!.text = "We approve this file.";
+		const failed = validateGeneratedText({
+			artifactType: "policy_exception_memo",
+			content: action,
+			evidence: bundle(),
+		});
+		expect(failed.ok).toBe(false);
+		if (!failed.ok) {
+			expect(failed.issues).toContainEqual(expect.objectContaining({ code: "DECISION_LANGUAGE" }));
+		}
+	});
+
+	it("keeps the descriptor ban for credit memos", () => {
+		const memo = validMemo();
+		memo.sections[0]!.claims[0]!.text = "The application is approved.";
+		const result = validateGeneratedText({
+			artifactType: "credit_memo",
+			content: memo,
+			evidence: bundle(),
+		});
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			expect(result.issues).toContainEqual(expect.objectContaining({ code: "DECISION_LANGUAGE" }));
+		}
+	});
+
+	it("accepts a hard-wrapped policy quote via whitespace-tolerant matching", () => {
+		const wrapped = validPolicyMemo();
+		const body = contents[sourceRefKey(refs.policy)] ?? "";
+		const hardWrapped = body.replace(" ", "\n");
+		wrapped.sections[2]!.claims[0]!.citations = [
+			{ ref: sourceRefKey(refs.policy), quote: hardWrapped },
+		];
+		const result = validateGeneratedText({
+			artifactType: "policy_exception_memo",
+			content: wrapped,
+			evidence: bundle(),
+		});
+		expect(result.ok, JSON.stringify(result)).toBe(true);
+		if (result.ok) {
+			const policyRef = sourceRefKey(refs.policy);
+			expect(
+				result.citations.some((citation) => citation.ref === policyRef && citation.quote === body),
+			).toBe(true);
+		}
+	});
+
+	it("accepts rules/plan fields and rejects unknown fields", () => {
+		const withMeta = {
+			...validPolicyMemo(),
+			rules: [
+				{
+					ruleId: "PL-DTI-HIGH",
+					reasonCode: "DTI_TOO_HIGH",
+					observed: "52.00%",
+					threshold: "> 50%",
+					effect: "decline",
+					persisted: true,
+					exceptionState: "allowed",
+					approver: "team_manager",
+					mitigantCodes: ["pricing_uplift_50bps"],
+					ruleSectionRefs: [{ policyKey: "POL-CR-009", sectionId: "9.1" }],
+				},
+			],
+			regularisationPlanMonths: 12,
+		};
+		expect(
+			validateGeneratedText({
+				artifactType: "policy_exception_memo",
+				content: withMeta,
+				evidence: bundle(),
+			}).ok,
+		).toBe(true);
+
+		const unknown = { ...validPolicyMemo(), extra: true };
+		expect(
+			validateGeneratedText({
+				artifactType: "policy_exception_memo",
+				content: unknown,
+				evidence: bundle(),
+			}).ok,
+		).toBe(false);
 	});
 });

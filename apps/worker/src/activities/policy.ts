@@ -76,6 +76,7 @@ export async function evaluateAndPersistPolicy(input: {
 				maxAmountCents: evaluation.maxAmountCents,
 				inputs: evaluation.inputs,
 				inputHash: evaluation.inputHash,
+				evaluatedAt: new Date(),
 			})
 			.onConflictDoUpdate({
 				target: [policyEvaluations.applicationId, policyEvaluations.policyVersion],
@@ -85,6 +86,7 @@ export async function evaluateAndPersistPolicy(input: {
 					maxAmountCents: evaluation.maxAmountCents,
 					inputs: evaluation.inputs,
 					inputHash: evaluation.inputHash,
+					evaluatedAt: new Date(),
 				},
 			});
 		await writeAudit(tx, {

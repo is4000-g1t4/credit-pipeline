@@ -189,6 +189,8 @@ function policyMemo(): PolicyExceptionMemoContent {
 			},
 		],
 		openItems: [],
+		rules: [],
+		regularisationPlanMonths: null,
 	};
 }
 

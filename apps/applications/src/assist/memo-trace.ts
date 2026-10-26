@@ -28,6 +28,14 @@ export const memoAgentTraceSchema = z.object({
 	inputTokens: z.number().int().min(0),
 	outputTokens: z.number().int().min(0),
 	latencyMs: z.number().int().min(0),
+	/** Provider-billed cost for this run when available (E3). */
+	costUsd: z.number().min(0).optional(),
+	/** E3 policy-exception provenance. Optional so existing credit-memo
+	 * traces keep validating; the policy orchestrator always sets them. */
+	registryVersion: z.string().min(1).max(80).optional(),
+	registryHash: z.string().min(1).max(128).optional(),
+	validatorVersion: z.string().min(1).max(80).optional(),
+	artifactType: z.string().min(1).max(80).optional(),
 });
 
 export type MemoAgentTrace = z.infer<typeof memoAgentTraceSchema>;

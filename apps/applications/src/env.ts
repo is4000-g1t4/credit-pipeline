@@ -11,6 +11,11 @@ dotenv.config({
 	path: fileURLToPath(new URL("../../../.env", import.meta.url)),
 });
 
+const optionalSecret = z.preprocess(
+	(value) => (value === "" ? undefined : value),
+	z.string().min(16).optional(),
+);
+
 const parsed = createEnv({
 	server: {
 		APPLICATIONS_DATABASE_URL: z.string().min(1),
@@ -111,6 +116,28 @@ const parsed = createEnv({
 		// with 422 rather than pointing applicants at a placeholder domain.
 		ASSIST_ADVERSE_CONTACT_PATH: z.string().default(""),
 		ASSIST_ADVERSE_PROMPT_VERSION: z.string().min(1).default("adverse-letter-v1"),
+		// E3 case policy/exception navigator. Off by default. Secrets are
+		// optional while the flag is off; the feature gate validates them.
+		ASSIST_POLICY_EXCEPTION_ENABLED: z.enum(["true", "false"]).default("false"),
+		ASSIST_POLICY_EXCEPTION_RETENTION_DAYS: z.coerce.number().int().positive().default(2_555),
+		POLICY_URL: z.preprocess(
+			(value) => (value === "" ? undefined : value),
+			z.string().url().optional(),
+		),
+		POLICY_INTERNAL_SECRET: optionalSecret,
+		POLICY_RULE_CONTEXT_SECRET: optionalSecret,
+		POLICY_AUDIT_HASH_SECRET: optionalSecret,
+		ASSIST_POLICY_TIMEOUT_MS: z.coerce.number().int().min(500).max(30_000).default(10_000),
+		POLICY_EXCEPTION_MODEL: z.string().min(1).default("deepseek/deepseek-v4.1-flash-1017"),
+		POLICY_EXCEPTION_PROMPT_VERSION: z.string().min(1).default("policy-exception-v1"),
+		POLICY_EXCEPTION_AGENT_VERSION: z.string().min(1).default("policy-exception-agent-v1"),
+		POLICY_EXCEPTION_VALIDATOR_VERSION: z.string().min(1).default("policy-exception-validator-v1"),
+		POLICY_EXCEPTION_MAX_STEPS: z.coerce.number().int().min(1).max(64).default(30),
+		POLICY_EXCEPTION_MAX_TOOL_CALLS: z.coerce.number().int().min(1).max(100).default(40),
+		POLICY_EXCEPTION_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(300_000).default(120_000),
+		POLICY_EXCEPTION_MAX_COST_USD: z.coerce.number().min(0).default(0.35),
+		POLICY_EXCEPTION_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(256).max(32_000).default(8_000),
+		POLICY_EXCEPTION_RATE_PER_MIN: z.coerce.number().int().min(1).max(120).default(10),
 		// E2 document integrity + EN-05 fraud review. Flags default off; the
 		// deterministic panel works without a model. The advisory brief needs
 		// both feature flags and its own agent flag.
@@ -226,6 +253,23 @@ export const env = {
 		adverseJurisdiction: parsed.ASSIST_ADVERSE_JURISDICTION,
 		adverseContactPath: parsed.ASSIST_ADVERSE_CONTACT_PATH,
 		adversePromptVersion: parsed.ASSIST_ADVERSE_PROMPT_VERSION,
+		policyExceptionEnabled: parsed.ASSIST_POLICY_EXCEPTION_ENABLED === "true",
+		policyExceptionRetentionDays: parsed.ASSIST_POLICY_EXCEPTION_RETENTION_DAYS,
+		policyExceptionModel: parsed.POLICY_EXCEPTION_MODEL,
+		policyExceptionPromptVersion: parsed.POLICY_EXCEPTION_PROMPT_VERSION,
+		policyExceptionAgentVersion: parsed.POLICY_EXCEPTION_AGENT_VERSION,
+		policyExceptionValidatorVersion: parsed.POLICY_EXCEPTION_VALIDATOR_VERSION,
+		policyExceptionMaxSteps: parsed.POLICY_EXCEPTION_MAX_STEPS,
+		policyExceptionMaxToolCalls: parsed.POLICY_EXCEPTION_MAX_TOOL_CALLS,
+		policyExceptionTimeoutMs: parsed.POLICY_EXCEPTION_TIMEOUT_MS,
+		policyExceptionMaxCostUsd: parsed.POLICY_EXCEPTION_MAX_COST_USD,
+		policyExceptionMaxOutputTokens: parsed.POLICY_EXCEPTION_MAX_OUTPUT_TOKENS,
+		policyExceptionRatePerMin: parsed.POLICY_EXCEPTION_RATE_PER_MIN,
+		policyUrl: parsed.POLICY_URL ?? null,
+		policyInternalSecret: parsed.POLICY_INTERNAL_SECRET ?? null,
+		policyRuleContextSecret: parsed.POLICY_RULE_CONTEXT_SECRET ?? null,
+		policyAuditHashSecret: parsed.POLICY_AUDIT_HASH_SECRET ?? null,
+		policyTimeoutMs: parsed.ASSIST_POLICY_TIMEOUT_MS,
 	},
 	integrity: {
 		enabled: parsed.DOCUMENT_INTEGRITY_ENABLED === "true",

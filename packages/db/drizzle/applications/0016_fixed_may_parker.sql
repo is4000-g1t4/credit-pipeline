@@ -1,0 +1,1 @@
+ALTER TABLE "policy_evaluations" ADD COLUMN "evaluated_at" timestamp with time zone;

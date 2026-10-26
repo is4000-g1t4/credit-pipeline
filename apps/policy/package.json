@@ -11,6 +11,7 @@
 		"test:integration": "vitest run --config vitest.integration.config.ts",
 		"seed": "bun --env-file=../../.env scripts/policy-seed.ts",
 		"import:draft": "bun --env-file=../../.env scripts/policy-import.ts",
+		"reindex": "bun --env-file=../../.env scripts/policy-reindex.ts",
 		"eval:embedding": "tsx eval/embedding-eval.ts",
 		"eval:answers": "tsx eval/answer-eval.ts"
 	},

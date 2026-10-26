@@ -32,6 +32,24 @@ export interface AssistConfig {
 	adverseJurisdiction: string;
 	adverseContactPath: string;
 	adversePromptVersion: string;
+	/** E3 case policy/exception navigator. */
+	policyExceptionEnabled: boolean;
+	policyExceptionRetentionDays: number;
+	policyExceptionModel: string;
+	policyExceptionPromptVersion: string;
+	policyExceptionAgentVersion: string;
+	policyExceptionValidatorVersion: string;
+	policyExceptionMaxSteps: number;
+	policyExceptionMaxToolCalls: number;
+	policyExceptionTimeoutMs: number;
+	policyExceptionMaxCostUsd: number;
+	policyExceptionMaxOutputTokens: number;
+	policyExceptionRatePerMin: number;
+	policyUrl: string | null;
+	policyInternalSecret: string | null;
+	policyRuleContextSecret: string | null;
+	policyAuditHashSecret: string | null;
+	policyTimeoutMs: number;
 }
 
 /** Metadata-only audit additions. Never include generated text, document
@@ -46,6 +64,10 @@ export interface AssistRuntime {
 	researchFetchImpl?: typeof fetch;
 	/** Test seam for the agentic memo writer; routes build the SDK runner. */
 	memoAgentRunner?: MemoAgentRunner;
+	/** E3 policy bridge; production is `createHttpPolicyClient`. */
+	policyClient?: import("./policy-exception/types.js").PolicyClient;
+	/** E3 agent runner; production is the SDK runner. */
+	policyExceptionAgentRunner?: import("./policy-exception/types.js").PolicyExceptionAgentRunner;
 }
 
 /** Public artifact shape. Content is whatever the validated type schema

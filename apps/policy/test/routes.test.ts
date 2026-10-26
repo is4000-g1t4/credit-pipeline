@@ -59,6 +59,21 @@ function deps(overrides: Partial<PolicyDeps> = {}): {
 		async getSection() {
 			return null;
 		},
+		async getSectionByRef() {
+			return null;
+		},
+		async listVersionSectionIds() {
+			return [];
+		},
+		async listVersionCorpusSections() {
+			return [];
+		},
+		async listApprovedCorpusSections() {
+			return [];
+		},
+		async hasVersionChunks() {
+			return true;
+		},
 		async insertQuery() {
 			stats.queries += 1;
 		},
@@ -156,6 +171,7 @@ function deps(overrides: Partial<PolicyDeps> = {}): {
 			navDailyBudgetUsd: 2,
 			caseDailyBudgetUsd: 2,
 			actorDailyBudgetUsd: 1,
+			policyExceptionDailyBudgetUsd: 2,
 			reservationTtlSeconds: 180,
 			caseTokenSecret: "case-token-secret",
 			embeddingModel: "voyageai/voyage-4-large",

@@ -24,9 +24,15 @@ import {
 	type Db,
 } from "@credit/db/applications";
 import { internalFetch } from "@credit/service-kit";
-import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { isUuid } from "../ids.js";
 import type { AssistActor } from "./access.js";
+
+export interface EvidencePinned {
+	evaluationId?: string;
+	decisionId?: string;
+	snapshot?: unknown;
+}
 
 export interface EvidenceDeps {
 	db: Db;
@@ -35,6 +41,7 @@ export interface EvidenceDeps {
 	assignedToMe: boolean;
 	documentsEnabled: boolean;
 	now: Date;
+	pinned?: EvidencePinned;
 	research: {
 		url: string | null;
 		secret: string;
@@ -50,8 +57,8 @@ export async function assembleCaseEvidence(deps: EvidenceDeps): Promise<Evidence
 
 	addCaseFacts(application, items);
 	await addBureauFacts(db, application, items);
-	await addScoreReasons(db, application, items, unavailable);
-	await addDecisionReasons(db, application, items);
+	await addScoreReasons(db, application, items, unavailable, deps.pinned);
+	await addDecisionReasons(db, application, items, deps.pinned);
 	await addDocuments(deps, items, unavailable);
 	await addResearch(deps, items, unavailable);
 
@@ -232,6 +239,7 @@ async function addScoreReasons(
 	application: typeof applications.$inferSelect,
 	items: EvidenceItem[],
 	unavailable: UnavailableSource[],
+	pinned?: EvidencePinned,
 ): Promise<void> {
 	const scoreRows = await db
 		.select()
@@ -240,32 +248,56 @@ async function addScoreReasons(
 		.orderBy(desc(scores.createdAt), desc(scores.id))
 		.limit(1);
 	const score = scoreRows[0];
+	// A decided case is pinned to its frozen snapshot; mutable score and
+	// policy rows must not replace the factors/reasons the decision used.
+	let snapshot: Record<string, unknown> | null = null;
+	if (pinned?.snapshot !== undefined && isRecord(pinned.snapshot)) {
+		snapshot = pinned.snapshot;
+	} else if (pinned?.decisionId !== undefined) {
+		const decisionRows = await db
+			.select({ snapshot: decisions.snapshot })
+			.from(decisions)
+			.where(and(eq(decisions.applicationId, application.id), eq(decisions.id, pinned.decisionId)))
+			.limit(1);
+		const rawSnapshot = decisionRows[0]?.snapshot;
+		if (isRecord(rawSnapshot)) snapshot = rawSnapshot;
+	}
+	const scoreFactors =
+		snapshot && Array.isArray(snapshot["factors"])
+			? (snapshot["factors"] as unknown[])
+			: score && Array.isArray(score.factors)
+				? (score.factors as unknown[])
+				: [];
+	const factorId = snapshot ? (pinned?.decisionId ?? application.id) : score?.id;
 	let factorCount = 0;
-	if (score && Array.isArray(score.factors)) {
-		for (const raw of score.factors as unknown[]) {
-			if (!isRecord(raw) || typeof raw["code"] !== "string" || !REASON_RE.test(raw["code"])) {
-				continue;
-			}
-			const label =
-				typeof raw["label"] === "string" && raw["label"].length > 0 ? raw["label"] : raw["code"];
-			items.push({
-				ref: sourceRefKey({ type: "score_reason", scoreId: score.id, code: raw["code"] }),
-				sourceType: "score_reason",
-				label: label.slice(0, 200),
-				content: raw["code"],
-				access: { retentionUntil: null, legalHold: false },
-				metadata: {
-					kind: "factor",
-					impact:
-						typeof raw["impact"] === "string" || typeof raw["impact"] === "number"
-							? raw["impact"]
-							: null,
-					points: typeof raw["points"] === "number" ? raw["points"] : null,
-					label,
-				},
-			});
-			factorCount++;
+	for (const raw of scoreFactors) {
+		if (
+			factorId === undefined ||
+			!isRecord(raw) ||
+			typeof raw["code"] !== "string" ||
+			!REASON_RE.test(raw["code"])
+		) {
+			continue;
 		}
+		const label =
+			typeof raw["label"] === "string" && raw["label"].length > 0 ? raw["label"] : raw["code"];
+		items.push({
+			ref: sourceRefKey({ type: "score_reason", scoreId: factorId, code: raw["code"] }),
+			sourceType: "score_reason",
+			label: label.slice(0, 200),
+			content: raw["code"],
+			access: { retentionUntil: null, legalHold: false },
+			metadata: {
+				kind: "factor",
+				impact:
+					typeof raw["impact"] === "string" || typeof raw["impact"] === "number"
+						? raw["impact"]
+						: null,
+				points: typeof raw["points"] === "number" ? raw["points"] : null,
+				label,
+			},
+		});
+		factorCount++;
 	}
 	if (factorCount === 0) {
 		unavailable.push({
@@ -275,33 +307,62 @@ async function addScoreReasons(
 			detail: "no score factor",
 		});
 	}
-	const policyRows = await db
-		.select()
-		.from(policyEvaluations)
-		.where(eq(policyEvaluations.applicationId, application.id))
-		.orderBy(desc(policyEvaluations.createdAt), desc(policyEvaluations.id))
-		.limit(1);
+	const policyRows =
+		pinned?.evaluationId !== undefined
+			? await db
+					.select()
+					.from(policyEvaluations)
+					.where(
+						and(
+							eq(policyEvaluations.applicationId, application.id),
+							eq(policyEvaluations.id, pinned.evaluationId),
+						),
+					)
+					.limit(1)
+			: await db
+					.select()
+					.from(policyEvaluations)
+					.where(eq(policyEvaluations.applicationId, application.id))
+					.orderBy(
+						sql`${policyEvaluations.evaluatedAt} DESC NULLS LAST`,
+						desc(policyEvaluations.createdAt),
+						desc(policyEvaluations.id),
+					)
+					.limit(1);
 	const evaluation = policyRows[0];
+	const policyReasons =
+		snapshot !== null && Array.isArray(snapshot["reasons"])
+			? (snapshot["reasons"] as unknown[])
+			: evaluation && Array.isArray(evaluation.reasons)
+				? (evaluation.reasons as unknown[])
+				: [];
+	const policyReasonId =
+		snapshot !== null && Array.isArray(snapshot["reasons"])
+			? (pinned?.decisionId ?? application.id)
+			: evaluation?.id;
 	let policyReasonCount = 0;
-	if (evaluation && Array.isArray(evaluation.reasons)) {
-		for (const raw of evaluation.reasons as unknown[]) {
-			if (!isRecord(raw) || typeof raw["code"] !== "string" || !REASON_RE.test(raw["code"])) {
-				continue;
-			}
-			items.push({
-				ref: sourceRefKey({ type: "score_reason", scoreId: evaluation.id, code: raw["code"] }),
-				sourceType: "score_reason",
-				label: raw["code"],
-				content: raw["code"],
-				access: { retentionUntil: null, legalHold: false },
-				metadata: {
-					kind: "policy_reason",
-					text: typeof raw["text"] === "string" ? raw["text"] : null,
-					outcome: typeof evaluation.outcome === "string" ? evaluation.outcome : null,
-				},
-			});
-			policyReasonCount++;
+	for (const raw of policyReasons) {
+		if (
+			policyReasonId === undefined ||
+			!isRecord(raw) ||
+			typeof raw["code"] !== "string" ||
+			!REASON_RE.test(raw["code"])
+		) {
+			continue;
 		}
+		items.push({
+			ref: sourceRefKey({ type: "score_reason", scoreId: policyReasonId, code: raw["code"] }),
+			sourceType: "score_reason",
+			label: raw["code"],
+			content: raw["code"],
+			access: { retentionUntil: null, legalHold: false },
+			metadata: {
+				kind: "policy_reason",
+				text: typeof raw["text"] === "string" ? raw["text"] : null,
+				outcome: snapshot ? null : (evaluation?.outcome ?? null),
+			},
+		});
+		policyReasonCount++;
 	}
 	if (policyReasonCount === 0) {
 		unavailable.push({
@@ -325,12 +386,22 @@ async function addDecisionReasons(
 	db: Db,
 	application: typeof applications.$inferSelect,
 	items: EvidenceItem[],
+	pinned?: EvidencePinned,
 ): Promise<void> {
-	const rows = await db
-		.select()
-		.from(decisions)
-		.where(eq(decisions.applicationId, application.id))
-		.limit(1);
+	const rows =
+		pinned?.decisionId !== undefined
+			? await db
+					.select()
+					.from(decisions)
+					.where(
+						and(eq(decisions.applicationId, application.id), eq(decisions.id, pinned.decisionId)),
+					)
+					.limit(1)
+			: await db
+					.select()
+					.from(decisions)
+					.where(eq(decisions.applicationId, application.id))
+					.limit(1);
 	const decision = rows[0];
 	if (!decision) return;
 	const pushReason = (
@@ -361,9 +432,13 @@ async function addDecisionReasons(
 	}
 	// Officer/check-only decisions may carry a single generic reason while
 	// the frozen snapshot still holds the specific negative factors. Those
-	// factors are part of the decision, so they are citable too.
-	const snapshot = isRecord(decision.snapshot) ? decision.snapshot : {};
-	const factors = Array.isArray(snapshot["factors"]) ? (snapshot["factors"] as unknown[]) : [];
+	// factors are part of the decision, so they are citable too. A pinned
+	// snapshot (EN-07 rule context) overrides the stored row when supplied.
+	const snapshot = (
+		pinned?.snapshot !== undefined ? pinned.snapshot : decision.snapshot
+	) as unknown;
+	const record = isRecord(snapshot) ? snapshot : {};
+	const factors = Array.isArray(record["factors"]) ? (record["factors"] as unknown[]) : [];
 	for (const raw of factors) {
 		if (!isRecord(raw) || typeof raw["code"] !== "string" || !REASON_RE.test(raw["code"])) {
 			continue;

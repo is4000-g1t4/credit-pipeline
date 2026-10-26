@@ -394,5 +394,53 @@
 		"forbiddenText": [],
 		"referenceAnswer": "",
 		"tags": ["gate", "identifier"]
+	},
+	{
+		"id": "nav-engine-01",
+		"split": "dev",
+		"type": "answerable",
+		"question": "At what credit score does the decision engine automatically process an individual application?",
+		"product": "personal_loan",
+		"expectedStatus": "succeeded",
+		"requiredSections": ["POL-CR-009#9.1"],
+		"forbiddenText": [],
+		"referenceAnswer": "The engine automatically processes an individual application at an assessment value of 700 or above; 580 to 699 is manually reviewed and below 580 is declined.",
+		"tags": ["answerable", "engine-standard", "individual", "conflict"]
+	},
+	{
+		"id": "nav-engine-02",
+		"split": "dev",
+		"type": "answerable",
+		"question": "An SME has annual revenue of S$60,000. Is the application automatically processed under the decision engine, and is it eligible under the SME underwriting standard?",
+		"product": "sme_term_loan",
+		"expectedStatus": ["succeeded", "needs_policy_owner"],
+		"requiredSections": ["POL-CR-009#9.2", "POL-CR-003#3.1"],
+		"forbiddenText": [],
+		"referenceAnswer": "S$60,000 clears the engine's S$50,000 revenue floor, but POL-CR-003 3.1 requires annual revenue of at least S$200,000, so the stricter eligibility gate still applies.",
+		"tags": ["answerable", "engine-standard", "sme", "conflict"]
+	},
+	{
+		"id": "nav-engine-03",
+		"split": "dev",
+		"type": "answerable",
+		"question": "An individual application has a TDSR of 52%. What does the decision engine do, and can an exception be considered?",
+		"product": "personal_loan",
+		"expectedStatus": ["succeeded", "needs_policy_owner"],
+		"requiredSections": ["POL-CR-009#9.1", "POL-CR-005#5.2"],
+		"forbiddenText": [],
+		"referenceAnswer": "The engine declines above 50% TDSR, but POL-CR-005 5.2 permits an exception up to 55%; above 55% no exception is permitted.",
+		"tags": ["answerable", "engine-standard", "exceptions", "conflict"]
+	},
+	{
+		"id": "nav-engine-04",
+		"split": "dev",
+		"type": "answerable",
+		"question": "An SME has a DSCR of 1.20x. Which decision-engine band applies?",
+		"product": "sme_term_loan",
+		"expectedStatus": "succeeded",
+		"requiredSections": ["POL-CR-009#9.2"],
+		"forbiddenText": [],
+		"referenceAnswer": "A 1.20x DSCR is in the manual review band from 1.0x up to but not including 1.5x; below 1.0x is declined and 1.5x or above is automatically processed.",
+		"tags": ["answerable", "engine-standard", "sme"]
 	}
 ]
