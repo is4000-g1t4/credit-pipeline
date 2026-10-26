@@ -544,32 +544,31 @@ runs; they require the signed `service` identity.
 Officer only. All routes proxy to the applications service, which enforces
 assigned-case access plus document-processing consent (applicants 403; drafts,
 missing, or stranger cases non-leaking 404; consent missing 403
-`CONSENT_REQUIRED`). Fraud-review brief content, assign, resolve,
-resolution-draft, and duplicate lookup/explain need the fraud-reviewer grant
-(403 `REVIEWER_REQUIRED`); an assigned officer gets a minimal item DTO, never
-the brief. `DOCUMENT_INTEGRITY_ENABLED=false` makes every
-`/api/applications/:id/integrity*` route 404; `FRAUD_REVIEW_ENABLED=false`
+`CONSENT_REQUIRED`). Fraud-review brief content, resolve, resolution-draft, and
+duplicate lookup/explain are available to the assigned officer; there is no
+separate fraud-reviewer role or grant. `DOCUMENT_INTEGRITY_ENABLED=false` makes
+every `/api/applications/:id/integrity*` route 404; `FRAUD_REVIEW_ENABLED=false`
 makes flags, fraud review, and duplicate routes 404 (same no-store, error
 envelope, and `x-request-id` conventions as above). All responses carry
 `Cache-Control: no-store`.
 
-| Method and path                                                          | Access                           | Purpose                                                       |
-| ------------------------------------------------------------------------ | -------------------------------- | ------------------------------------------------------------- |
-| `GET /api/applications/:id/integrity`                                    | Assigned officer                 | Panel: fingerprints, signals, candidates, consistency, review |
-| `POST /api/applications/:id/integrity/analyses`                          | Assigned officer                 | Start an extraction/consistency run; `202` new, `200` replay  |
-| `GET /api/applications/:id/integrity/analyses/:runId`                    | Assigned officer                 | One analysis run trace                                        |
-| `PATCH /api/applications/:id/integrity/candidates/:candidateId`          | Assigned officer                 | `{ "action": "confirm"\|"reject" }` on one candidate          |
-| `POST /api/applications/:id/integrity/consistency/:candidateId/escalate` | Assigned officer                 | Escalate a confirmed mismatch to fraud review                 |
-| `POST /api/applications/:id/integrity/flags`                             | Assigned officer                 | Manual flag → fraud review + triage                           |
-| `POST /api/applications/:id/integrity/evaluate`                          | Assigned officer                 | Re-run deterministic evaluation                               |
-| `GET /api/fraud-review/me`                                               | Officer                          | Grant check: `{ "reviewer", "canViewQueue" }`                 |
-| `GET /api/fraud-review/queue`                                            | Officer (grant-filtered)         | Review queue, newest first                                    |
-| `GET /api/fraud-review/:id`                                              | Reviewer full / assigned minimal | One review; brief content reviewer-only                       |
-| `PATCH /api/fraud-review/:id/assign`                                     | Reviewer                         | Assign to a reviewer (version-guarded)                        |
-| `POST /api/fraud-review/:id/resolve`                                     | Reviewer                         | Resolve `cleared` / `confirmed` / `needs_info`                |
-| `GET /api/fraud-review/:id/resolution-draft`                             | Reviewer                         | Server-composed draft note + citations                        |
-| `POST /api/fraud-review/duplicates/lookup`                               | Reviewer                         | Hash lookup: counts + internal refs                           |
-| `POST /api/fraud-review/duplicates/explain`                              | Reviewer                         | Mark a duplicate explained                                    |
+| Method and path                                                          | Access           | Purpose                                                                            |
+| ------------------------------------------------------------------------ | ---------------- | ---------------------------------------------------------------------------------- |
+| `GET /api/applications/:id/integrity`                                    | Assigned officer | Panel: fingerprints, signals, candidates, consistency, review                      |
+| `POST /api/applications/:id/integrity/analyses`                          | Assigned officer | Start an extraction run (adds a brief for an open review); `202` new, `200` replay |
+| `GET /api/applications/:id/integrity/analyses/:runId`                    | Assigned officer | One analysis run trace                                                             |
+| `PATCH /api/applications/:id/integrity/candidates/:candidateId`          | Assigned officer | `{ "action": "confirm"\|"reject" }` on one candidate                               |
+| `POST /api/applications/:id/integrity/consistency/:candidateId/escalate` | Assigned officer | Escalate a confirmed mismatch to fraud review                                      |
+| `POST /api/applications/:id/integrity/flags`                             | Assigned officer | Manual flag → fraud review + combined run                                          |
+| `POST /api/applications/:id/integrity/evaluate`                          | Assigned officer | Re-run deterministic evaluation                                                    |
+| `GET /api/fraud-review/me`                                               | Officer          | Access check: `{ "canViewQueue": true }`                                           |
+| `GET /api/fraud-review/queue`                                            | Assigned officer | Review queue for granted cases, newest first                                       |
+| `GET /api/fraud-review/:id`                                              | Assigned officer | One review with signals, brief state, and brief content                            |
+| `POST /api/fraud-review/:id/retry-brief`                                 | Assigned officer | Queue another combined run for this review                                         |
+| `POST /api/fraud-review/:id/resolve`                                     | Assigned officer | Resolve `cleared` / `confirmed` / `needs_info`                                     |
+| `GET /api/fraud-review/:id/resolution-draft`                             | Assigned officer | Server-composed draft note + citations                                             |
+| `POST /api/fraud-review/duplicates/lookup`                               | Assigned officer | Case-scoped hash lookup: counts + internal refs                                    |
+| `POST /api/fraud-review/duplicates/explain`                              | Assigned officer | Mark a duplicate explained                                                         |
 
 ### Integrity panel
 
@@ -671,9 +670,10 @@ text). Consistency items carry `id`, `field`, `proposedKind`,
 ### Analyses, candidates, consistency, flags, evaluate
 
 - `POST .../integrity/analyses` (empty body) needs the agent flag plus a
-  configured key, else 503 `INTEGRITY_AGENT_UNAVAILABLE`. Success `202
-  { "run" }` (new) or `200 { "run", "replayed": true }` (identical evidence).
-  Past the per-hash run cap: 429 `RETRY_LIMIT`.
+  configured key, else 503 `INTEGRITY_AGENT_UNAVAILABLE`. On an open review it
+  queues the combined extraction+brief run; otherwise extraction only. Success
+  `202 { "run" }` (new) or `200 { "run", "replayed": true }` (identical
+  evidence). Past the per-hash run cap: 429 `RETRY_LIMIT`.
 - `PATCH .../candidates/:candidateId` with `{ "action": "confirm"|"reject" }`
   returns `200 { "candidate": { "id", "status", "confirmedAt" } }`. Already
   decided → 409 `CANDIDATE_NOT_ACTIVE`; quote drift (e.g. retry-OCR rewrite)
@@ -686,7 +686,7 @@ text). Consistency items carry `id`, `field`, `proposedKind`,
   "note": "5-2000 chars", "documentFileIds?": ["<uuid>", max 20],
   "severity?": "low"|"medium"|"high" (default `medium`) }`. Unknown or
   non-ready document ids → 422 `DOCUMENT_NOT_AVAILABLE`. Returns the created
-  `{ "review" }` summary and queues triage.
+  `{ "review" }` summary and queues the combined run.
 - `POST .../integrity/evaluate` (empty body) re-runs the deterministic
   evaluation and returns `200 { "result": { "flagged", "severity",
   "reviewId" } }` (signal details stay server-side).
@@ -695,46 +695,44 @@ text). Consistency items carry `id`, `field`, `proposedKind`,
 
 - `GET /api/fraud-review/queue?status=active|all` returns `200
   { "items": [{ "id", "applicationId", "applicationReference", "status",
-  "severity", "reasonCode", "briefAvailable", "briefStale", "createdAt",
-  "updatedAt", "version" }], "reviewer" }`. Non-reviewer officers see only
-  granted cases.
-- `GET /api/fraud-review/:id`: reviewers get the full DTO (`review` summary
-  plus `note`, `assigneeUserId`, `signalCodes`, `documentRefs`,
-  `briefArtifactId`, `briefStale`, `agentRunId`, model/prompt/agent versions,
+  "severity", "reasonCode", "briefAvailable", "briefStale", "briefState",
+  "createdAt", "updatedAt", "version" }] }`. Only cases with an active case
+  grant are listed. `briefState` is `ready`, `stale`, `pending`, `failed`, or
+  `missing`.
+- `GET /api/fraud-review/:id`: the assigned officer gets the full DTO (`review`
+  summary plus `note`, `assigneeUserId`, `signalCodes`, `documentRefs`,
+  `briefArtifactId`, `briefStale`, `briefUnavailable` (`pending`/`stale`/
+  `missing`/`failed`/`consent_withdrawn`), `briefState` (run status or
+  `succeeded`/`missing`), `agentRunId`, model/prompt/agent versions,
   `resolvedBy`, `resolvedAt`, `resolutionNote`, and `brief`
   (`id`/`status`/`content`/`citations`/`agentTrace`/`model`/`promptVersion`/`createdAt`)
-  - `brief` is `null` when absent, stale, or consent-withdrawn; `briefUnavailable`
-    is `missing`, `stale`, or `consent_withdrawn`). Assigned officers get the minimal
-    DTO (`review` summary plus `applicationId`, `reasonCode`,
-    `briefAvailable`, `briefStale`). Reads are audited as
-    `fraud_review.viewed`.
-- `PATCH /api/fraud-review/:id/assign` body `{ "assigneeUserId": "<uuid>",
-  "expectedVersion": <int> }`. The assignee must hold the reviewer grant
-  (else 422 `REVIEWER_REQUIRED`); stale versions → 409 `VERSION_CONFLICT`;
-  resolved reviews → 409 `REVIEW_NOT_ACTIVE`.
+  — `brief` is `null` when absent, stale, or consent-withdrawn). Reads are
+  audited as `fraud_review.viewed`.
+- `POST /api/fraud-review/:id/retry-brief` queues the combined run again for
+  the review and returns `200 { "ok": true }`.
 - `POST /api/fraud-review/:id/resolve` body `{ "status":
   "cleared"|"confirmed"|"needs_info", "note": "10-2000 chars",
   "expectedVersion": <int> }` returns `200 { "review",
   "decisionPath": "/officer/review/<applicationId>" }`. Resolution never
-  changes the application status, score, terms, or decision.
+  changes the application status, score, terms, or decision and is not blocked
+  by a missing or failed brief.
 - `GET /api/fraud-review/:id/resolution-draft` returns `200
   { "note": "<server-composed draft>", "citations": [{ "ref", "quote" }] }`
-  (at most 5 citations, from the fresh brief only). The reviewer edits the
+  (at most 5 citations, from the fresh brief only). The officer edits the
   note and chooses the state; there is no auto-resolution.
 - `POST /api/fraud-review/duplicates/lookup` body `{ "sha256": "<64 hex>",
-  "applicationId?": "<uuid>" }` returns `200 { "sha256Prefix", "count",
-  "counts?": { "sameApplication", "sameApplicantOther", "crossApplicant" },
+  "applicationId": "<uuid>" }` returns `200 { "sha256Prefix", "count",
+  "counts": { "sameApplication", "sameApplicantOther", "crossApplicant" },
   "rows": [{ "applicationReference", "documentFileId", "kind",
-  "uploadedAt", "explanationNote" }] }` (`counts` only with
-  `applicationId`). Audited with the hash prefix only.
+  "uploadedAt", "explanationNote" }] }`. `applicationId` is required so the
+  lookup is scoped to a case the officer can access. Audited with the hash
+  prefix only.
 - `POST /api/fraud-review/duplicates/explain` body `{ "sha256": "<64 hex>",
   "applicationId": "<uuid>", "note": "5-500 chars" }` upserts one
   explanation per hash+case and returns `200 { "ok": true }`.
 
-Service-only internal routes (signed `service` identity, same HMAC scheme as
-below): `POST /internal/fraud-review/reviewers` (`{ "userId",
-"action": "grant"|"revoke" }` → `{ "ok": true }`) and
-`POST /internal/fraud-review/retention/run` (→
+Service-only internal route (signed `service` identity, same HMAC scheme as
+below): `POST /internal/fraud-review/retention/run` (→
 `{ "reviewsRedacted", "explanationsRedacted" }`).
 
 ## Health
@@ -804,9 +802,8 @@ Response `200`:
 | `NOT_CONFIRMED_MISMATCH`      | 409      | Only a confirmed mismatch can be escalated                                                                                                                                                   |
 | `DOCUMENT_NOT_AVAILABLE`      | 422      | Flagged document id is not ready in this case                                                                                                                                                |
 | `RETRY_LIMIT`                 | 429      | Too many runs for this evidence set in 24h                                                                                                                                                   |
-| `REVIEW_NOT_ACTIVE`           | 409      | Review already resolved (or not active for assign)                                                                                                                                           |
+| `REVIEW_NOT_ACTIVE`           | 409      | Review already resolved                                                                                                                                                                      |
 | `VERSION_CONFLICT`            | 409      | Review changed since read; reload and retry with the new version                                                                                                                             |
-| `REVIEWER_REQUIRED`           | 403, 422 | Fraud-reviewer grant required (403); assignee is not a reviewer (422)                                                                                                                        |
 | `ALREADY_PAID`                | 409      | Installment is already paid                                                                                                                                                                  |
 | `MEMO_AGENT_TIMEOUT`          | 504      | Memo tool loop hit its deadline; retry or decide without a memo                                                                                                                              |
 | `MEMO_AGENT_UNAVAILABLE`      | 502, 503 | Memo model error (502), or agent writer with no key (503); retry or decide without                                                                                                           |
@@ -909,7 +906,6 @@ Headers on every internal call: `x-user-id`, `x-user-role`, `x-user-email`, `x-i
 | `GET .../audit` (auto-trigger history)            | Research      | Review          | Officer (first caller claims; later 404)                                                                                                                                                                                                          |
 | `POST .../access/grants`                          | Research      | Automation      | Service only (officer/applicant 403)                                                                                                                                                                                                              |
 | `POST .../access/revoke`                          | Research      | Automation      | Service only (officer/applicant 403)                                                                                                                                                                                                              |
-| `POST /internal/fraud-review/reviewers`           | Applications  | Automation      | Service only; grant/revoke the fraud-reviewer role; officers/applicants 403                                                                                                                                                                       |
 | `POST /internal/fraud-review/retention/run`       | Applications  | Automation      | Service only; redacts expired resolved reviews/explanations unless a legal hold applies                                                                                                                                                           |
 | `GET /health`                                     | Every service | Any             | Public                                                                                                                                                                                                                                            |
 

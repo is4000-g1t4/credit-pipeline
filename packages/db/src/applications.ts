@@ -996,23 +996,6 @@ export const fraudReviews = pgTable(
 	],
 );
 
-export const fraudReviewerGrants = pgTable(
-	"fraud_reviewer_grants",
-	{
-		id: uuid("id").defaultRandom().primaryKey(),
-		// Cross-DB reference to credit_auth.users — plain uuid, never an FK.
-		userId: uuid("user_id").notNull(),
-		grantedBy: uuid("granted_by"),
-		grantedAt: timestamp("granted_at", { withTimezone: true, mode: "date" }).defaultNow().notNull(),
-		revokedAt: timestamp("revoked_at", { withTimezone: true, mode: "date" }),
-	},
-	(t) => [
-		uniqueIndex("fraud_reviewer_grants_active_uniq")
-			.on(t.userId)
-			.where(sql`${t.revokedAt} IS NULL`),
-	],
-);
-
 export const documentDuplicateExplanations = pgTable(
 	"document_duplicate_explanations",
 	{

@@ -14,7 +14,7 @@ function Header() {
 	const me = useMe();
 	const logout = useLogout();
 	const user = me.data?.user;
-	// Reviewer/queue visibility is server-computed; a null (404/flag-off)
+	// Queue visibility is server-computed; a null (404/flag-off)
 	// response simply hides the link. Never blocks existing nav.
 	const fraudMe = useQuery({
 		queryKey: ["fraud-me"],

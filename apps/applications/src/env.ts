@@ -112,8 +112,8 @@ const parsed = createEnv({
 		ASSIST_ADVERSE_CONTACT_PATH: z.string().default(""),
 		ASSIST_ADVERSE_PROMPT_VERSION: z.string().min(1).default("adverse-letter-v1"),
 		// E2 document integrity + EN-05 fraud review. Flags default off; the
-		// deterministic panel works without a model. Triage requires both
-		// feature flags and its own agent flag.
+		// deterministic panel works without a model. The advisory brief needs
+		// both feature flags and its own agent flag.
 		DOCUMENT_INTEGRITY_ENABLED: z.enum(["true", "false"]).default("false"),
 		FRAUD_REVIEW_ENABLED: z.enum(["true", "false"]).default("false"),
 		DOCUMENT_INTEGRITY_AGENT_ENABLED: z.enum(["true", "false"]).default("false"),

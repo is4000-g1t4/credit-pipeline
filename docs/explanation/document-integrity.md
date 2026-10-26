@@ -1,8 +1,8 @@
 # Document integrity (E2 / EN-04/EN-05)
 
 Deterministic document fingerprinting plus a bounded AI extraction/consistency
-pass, with reviewer-owned fraud review for flagged cases. Audience: developers
-extending the integrity pipeline or enabling the triage agent. Outcome: you
+pass, with assigned-officer fraud review for flagged cases. Audience: developers
+extending the integrity pipeline or enabling the integrity agent. Outcome: you
 know what is deterministic, what the model may do, and where a human decides.
 
 Related: [API](../reference/api.md#document-integrity-e2--en-04en-05) (route
@@ -18,8 +18,8 @@ Non-negotiables:
   authoritative. The model may not invent a tamper, provenance, or duplication
   signal.
 - The model never decides, approves, declines, scores, or changes a case. Flag
-  resolution is reviewer-only and never touches application status, score,
-  terms, or decision.
+  resolution is by the assigned officer and never touches application status,
+  score, terms, or decision.
 - Every AI claim cites an exact page/offset quote or an existing deterministic
   signal. Unsupported claims are dropped or fail closed.
 - One validation/repair attempt on invalid output, then fail closed. Agent
@@ -34,8 +34,8 @@ Non-negotiables:
 | Fingerprint (`fingerprint.ts`)     | sha/size/MIME/pages, known-software tokens, edit codes, `unknown` fallback     | Text, names, inference                                      |
 | Signals (`signals.ts`)             | Severity + `shouldFlag` threshold                                              | Proof (every signal is "signal, not proof")                 |
 | Validators (`validators.ts`)       | Exact quote offsets, format/date/amount rules, deterministic pair confirmation | Model prose (explanations are server-composed from quotes)  |
-| Agent (`agent.ts`, `agent-sdk.ts`) | Candidate extraction + consistency proposals + triage brief draft              | New ids, values, parties, amounts; confirmed-fraud language |
-| Officer/reviewer                   | Confirm candidates, escalate mismatches, resolve reviews                       | — (only human resolves)                                     |
+| Agent (`agent.ts`, `agent-sdk.ts`) | Candidate extraction + consistency proposals + optional advisory brief         | New ids, values, parties, amounts; confirmed-fraud language |
+| Assigned officer                   | Confirm candidates, escalate mismatches, resolve reviews                       | — (only a human resolves)                                   |
 
 ## EN-04 fingerprint and provenance
 
@@ -106,43 +106,55 @@ evaluation merges signal codes/document refs and keeps the higher severity.
   mutation (applicant uploads never create items) and via
   `POST .../integrity/evaluate`. Both feature flags
   (`DOCUMENT_INTEGRITY_ENABLED`, `FRAUD_REVIEW_ENABLED`) are required.
+- With the threshold crossed, the case gets one active review item and one
+  combined async integrity run (candidates + brief). New evidence on an open
+  item re-queues the same run; an active run for the same evidence hash
+  replays instead of duplicating.
 - Manual flags (`POST .../integrity/flags`, reason codes
   `document_integrity` | `duplicate_document` | `metadata_inconsistency` |
   `other`) and consistency escalations (only a `confirmed` + `mismatch`
-  finding, else 409 `NOT_CONFIRMED_MISMATCH`) create a review and queue triage.
-- Resolution is reviewer-only (`fraud_reviewer_grants`, granted/revoked via
-  service-only internal routes), optimistic-concurrency guarded
-  (`expectedVersion`, 409 `VERSION_CONFLICT`), note required (10–2000 chars).
-  It never mutates the application. `POST .../resolve` returns
-  `decisionPath: /officer/review/<applicationId>` for navigation only.
-- Queue: reviewers see all items (`?status=active|all`); an assigned officer
-  sees granted cases only. Item DTO: `id`, `applicationId`,
+  finding, else 409 `NOT_CONFIRMED_MISMATCH`) create a review and queue the
+  combined run.
+- Resolution is by the assigned officer (no separate reviewer role or grant),
+  optimistic-concurrency guarded (`expectedVersion`, 409 `VERSION_CONFLICT`),
+  note required (10–2000 chars). It never mutates the application.
+  `POST .../resolve` returns `decisionPath: /officer/review/<applicationId>`
+  for navigation only.
+- Queue: the assigned officer sees open items for their granted cases
+  (`?status=active|all`). Item DTO: `id`, `applicationId`,
   `applicationReference`, `status`, `severity`, `reasonCode`,
-  `briefAvailable`, `briefStale`, `createdAt`, `updatedAt`, `version`.
-- Item read: reviewers get the full DTO (note, assignee, signal codes,
-  document refs, brief content, run/model versions, resolution). An assigned
-  officer gets a minimal DTO (summary + `briefAvailable`/`briefStale`) and
-  never the brief. Everyone else gets a non-leaking 404.
+  `briefAvailable`, `briefStale`, `briefState`
+  (`ready` | `stale` | `pending` | `failed` | `missing`), `createdAt`,
+  `updatedAt`, `version`.
+- Item read: the assigned officer gets the full DTO (note, assignee, signal
+  codes, document refs, brief content, run/model versions, resolution).
+  Everyone else gets a non-leaking 404. While a run is `queued`/`running` the
+  UI shows "Integrity brief in progress" and keeps polling; a `failed` or
+  missing brief never blocks resolution.
 - `GET .../resolution-draft` returns a server-composed draft note (signals +
-  brief summary, first 5 citations) that the reviewer edits; there is no
-  auto-resolution.
+  brief summary, first 5 citations) that the assigned officer edits; there is
+  no auto-resolution.
 
-## AI extraction and consistency pass
+## AI extraction, consistency, and brief (one run)
 
-`POST .../integrity/analyses` starts an async `document_analysis` run
-(`202` new, `200` replay on identical `inputHash`; `429 RETRY_LIMIT` past
-`DOCUMENT_INTEGRITY_MAX_RUNS_PER_HASH`, default 3 per hash per 24h; `503
-INTEGRITY_AGENT_UNAVAILABLE` when the agent is off or keyless). The worker
-leases one row (`FOR UPDATE SKIP LOCKED`, `max_attempts` 2) and finalizes
-under the lease token.
+There is one agent run type and one queue. `POST .../integrity/analyses` on an
+unflagged case queues an extraction-only run; an automatic run for an open
+review also drafts the advisory brief. Both are `document_analysis` rows (the
+legacy `document_triage` enum value is unused) and both use the same model,
+prompt family, validation loop, and trace. The route returns `202` for a new
+run, `200` for a replay on identical `inputHash`, `429 RETRY_LIMIT` past
+`DOCUMENT_INTEGRITY_MAX_RUNS_PER_HASH` (default 3 per hash per 24h), and `503
+INTEGRITY_AGENT_UNAVAILABLE` when the agent is off or keyless. The worker leases
+one row (`FOR UPDATE SKIP LOCKED`, `max_attempts` 2) and finalizes under the
+lease token.
 
-Allowlisted tools (analysis): `list_documents`, `search_pages`, `get_page`,
-`list_signals`. Triage adds `list_customer_evidence`, `get_customer_page`,
-`get_duplicate_context`. Pure dispatcher (`tools.ts`): unknown or
-non-allowlisted tools return an error payload, never throw; excerpts capped
-(300 chars), pages 8,000 chars, 20 refs per call. Analysis never registers
-customer tools. Document text is untrusted data, never instructions
-(temperature 0, no SDK tracing).
+The agent starts with `list_documents` and `list_signals`; it can call
+`search_pages`/`get_page`, and—only when a brief is requested—also
+`list_customer_evidence`, `get_customer_page`, and `get_duplicate_context`.
+Pure dispatcher (`tools.ts`): unknown or non-allowlisted tools return an error
+payload, never throw; excerpts capped (300 chars), pages 8,000 chars, 20 refs
+per call. Document text is untrusted data, never instructions (temperature 0,
+no SDK tracing).
 
 Bounds: `DOCUMENT_INTEGRITY_MAX_STEPS` (24), `DOCUMENT_INTEGRITY_MAX_TOOL_CALLS`
 (32), `DOCUMENT_INTEGRITY_TIMEOUT_MS` (90s), `DOCUMENT_INTEGRITY_MAX_COST_USD`
@@ -173,14 +185,15 @@ Consistency fields (7): `company_name`, `registration_number`,
 `account_holder_name`, `statement_period`, `material_amount`,
 `document_date`, `other`.
 
-## Triage brief
+## Advisory brief
 
-Triage runs only for an active (`open`/`needs_info`) review at a pinned
-`reviewVersion`, with `DOCUMENT_INTEGRITY_TRIAGE_ENABLED` plus both feature
-flags, the agent flag, and a runner. Same-customer evidence requires
-`contextAnalysisConsent`; without it (or under legal hold/retention expiry)
-the source is a typed gap (`access_denied`, `retention_expired`, `missing`,
-`unavailable`), never an inference.
+The brief is produced by the same agent call as extraction, for an active
+(`open`/`needs_info`) review at a pinned `reviewVersion`. It requires
+`DOCUMENT_INTEGRITY_TRIAGE_ENABLED` plus both feature flags, the agent flag,
+and a runner. Same-customer evidence requires `contextAnalysisConsent`;
+without it (or under legal hold/retention expiry) the source is a typed gap
+(`access_denied`, `retention_expired`, `missing`, `unavailable`), never an
+inference.
 
 The brief is a `document_integrity_brief` draft artifact: `title`, `summary`,
 `candidateContradictions[]`, `alternativeExplanations[]`
@@ -196,14 +209,20 @@ and PII/direct identifiers. The applicant-facing fair-lending deny list is not
 applied to this internal brief because it contains common words such as
 "single"; PII and cross-customer checks remain active.
 
-Async/lease flow: enqueue on flag create/evaluate/escalate → worker claims →
-`executeTriage` re-checks review active + version, runs the agent, and commits
-brief + run + review link in one fenced transaction (review still active at
-same version; worker still owns the lease). A reviewer resolving mid-run
-cancels the run (`REVIEW_CLOSED`); a stale worker cannot write after a
-re-claim. Evidence change marks the brief stale (`briefStaleAt`, hidden from
-the reviewer) and re-queues; identical input hashes replay. The panel exposes
-at most one draft brief; superseded drafts are marked `superseded`.
+Async/lease flow: trigger on flag create/evaluate/escalate or evidence change
+→ one run claimed by the worker → `runIntegrityAnalysis` re-checks review
+active + version, runs the agent, then commits candidates, brief, run, and
+review link in one fenced transaction (review still active at the same
+version; worker still owns the lease). An officer resolving mid-run cancels the
+run (`REVIEW_CLOSED`); a stale worker cannot write after a re-claim. Evidence
+change marks the brief stale (`briefStaleAt`) and re-queues; identical input
+hashes replay. The panel exposes at most one draft brief; superseded drafts are
+marked `superseded`.
+
+UI states for the item: `pending` (queued/running — shows "Integrity brief in
+progress" and polls), `ready`, `stale` (re-running, with Retry), `failed`
+(Retry, resolution still allowed), `missing` (no brief produced). The review is
+never blocked on brief completion.
 
 Flow:
 
@@ -213,9 +232,8 @@ upload/mutation ──► fingerprint + deterministic signals ──► severity
         │ best-effort, officer/service only                    fraud_reviews (open)
         │                                                              │ enqueue
         ▼                                                              ▼
-panel (officer) ◄── analysis run (lease, validate, persist)    triage run (lease,
-candidates + consistency (stale-aware)                           version fence, brief)
-                                                                       │ reviewer resolves
+panel (officer) ◄── one integrity run (lease, validate, persist)  candidates + brief
+                                                                       │ officer resolves
                                                                        ▼ cleared|confirmed|needs_info
 ```
 
@@ -226,12 +244,13 @@ Two surfaces, deliberately split (`duplicates.ts`):
 - Officer panel: per-document `duplicateCount` (same-application only) plus
   `crossApplicationRestricted` (boolean — no cross-case refs). Same-case
   count only.
-- Reviewer-only `POST /api/fraud-review/duplicates/lookup`: `{ sha256,
-  applicationId? }` → `{ sha256Prefix, count, counts?, rows[] }` where rows
+- Assigned-officer `POST /api/fraud-review/duplicates/lookup`: `{ sha256,
+  applicationId }` → `{ sha256Prefix, count, counts?, rows[] }` where rows
   carry `applicationReference`, `documentFileId`, `kind`, `uploadedAt`, and
-  `explanationNote`. With `applicationId`, `counts` breaks down
-  `sameApplication` / `sameApplicantOther` / `crossApplicant`.
-- False-positive path: reviewer-only `POST .../duplicates/explain`
+  `explanationNote`. `applicationId` scopes the request to the officer's case
+  and is required; `counts` breaks down `sameApplication` /
+  `sameApplicantOther` / `crossApplicant`.
+- False-positive path: assigned-officer `POST .../duplicates/explain`
   (`note` 5–500 chars) upserts one explanation per hash+case.
 - Every lookup is audited with the hash prefix only.
 
@@ -244,7 +263,7 @@ Two surfaces, deliberately split (`duplicates.ts`):
   the case blocks redaction. Explanations redact to `"redacted"`.
 - Documents: blob purge and `retention_until` expiry (consent withdrawal sets
   `retention_until=now()`) remove files from the panel, the snapshot, and the
-  reviewer surface. Legal holds block deletion.
+  officer review surface. Legal holds block deletion.
 - `requireIntegrityCaseAccess`: officer + active case grant + case not draft
   - `documentProcessingConsent`, else 403 `CONSENT_REQUIRED` / non-leaking
   404. Applicants get 403 before any existence check.
@@ -254,27 +273,27 @@ Two surfaces, deliberately split (`duplicates.ts`):
 All integrity/fraud responses send `Cache-Control: no-store`. Audit payloads
 carry ids, codes, counts, versions, and hashes — never page text, quotes, or
 PII. Events: `integrity.flag_opened/flag_updated`,
-`integrity.analysis_requested/analysis_succeeded`,
+`integrity.analysis_requested/run_queued/analysis_started/analysis_succeeded/analysis_failed`,
 `integrity.candidate_confirmed/candidate_rejected`,
 `integrity.evaluate_requested/evaluate_failed`,
-`integrity.triage_queued/triage_succeeded/triage_failed`,
-`integrity.brief_stale`, `fraud_review.viewed/assigned/resolved`,
-`fraud_review.reviewer_granted/revoked`, `fraud.duplicate_lookup`,
+`integrity.triage_succeeded` (brief committed), `integrity.brief_stale`,
+`fraud_review.viewed/resolved`, `fraud.duplicate_lookup`,
 `fraud.duplicate_explained`, `artifact.created/superseded`,
 `fraud_review.retention_applied`.
 
 ## Flags and config
 
 `DOCUMENT_INTEGRITY_ENABLED` (panel + analyses), `FRAUD_REVIEW_ENABLED`
-(review + triage + flags), `DOCUMENT_INTEGRITY_AGENT_ENABLED` (model pass),
-`DOCUMENT_INTEGRITY_TRIAGE_ENABLED` (brief) — all default `false`. Off means
-routes 404. The agent additionally needs `OPENROUTER_API_KEY` (shared with
-the memo writer). Model/provenance defaults: `DOCUMENT_INTEGRITY_MODEL`
-(`deepseek/deepseek-v4.1-flash-1017`), `DOCUMENT_INTEGRITY_PROMPT_VERSION`
-(`integrity-analysis-v1`), `DOCUMENT_INTEGRITY_AGENT_VERSION`
-(`integrity-agent-v1`), `DOCUMENT_INTEGRITY_TRIAGE_PROMPT_VERSION`
-(`integrity-triage-v1`). System actor for service-created items:
-`DOCUMENT_INTEGRITY_SYSTEM_USER_ID`. See
+(review + flags), `DOCUMENT_INTEGRITY_AGENT_ENABLED` (model pass),
+`DOCUMENT_INTEGRITY_TRIAGE_ENABLED` (brief in the combined run) — all default
+`false`. Off means routes 404. The agent additionally needs
+`OPENROUTER_API_KEY` (shared with the memo writer). Model/provenance defaults:
+`DOCUMENT_INTEGRITY_MODEL` (`deepseek/deepseek-v4.1-flash-1017`),
+`DOCUMENT_INTEGRITY_PROMPT_VERSION` (`integrity-analysis-v1`),
+`DOCUMENT_INTEGRITY_AGENT_VERSION` (`integrity-agent-v1`),
+`DOCUMENT_INTEGRITY_TRIAGE_PROMPT_VERSION` (`integrity-triage-v1`, retained for
+the brief half of the combined prompt). System actor for service-created
+items: `DOCUMENT_INTEGRITY_SYSTEM_USER_ID`. See
 [configuration](../reference/configuration.md).
 
 ## Known limits
@@ -287,5 +306,6 @@ the memo writer). Model/provenance defaults: `DOCUMENT_INTEGRITY_MODEL`
   confirmation renders `mismatch`.
 - Panel reads the latest succeeded analysis only and the newest 20 files;
   the snapshot caps at 20 documents, 20 pages each, ~2 MB total text.
-- Triage needs all four flags plus a key; without them the flag stays `open`
-  with deterministic signals and no brief.
+- Triage needs both feature flags and the agent flag plus a key; without them
+  the flag stays `open` with deterministic signals and no brief. The brief is
+  advisory and never blocks resolution.

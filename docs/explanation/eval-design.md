@@ -440,12 +440,12 @@ is the remaining half of the invariant.
 
 ### 5.7 Recorded results (2026-10-24)
 
-| Feature             | Run                   | Headline                                                              |    Cost | Caveat                                                               |
-| ------------------- | --------------------- | --------------------------------------------------------------------- | ------: | -------------------------------------------------------------------- |
-| Policy navigator    | 33 cases × 3 trials   | held-out 8/8 cases, dev 22/25 at pass^3; 99/99 status-correct trials  | $0.3093 | judge uncalibrated; dev failures are completeness                    |
-| External case brief | 3 cases × 3 trials    | 9/9 trials, 3/3 pass^3; adverse/collision correct, citation/PII clean | $0.2387 | 3 synthetic cases, in-sample; registry/support reported, not gated   |
-| Context analyst     | 3 personas × 3 trials | 9/9 trials, 3/3 pass^3, first-pass 9/9, 0 dropped signals             | $0.7546 | 3 demo personas, in-sample; coverage validator-enforced              |
-| Document integrity  | 28 cases × 3 trials   | dev 19/19 pass^3; held-out 9/9 pass^3; 0 safety failures; $0.60 total | $0.6004 | synthetic fixtures; judge-free code graders; held-out inspected once |
+| Feature             | Run                   | Headline                                                              |    Cost | Caveat                                                                                          |
+| ------------------- | --------------------- | --------------------------------------------------------------------- | ------: | ----------------------------------------------------------------------------------------------- |
+| Policy navigator    | 33 cases × 3 trials   | held-out 8/8 cases, dev 22/25 at pass^3; 99/99 status-correct trials  | $0.3093 | judge uncalibrated; dev failures are completeness                                               |
+| External case brief | 3 cases × 3 trials    | 9/9 trials, 3/3 pass^3; adverse/collision correct, citation/PII clean | $0.2387 | 3 synthetic cases, in-sample; registry/support reported, not gated                              |
+| Context analyst     | 3 personas × 3 trials | 9/9 trials, 3/3 pass^3, first-pass 9/9, 0 dropped signals             | $0.7546 | 3 demo personas, in-sample; coverage validator-enforced                                         |
+| Document integrity  | 28 cases × 3 trials   | dev 19/19 pass^3; held-out 9/9 pass^3; 0 safety failures; $0.67 total | $0.6737 | synthetic fixtures; judge-free code graders; combined extraction+brief; held-out inspected once |
 
 Details: `apps/policy/eval/ANSWER-RESULTS.md`,
 `apps/research/eval/BRIEF-RESULTS.md`,

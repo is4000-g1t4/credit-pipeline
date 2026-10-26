@@ -261,7 +261,7 @@ export function createApp(deps: GatewayDeps): Hono<{ Variables: Variables }> {
 		});
 	}
 
-	// EN-05 fraud review (officer only). Reviewer-grant checks live in the
+	// EN-05 fraud review (officer only). Case-assignment checks live in the
 	// applications service; applicants are denied before the upstream call.
 	for (const pattern of ["/api/fraud-review", "/api/fraud-review/*"]) {
 		app.all(pattern, officer, async (c) => {

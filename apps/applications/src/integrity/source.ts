@@ -1,10 +1,10 @@
 // US-INT-1/2/3 bounded source snapshot.
 //
-// One read assembles the case documents, same-customer evidence (triage only),
-// the latest succeeded deterministic cross-check, fingerprints, duplicates,
-// and deterministic signals. Tools read this snapshot only; they never accept
-// a model-supplied id that is not in the map. Page text is capped and never
-// logged or traced.
+// One read assembles the case documents, same-customer evidence (brief runs
+// only), the latest succeeded deterministic cross-check, fingerprints,
+// duplicates, and deterministic signals. Tools read this snapshot only; they
+// never accept a model-supplied id that is not in the map. Page text is capped
+// and never logged or traced.
 
 import {
 	applications,

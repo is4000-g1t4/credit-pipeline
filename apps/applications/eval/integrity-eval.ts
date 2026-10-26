@@ -393,67 +393,68 @@ function frozenCandidates(source: IntegritySource): unknown[] {
 function createFrozenRunner(): IntegrityAgentRunner {
 	return {
 		async run(input) {
-			const toolCalls =
-				input.mode === "analysis"
-					? [
-							{
-								step: 1,
-								name: "list_documents",
-								resultCount: input.source.documents.length,
-								sourceTypes: ["document"],
-								refs: [],
-							},
-						]
-					: [
-							{
-								step: 1,
-								name: "list_signals",
-								resultCount: input.source.signals.length,
-								sourceTypes: ["context_signal"],
-								refs: [],
-							},
-						];
-			let rawOutput: string;
-			if (input.mode === "analysis") {
-				rawOutput = JSON.stringify({ candidates: frozenCandidates(input.source), consistency: [] });
-			} else {
-				const signalTokens = input.source.signals.slice(0, 4).map((signal) => ({
-					kind: "signal",
-					signalCode: signal.code,
-					...(signal.documentFileId ? { documentFileId: signal.documentFileId } : {}),
-				}));
-				const citations =
-					signalTokens.length > 0
-						? signalTokens
-						: (() => {
-								const doc = input.source.documents.find((d) => d.readable && d.pages.length > 0);
-								const page = doc?.pages[0];
-								return doc && page
-									? [
-											{
-												kind: "document",
-												documentFileId: doc.documentFileId,
-												pageNumber: page.pageNumber,
-												quote: [...page.text].slice(0, 60).join(""),
-											},
-										]
-									: [];
-							})();
-				rawOutput = JSON.stringify({
-					title: "Integrity triage brief (frozen regression output)",
-					summary: {
-						text: "The deterministic signals list items for officer review.",
-						citations,
-					},
-					candidateContradictions: [],
-					missingEvidence: [],
-					alternativeExplanations: [],
-					questionsForReviewer: ["Could the reviewer confirm the flagged items?"],
-					suggestedPriority: "low",
-				});
-			}
+			const generateBrief = input.generateBrief === true;
+			const toolCalls = generateBrief
+				? [
+						{
+							step: 1,
+							name: "list_signals",
+							resultCount: input.source.signals.length,
+							sourceTypes: ["context_signal"],
+							refs: [],
+						},
+					]
+				: [
+						{
+							step: 1,
+							name: "list_documents",
+							resultCount: input.source.documents.length,
+							sourceTypes: ["document"],
+							refs: [],
+						},
+					];
+			const signalTokens = input.source.signals.slice(0, 4).map((signal) => ({
+				kind: "signal",
+				signalCode: signal.code,
+				...(signal.documentFileId ? { documentFileId: signal.documentFileId } : {}),
+			}));
+			const citations =
+				signalTokens.length > 0
+					? signalTokens
+					: (() => {
+							const doc = input.source.documents.find((d) => d.readable && d.pages.length > 0);
+							const page = doc?.pages[0];
+							return doc && page
+								? [
+										{
+											kind: "document",
+											documentFileId: doc.documentFileId,
+											pageNumber: page.pageNumber,
+											quote: [...page.text].slice(0, 60).join(""),
+										},
+									]
+								: [];
+						})();
+			const brief = generateBrief
+				? {
+						title: "Integrity triage brief (frozen regression output)",
+						summary: {
+							text: "The deterministic signals list items for officer review.",
+							citations,
+						},
+						candidateContradictions: [],
+						missingEvidence: [],
+						alternativeExplanations: [],
+						questionsForReviewer: ["Could the reviewer confirm the flagged items?"],
+						suggestedPriority: "low",
+					}
+				: undefined;
 			return {
-				rawOutput,
+				rawOutput: JSON.stringify({
+					candidates: frozenCandidates(input.source),
+					consistency: [],
+					...(brief ? { brief } : {}),
+				}),
 				toolCalls,
 				sourceRefs: [],
 				steps: toolCalls.length + 1,

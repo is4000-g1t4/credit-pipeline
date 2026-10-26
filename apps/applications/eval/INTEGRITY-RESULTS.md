@@ -1,10 +1,12 @@
-# Document integrity eval — results (2026-10-25)
+# Document integrity eval — results (2026-10-26)
 
 Feature: E2 document integrity + EN-04/EN-05 (`apps/applications`).
-Archetype: explain/classify + structured extraction, with a tool-using triage
-brief. Production path: `apps/applications/src/integrity/agent.ts`
-(`runIntegrityAnalysis`, `runIntegrityTriage`), the real OpenRouter runner,
-and the shared validator. No HTTP/DB/auth in the runner (fixture sources).
+Archetype: explain/classify + structured extraction, with an advisory brief
+produced by the same agent call. Production path:
+`apps/applications/src/integrity/agent.ts` (`runIntegrityAnalysis`, one combined
+run; `runIntegrityTriage` is a thin eval/test wrapper), the real OpenRouter
+runner, and the shared validator. No HTTP/DB/auth in the runner (fixture
+sources).
 
 ## Decision
 
@@ -17,17 +19,17 @@ credited for validator guarantees.
 
 | Run      | Cases | Trials |        pass@1 |        pass^3 | Wilson 95% (pass^3) |    Cost | Latency mean / p95 |
 | -------- | ----: | -----: | ------------: | ------------: | ------------------- | ------: | ------------------ |
-| Dev      |    19 |      3 | 57/57 (1.000) | 19/19 (1.000) | 0.832 – 1.000       | $0.4058 | 6.5 s / 16.9 s     |
-| Held-out |     9 |      3 | 27/27 (1.000) |   9/9 (1.000) | 0.701 – 1.000       | $0.1946 | 8.2 s / 21.5 s     |
+| Dev      |    19 |      3 | 57/57 (1.000) | 19/19 (1.000) | 0.832 – 1.000       | $0.4549 | 7.6 s / 19.7 s     |
+| Held-out |     9 |      3 | 27/27 (1.000) |   9/9 (1.000) | 0.701 – 1.000       | $0.2188 | 8.2 s / 33.5 s     |
 
-Config: `deepseek/deepseek-v4.1-flash-1017`, temperature 0,
-`integrity-analysis-v1` / `integrity-triage-v1`, agent
+Config: `deepseek/deepseek-v4.1-flash-1017`, temperature 0, combined
+`integrity-analysis-v1` + `integrity-triage-v1` prompt, agent
 `integrity-agent-v1`, max 24 steps / 32 tool calls / 90 s / $0.12 per eval
 run ($0.25 production cap), 4000 output tokens. `asOf` 2026-06-30.
 
 Raw results JSON (local/gitignored):
-`eval/results/integrity-2026-10-25T20-58-24-583Z.json` (dev),
-`eval/results/integrity-2026-10-25T21-00-25-207Z.json` (held-out).
+`eval/results/integrity-2026-10-26T06-01-44-874Z.json` (dev),
+`eval/results/integrity-2026-10-26T06-03-59-730Z.json` (held-out).
 
 ## Metrics
 
@@ -36,12 +38,12 @@ Raw results JSON (local/gitignored):
 | Case pass@1 / pass^3                                                                                   | 1.000 / 1.000 | 1.000 / 1.000 | ≥ 0.90 / report |
 | Safety failures (definitive fraud, cross-customer, decision language, PII, invalid citation persisted) |             0 |             0 | 0               |
 | Required candidate recall                                                                              |         1.000 |         1.000 | ≥ 0.90          |
-| Model candidate precision (expected fields only)                                                       |         0.525 |         0.464 | report          |
+| Model candidate precision (expected fields only)                                                       |         0.538 |         0.468 | report          |
 | Deterministic baseline precision / recall                                                              | 0.808 / 1.000 | 0.595 / 1.000 | baseline        |
-| Repair rate                                                                                            |         0.035 |         0.037 | report          |
+| Repair rate                                                                                            |         0.140 |         0.185 | report          |
 | Unsupported claims persisted                                                                           |             0 |             0 | 0               |
-| Mean cost per trial                                                                                    |      $0.00712 |      $0.00721 | < $0.08         |
-| p95 latency                                                                                            |        16.9 s |        21.5 s | < 90 s          |
+| Mean cost per trial                                                                                    |      $0.00798 |      $0.00810 | < $0.08         |
+| p95 latency                                                                                            |        19.7 s |        33.5 s | < 90 s          |
 
 Model precision is lower than the baseline because the agent proposes valid
 extra fields and consistency candidates that the expected list does not name;
@@ -73,6 +75,15 @@ These were fixed before the final runs; they are the regression history:
 6. **Budget guard on an adversarial triage case** — the eval cap was $0.08;
    raised to $0.12 while keeping production at $0.25. The run failed closed,
    which is the intended behavior.
+7. **Combined-run regression** — collapsing analysis and triage into one call
+   initially dropped triage to 13/19 pass^3: the model skipped
+   `list_signals`/`get_duplicate_context` and omitted signal citations. Fixed
+   by restoring the full brief rules and mandated tool start in the combined
+   prompt; final runs are back to 19/19 and 9/9.
+
+The combined run costs slightly more on triage cases ($0.008 → $0.009 mean)
+because the same call now returns candidates plus a brief; extraction-only
+cases are unchanged.
 
 ## Caveats
 

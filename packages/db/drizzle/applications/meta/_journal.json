@@ -99,6 +99,13 @@
       "when": 1792952481967,
       "tag": "0014_famous_karnak",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1792992894298,
+      "tag": "0015_red_black_tarantula",
+      "breakpoints": true
     }
   ]
 }

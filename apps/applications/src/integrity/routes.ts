@@ -1,11 +1,10 @@
 // E2/EN-05 HTTP surface.
 //
-// Integrity routes are assigned-officer only; fraud routes are officer-gated at
-// the gateway and reviewer-granted for resolution/brief content. Every nested
-// id is scoped by application id. Responses are no-store; logs/audits carry
-// ids/codes/counts only.
+// Integrity routes are assigned-officer only; fraud routes use the same case
+// assignment (there is no separate reviewer user). Every nested id is scoped
+// by application id. Responses are no-store; logs/audits carry ids/codes/counts
+// only.
 
-import { randomUUID } from "node:crypto";
 import {
 	applications,
 	documentConsistencyCandidates,
@@ -27,7 +26,7 @@ import {
 	type ServiceApp,
 	type ServiceVariables,
 } from "@credit/service-kit";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import { z } from "zod";
@@ -39,19 +38,16 @@ import {
 	type IntegrityActor,
 } from "./access.js";
 import { analysisInputHash, createIntegrityRun, drainIntegrityRunsSafely } from "./runs.js";
-import { queueTriageForReview, reevaluateIntegrity } from "./evaluate.js";
+import { queueIntegrityRunForReview, reevaluateIntegrity } from "./evaluate.js";
 import {
-	assignFraudReview,
 	buildResolutionDraft,
 	createFraudReview,
 	explainDuplicate,
+	findActiveFraudReview,
 	getFraudReviewRow,
-	grantFraudReviewer,
 	canViewFraudReview,
-	isFraudReviewer,
 	listFraudQueue,
 	resolveFraudReview,
-	revokeFraudReviewer,
 	runFraudReviewRetention,
 } from "./fraud.js";
 import { countDuplicateDocuments, findDuplicateDocuments } from "./duplicates.js";
@@ -80,9 +76,6 @@ const flagSchema = z
 		severity: z.enum(["low", "medium", "high"]).optional(),
 	})
 	.strict();
-const assignSchema = z
-	.object({ assigneeUserId: z.uuid(), expectedVersion: z.number().int().min(1) })
-	.strict();
 const resolveSchema = z
 	.object({
 		status: z.enum(["cleared", "confirmed", "needs_info"]),
@@ -103,10 +96,6 @@ const duplicateExplainSchema = z
 		note: z.string().min(5).max(500),
 	})
 	.strict();
-const reviewerGrantSchema = z
-	.object({ userId: z.uuid(), action: z.enum(["grant", "revoke"]) })
-	.strict();
-
 function invalidBody(error: z.ZodError): HttpError {
 	return new HttpError(
 		400,
@@ -209,13 +198,13 @@ export function integrityRoutes(deps: IntegrityRouteDeps): ServiceApp {
 	app.use("/api/fraud-review/*", requireOfficer, sensitiveResponse);
 	app.use("/api/fraud-review", requireOfficer, sensitiveResponse);
 
-	async function queueTriageBestEffort(input: {
+	async function queueIntegrityBestEffort(input: {
 		applicationId: string;
 		actor: IntegrityActor;
-		review: Parameters<typeof queueTriageForReview>[1]["review"];
+		review: Parameters<typeof queueIntegrityRunForReview>[1]["review"];
 	}): Promise<void> {
 		try {
-			await queueTriageForReview(runDeps(deps), {
+			await queueIntegrityRunForReview(runDeps(deps), {
 				applicationId: input.applicationId,
 				review: input.review,
 				requestedBy: input.actor.id,
@@ -228,12 +217,12 @@ export function integrityRoutes(deps: IntegrityRouteDeps): ServiceApp {
 					: "unknown";
 			deps.logger.warn(
 				{ applicationId: input.applicationId, reviewId: input.review.id, errorCode },
-				"triage enqueue failed",
+				"integrity run enqueue failed",
 			);
 			await audit(deps, {
 				applicationId: input.applicationId,
 				actor: { id: deps.runtime.config.systemUserId, role: "service" },
-				action: "integrity.triage_enqueue_failed",
+				action: "integrity.run_enqueue_failed",
 				entity: "fraud_review",
 				payload: { reviewId: input.review.id, errorCode },
 			}).catch(() => {});
@@ -259,17 +248,24 @@ export function integrityRoutes(deps: IntegrityRouteDeps): ServiceApp {
 		const applicationId = c.req.param("id");
 		const actor = actorOf(c);
 		await loadCase(deps, applicationId, actor);
+		const review = await findActiveFraudReview(deps.db, applicationId);
+		const generateBrief = review !== null && config.triageEnabled;
 		const source = await loadIntegritySource(deps.db, applicationId, {
-			includeCustomerEvidence: false,
+			includeCustomerEvidence: generateBrief,
 			now: deps.runtime.now(),
 		});
-		const inputHash = analysisInputHash(source, config);
+		const inputHash = analysisInputHash(source, config, {
+			generateBrief,
+			reviewId: review?.id,
+		});
 		const { run, replayed } = await createIntegrityRun(runDeps(deps), {
 			applicationId,
-			feature: "document_analysis",
 			inputHash,
 			documentSha256: source.documents.map((doc) => doc.sha256).sort(),
 			requestedBy: actor.id,
+			generateBrief,
+			fraudReviewId: review?.id ?? null,
+			reviewVersion: review?.version ?? null,
 			now: deps.runtime.now(),
 		});
 		await audit(deps, {
@@ -438,7 +434,7 @@ export function integrityRoutes(deps: IntegrityRouteDeps): ServiceApp {
 				right: row.rightQuoteHash,
 			}),
 		});
-		await queueTriageBestEffort({ applicationId, actor, review });
+		await queueIntegrityBestEffort({ applicationId, actor, review });
 		await audit(deps, {
 			applicationId,
 			actor,
@@ -493,7 +489,7 @@ export function integrityRoutes(deps: IntegrityRouteDeps): ServiceApp {
 			documentRefs: documentFileIds,
 			sourceHash: hashCanonical({ reasonCode: parsed.data.reasonCode, documentFileIds }),
 		});
-		await queueTriageBestEffort({ applicationId, actor, review });
+		await queueIntegrityBestEffort({ applicationId, actor, review });
 		return c.json({ review: reviewSummary(review) });
 	});
 
@@ -525,27 +521,26 @@ export function integrityRoutes(deps: IntegrityRouteDeps): ServiceApp {
 		return c.json({ result: { ...result, signals: undefined } });
 	});
 
-	// --- Fraud review ---
+	// --- Fraud review (same assigned officer; no separate reviewer user) ---
 
 	app.get("/api/fraud-review/me", async (c) => {
 		if (!fraudEnabled(deps)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const actor = actorOf(c);
 		if (actor.role !== "officer") throw new HttpError(403, "FORBIDDEN", "officer role required");
-		const reviewer = await isFraudReviewer(deps.db, actor.id);
-		return c.json({ reviewer, canViewQueue: true });
+		return c.json({ canViewQueue: true });
 	});
 
 	app.get("/api/fraud-review/queue", async (c) => {
 		if (!fraudEnabled(deps)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const actor = actorOf(c);
-		const { reviewer } = await requireFraudOfficer(deps.db, actor);
+		await requireFraudOfficer(deps.db, actor);
 		const status = c.req.query("status") === "all" ? "all" : "active";
 		const items = await listFraudQueue(
 			deps.db,
 			{ id: actor.id, role: actor.role as "officer" },
 			status,
 		);
-		return c.json({ items, reviewer });
+		return c.json({ items });
 	});
 
 	app.get("/api/fraud-review/:id", async (c) => {
@@ -555,7 +550,7 @@ export function integrityRoutes(deps: IntegrityRouteDeps): ServiceApp {
 		const actor = actorOf(c);
 		const row = await getFraudReviewRow(deps.db, reviewId);
 		if (!row) throw new HttpError(404, "NOT_FOUND", "not found");
-		const access = await canViewFraudReview(deps.db, row, {
+		await canViewFraudReview(deps.db, row, {
 			id: actor.id,
 			role: actor.role as "officer",
 		});
@@ -564,19 +559,8 @@ export function integrityRoutes(deps: IntegrityRouteDeps): ServiceApp {
 			actor,
 			action: "fraud_review.viewed",
 			entity: "fraud_review",
-			payload: { reviewId: row.id, reviewer: access.reviewer },
+			payload: { reviewId: row.id },
 		});
-		if (!access.reviewer) {
-			return c.json({
-				review: {
-					...reviewSummary(row),
-					applicationId: row.applicationId,
-					reasonCode: row.reasonCode,
-					briefAvailable: row.briefArtifactId !== null,
-					briefStale: row.briefStaleAt !== null,
-				},
-			});
-		}
 		const brief =
 			row.briefArtifactId && row.briefStaleAt === null
 				? await getBriefForReview(deps, row.briefArtifactId, row.applicationId)
@@ -586,7 +570,32 @@ export function integrityRoutes(deps: IntegrityRouteDeps): ServiceApp {
 			.from(applications)
 			.where(eq(applications.id, row.applicationId))
 			.limit(1);
+		const [latestRun] = await deps.db
+			.select({
+				status: documentIntegrityRuns.status,
+				errorCode: documentIntegrityRuns.errorCode,
+			})
+			.from(documentIntegrityRuns)
+			.where(
+				and(
+					eq(documentIntegrityRuns.applicationId, row.applicationId),
+					eq(documentIntegrityRuns.feature, "document_analysis"),
+				),
+			)
+			.orderBy(desc(documentIntegrityRuns.createdAt))
+			.limit(1);
 		const briefVisible = consentApp?.consent === true;
+		const briefUnavailable = !briefVisible
+			? "consent_withdrawn"
+			: row.briefStaleAt !== null
+				? "stale"
+				: row.briefArtifactId === null
+					? latestRun?.status === "queued" || latestRun?.status === "running"
+						? "pending"
+						: latestRun?.status === "failed"
+							? "failed"
+							: "missing"
+					: null;
 		return c.json({
 			review: {
 				...reviewSummary(row),
@@ -596,13 +605,9 @@ export function integrityRoutes(deps: IntegrityRouteDeps): ServiceApp {
 				documentRefs: row.documentRefs,
 				briefArtifactId: row.briefArtifactId,
 				briefStale: row.briefStaleAt !== null,
-				briefUnavailable: briefVisible
-					? row.briefStaleAt !== null
-						? "stale"
-						: row.briefArtifactId === null
-							? "missing"
-							: null
-					: "consent_withdrawn",
+				briefAvailable: row.briefArtifactId !== null && row.briefStaleAt === null,
+				briefUnavailable,
+				briefState: latestRun?.status ?? (row.briefArtifactId ? "succeeded" : "missing"),
 				agentRunId: row.agentRunId,
 				model: row.model,
 				promptVersion: row.promptVersion,
@@ -615,23 +620,24 @@ export function integrityRoutes(deps: IntegrityRouteDeps): ServiceApp {
 		});
 	});
 
-	app.patch("/api/fraud-review/:id/assign", async (c) => {
+	app.post("/api/fraud-review/:id/retry-brief", async (c) => {
 		if (!fraudEnabled(deps)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const reviewId = c.req.param("id");
 		if (!isUuid(reviewId)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const actor = actorOf(c);
-		const { reviewer } = await requireFraudOfficer(deps.db, actor);
-		if (!reviewer) throw new HttpError(403, "REVIEWER_REQUIRED", "fraud reviewer required");
-		const parsed = assignSchema.safeParse(await readJson(c));
-		if (!parsed.success) throw invalidBody(parsed.error);
-		const updated = await assignFraudReview(deps.db, {
-			reviewId,
-			assigneeUserId: parsed.data.assigneeUserId,
-			actor: { id: actor.id, role: "officer" },
-			expectedVersion: parsed.data.expectedVersion,
+		const row = await getFraudReviewRow(deps.db, reviewId);
+		if (!row) throw new HttpError(404, "NOT_FOUND", "not found");
+		await canViewFraudReview(deps.db, row, {
+			id: actor.id,
+			role: actor.role as "officer",
+		});
+		await queueIntegrityRunForReview(runDeps(deps), {
+			applicationId: row.applicationId,
+			review: row,
+			requestedBy: actor.id,
 			now: deps.runtime.now(),
 		});
-		return c.json({ review: reviewSummary(updated) });
+		return c.json({ ok: true });
 	});
 
 	app.post("/api/fraud-review/:id/resolve", async (c) => {
@@ -639,8 +645,13 @@ export function integrityRoutes(deps: IntegrityRouteDeps): ServiceApp {
 		const reviewId = c.req.param("id");
 		if (!isUuid(reviewId)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const actor = actorOf(c);
-		const { reviewer } = await requireFraudOfficer(deps.db, actor);
-		if (!reviewer) throw new HttpError(403, "REVIEWER_REQUIRED", "fraud reviewer required");
+		await requireFraudOfficer(deps.db, actor);
+		const row = await getFraudReviewRow(deps.db, reviewId);
+		if (!row) throw new HttpError(404, "NOT_FOUND", "not found");
+		await canViewFraudReview(deps.db, row, {
+			id: actor.id,
+			role: actor.role as "officer",
+		});
 		const parsed = resolveSchema.safeParse(await readJson(c));
 		if (!parsed.success) throw invalidBody(parsed.error);
 		const updated = await resolveFraudReview(deps.db, {
@@ -662,8 +673,13 @@ export function integrityRoutes(deps: IntegrityRouteDeps): ServiceApp {
 		const reviewId = c.req.param("id");
 		if (!isUuid(reviewId)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const actor = actorOf(c);
-		const { reviewer } = await requireFraudOfficer(deps.db, actor);
-		if (!reviewer) throw new HttpError(403, "REVIEWER_REQUIRED", "fraud reviewer required");
+		await requireFraudOfficer(deps.db, actor);
+		const row = await getFraudReviewRow(deps.db, reviewId);
+		if (!row) throw new HttpError(404, "NOT_FOUND", "not found");
+		await canViewFraudReview(deps.db, row, {
+			id: actor.id,
+			role: actor.role as "officer",
+		});
 		const draft = await buildResolutionDraft(deps.db, {
 			reviewId,
 			actor: { id: actor.id, role: "officer" },
@@ -674,28 +690,22 @@ export function integrityRoutes(deps: IntegrityRouteDeps): ServiceApp {
 	app.post("/api/fraud-review/duplicates/lookup", async (c) => {
 		if (!fraudEnabled(deps)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const actor = actorOf(c);
-		const { reviewer } = await requireFraudOfficer(deps.db, actor);
-		if (!reviewer) throw new HttpError(403, "REVIEWER_REQUIRED", "fraud reviewer required");
+		await requireFraudOfficer(deps.db, actor);
 		const parsed = duplicateLookupSchema.safeParse(await readJson(c));
 		if (!parsed.success) throw invalidBody(parsed.error);
-		const rows = await findDuplicateDocuments(deps.db, parsed.data.sha256);
-		let counts = null;
-		if (parsed.data.applicationId) {
-			const [application] = await deps.db
-				.select()
-				.from(applications)
-				.where(eq(applications.id, parsed.data.applicationId))
-				.limit(1);
-			if (!application) throw new HttpError(404, "NOT_FOUND", "not found");
-			counts = await countDuplicateDocuments(
-				deps.db,
-				parsed.data.sha256,
-				application.id,
-				application.applicantUserId,
-			);
+		if (!parsed.data.applicationId) {
+			throw new HttpError(422, "APPLICATION_REQUIRED", "applicationId is required");
 		}
+		const application = await loadCase(deps, parsed.data.applicationId, actor);
+		const rows = await findDuplicateDocuments(deps.db, parsed.data.sha256);
+		const counts = await countDuplicateDocuments(
+			deps.db,
+			parsed.data.sha256,
+			application.id,
+			application.applicantUserId,
+		);
 		await audit(deps, {
-			applicationId: parsed.data.applicationId ?? rows[0]?.applicationId ?? null,
+			applicationId: parsed.data.applicationId,
 			actor,
 			action: "fraud.duplicate_lookup",
 			entity: "document_files",
@@ -722,10 +732,10 @@ export function integrityRoutes(deps: IntegrityRouteDeps): ServiceApp {
 	app.post("/api/fraud-review/duplicates/explain", async (c) => {
 		if (!fraudEnabled(deps)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const actor = actorOf(c);
-		const { reviewer } = await requireFraudOfficer(deps.db, actor);
-		if (!reviewer) throw new HttpError(403, "REVIEWER_REQUIRED", "fraud reviewer required");
+		await requireFraudOfficer(deps.db, actor);
 		const parsed = duplicateExplainSchema.safeParse(await readJson(c));
 		if (!parsed.success) throw invalidBody(parsed.error);
+		await loadCase(deps, parsed.data.applicationId, actor);
 		await explainDuplicate(deps.db, {
 			sha256: parsed.data.sha256,
 			applicationId: parsed.data.applicationId,
@@ -738,25 +748,6 @@ export function integrityRoutes(deps: IntegrityRouteDeps): ServiceApp {
 	});
 
 	// --- Service-only admin ---
-
-	app.post("/internal/fraud-review/reviewers", requireService, async (c) => {
-		const parsed = reviewerGrantSchema.safeParse(await readJson(c));
-		if (!parsed.success) throw invalidBody(parsed.error);
-		if (parsed.data.action === "grant") {
-			await grantFraudReviewer(deps.db, {
-				userId: parsed.data.userId,
-				grantedBy: c.var.user.id,
-				now: deps.runtime.now(),
-			});
-		} else {
-			await revokeFraudReviewer(deps.db, {
-				userId: parsed.data.userId,
-				revokedBy: c.var.user.id,
-				now: deps.runtime.now(),
-			});
-		}
-		return c.json({ ok: true });
-	});
 
 	app.post("/internal/fraud-review/retention/run", requireService, async (c) => {
 		const result = await runFraudReviewRetention(deps.db, { now: deps.runtime.now() });
@@ -815,4 +806,3 @@ async function getBriefForReview(
 }
 
 // `randomUUID` is reserved for future run idempotency keys; no side effects.
-void randomUUID;

@@ -1,9 +1,9 @@
-// EN-05 fraud-review routing + US-INT-4/5 reviewer actions.
+// EN-05 fraud-review routing + US-INT-4/5 officer actions.
 //
 // A single row is both the case-level document-integrity flag and the review
 // item. Creation takes the per-application advisory lock; the partial unique
-// index keeps one active item. Resolution is reviewer-only and never touches
-// the application status, score, terms, or decision.
+// index keeps one active item. Resolution is by the assigned officer and never
+// touches the application status, score, terms, or decision.
 
 import {
 	applications,
@@ -11,9 +11,9 @@ import {
 	customerProfiles,
 	documentDuplicateExplanations,
 	documentFiles,
+	documentIntegrityRuns,
 	documentLegalHolds,
 	fraudReviews,
-	fraudReviewerGrants,
 	withTx,
 	type Db,
 } from "@credit/db/applications";
@@ -47,21 +47,6 @@ export interface CreateFraudReviewInput {
 	retentionDays: number;
 	customerProfileId?: string | null;
 	now?: Date;
-}
-
-export async function isFraudReviewer(db: Db, userId: string): Promise<boolean> {
-	const rows = await db
-		.select({ id: fraudReviewerGrants.id })
-		.from(fraudReviewerGrants)
-		.where(and(eq(fraudReviewerGrants.userId, userId), isNull(fraudReviewerGrants.revokedAt)))
-		.limit(1);
-	return rows.length > 0;
-}
-
-async function requireReviewer(db: Db, userId: string): Promise<void> {
-	if (!(await isFraudReviewer(db, userId))) {
-		throw new HttpError(403, "REVIEWER_REQUIRED", "fraud reviewer authorisation required");
-	}
 }
 
 async function lockCustomer(
@@ -206,6 +191,7 @@ export interface FraudQueueItem {
 	reasonCode: string;
 	briefAvailable: boolean;
 	briefStale: boolean;
+	briefState: "ready" | "stale" | "pending" | "failed" | "missing";
 	createdAt: string;
 	updatedAt: string;
 	version: number;
@@ -216,19 +202,15 @@ export async function listFraudQueue(
 	actor: FraudReviewActor,
 	status: "active" | "all" = "active",
 ): Promise<FraudQueueItem[]> {
-	const reviewer = actor.role === "service" || (await isFraudReviewer(db, actor.id));
-	const conditions = [];
+	const conditions = [
+		sql`EXISTS (
+			SELECT 1 FROM case_access_grants g
+			WHERE g.application_id = ${fraudReviews.applicationId}
+				AND g.user_id = ${actor.id}
+				AND g.revoked_at IS NULL
+		)`,
+	];
 	if (status === "active") conditions.push(inArray(fraudReviews.status, [...ACTIVE]));
-	if (!reviewer) {
-		conditions.push(
-			sql`EXISTS (
-				SELECT 1 FROM case_access_grants g
-				WHERE g.application_id = ${fraudReviews.applicationId}
-					AND g.user_id = ${actor.id}
-					AND g.revoked_at IS NULL
-			)`,
-		);
-	}
 	const rows = await db
 		.select({
 			id: fraudReviews.id,
@@ -239,37 +221,62 @@ export async function listFraudQueue(
 			reasonCode: fraudReviews.reasonCode,
 			briefArtifactId: fraudReviews.briefArtifactId,
 			briefStaleAt: fraudReviews.briefStaleAt,
+			agentRunId: fraudReviews.agentRunId,
 			createdAt: fraudReviews.createdAt,
 			updatedAt: fraudReviews.updatedAt,
 			version: fraudReviews.version,
 		})
 		.from(fraudReviews)
 		.innerJoin(applications, eq(applications.id, fraudReviews.applicationId))
-		.where(conditions.length > 0 ? and(...conditions) : undefined)
+		.where(and(...conditions))
 		.orderBy(desc(fraudReviews.createdAt))
 		.limit(100);
-	return rows.map((row) => ({
-		id: row.id,
-		applicationId: row.applicationId,
-		applicationReference: row.applicationReference,
-		status: row.status,
-		severity: row.severity,
-		reasonCode: row.reasonCode,
-		briefAvailable: row.briefArtifactId !== null,
-		briefStale: row.briefStaleAt !== null,
-		createdAt: row.createdAt.toISOString(),
-		updatedAt: row.updatedAt.toISOString(),
-		version: row.version,
-	}));
+	const runIds = rows.map((row) => row.agentRunId).filter((id): id is string => id !== null);
+	const runs =
+		runIds.length === 0
+			? []
+			: await db
+					.select({
+						id: documentIntegrityRuns.id,
+						status: documentIntegrityRuns.status,
+					})
+					.from(documentIntegrityRuns)
+					.where(inArray(documentIntegrityRuns.id, runIds));
+	const runStatus = new Map(runs.map((run) => [run.id, run.status]));
+	return rows.map((row) => {
+		const status = row.agentRunId ? runStatus.get(row.agentRunId) : undefined;
+		const briefState =
+			row.briefStaleAt !== null
+				? "stale"
+				: row.briefArtifactId !== null
+					? "ready"
+					: status === "queued" || status === "running"
+						? "pending"
+						: status === "failed"
+							? "failed"
+							: "missing";
+		return {
+			id: row.id,
+			applicationId: row.applicationId,
+			applicationReference: row.applicationReference,
+			status: row.status,
+			severity: row.severity,
+			reasonCode: row.reasonCode,
+			briefAvailable: row.briefArtifactId !== null,
+			briefStale: row.briefStaleAt !== null,
+			briefState,
+			createdAt: row.createdAt.toISOString(),
+			updatedAt: row.updatedAt.toISOString(),
+			version: row.version,
+		};
+	});
 }
 
 export async function canViewFraudReview(
 	db: Db,
 	row: FraudReviewRow,
 	actor: FraudReviewActor,
-): Promise<{ reviewer: boolean; assigned: boolean }> {
-	const reviewer = actor.role === "service" || (await isFraudReviewer(db, actor.id));
-	if (reviewer) return { reviewer: true, assigned: false };
+): Promise<{ assigned: true }> {
 	const grants = await db
 		.select({ id: caseAccessGrants.id })
 		.from(caseAccessGrants)
@@ -282,97 +289,7 @@ export async function canViewFraudReview(
 		)
 		.limit(1);
 	if (grants.length === 0) throw new HttpError(404, "NOT_FOUND", "not found");
-	return { reviewer: false, assigned: true };
-}
-
-export async function grantFraudReviewer(
-	db: Db,
-	input: { userId: string; grantedBy: string; now?: Date },
-): Promise<void> {
-	const now = input.now ?? new Date();
-	await withTx(db, async (tx) => {
-		await tx
-			.insert(fraudReviewerGrants)
-			.values({ userId: input.userId, grantedBy: input.grantedBy, grantedAt: now })
-			.onConflictDoNothing();
-		await writeAudit(tx, {
-			actor: input.grantedBy,
-			action: "fraud_review.reviewer_granted",
-			entity: "fraud_reviewer_grant",
-			payload: { feature: "fraud_review", subjectUserId: input.userId },
-		});
-	});
-}
-
-export async function revokeFraudReviewer(
-	db: Db,
-	input: { userId: string; revokedBy: string; now?: Date },
-): Promise<void> {
-	const now = input.now ?? new Date();
-	await withTx(db, async (tx) => {
-		await tx
-			.update(fraudReviewerGrants)
-			.set({ revokedAt: now })
-			.where(
-				and(eq(fraudReviewerGrants.userId, input.userId), isNull(fraudReviewerGrants.revokedAt)),
-			);
-		await writeAudit(tx, {
-			actor: input.revokedBy,
-			action: "fraud_review.reviewer_revoked",
-			entity: "fraud_reviewer_grant",
-			payload: { feature: "fraud_review", subjectUserId: input.userId },
-		});
-	});
-}
-
-export async function assignFraudReview(
-	db: Db,
-	input: {
-		reviewId: string;
-		assigneeUserId: string;
-		actor: FraudReviewActor;
-		expectedVersion: number;
-		now?: Date;
-	},
-): Promise<FraudReviewRow> {
-	await requireReviewer(db, input.actor.id);
-	if (!(await isFraudReviewer(db, input.assigneeUserId))) {
-		throw new HttpError(422, "REVIEWER_REQUIRED", "assignee is not a fraud reviewer");
-	}
-	const now = input.now ?? new Date();
-	return withTx(db, async (tx) => {
-		const [row] = await tx
-			.select()
-			.from(fraudReviews)
-			.where(eq(fraudReviews.id, input.reviewId))
-			.limit(1)
-			.for("update");
-		if (!row) throw new HttpError(404, "NOT_FOUND", "not found");
-		if (!ACTIVE.includes(row.status as "open" | "needs_info")) {
-			throw new HttpError(409, "REVIEW_NOT_ACTIVE", "review is not active");
-		}
-		if (row.version !== input.expectedVersion) {
-			throw new HttpError(409, "VERSION_CONFLICT", "review changed; reload and retry");
-		}
-		const [updated] = await tx
-			.update(fraudReviews)
-			.set({ assigneeUserId: input.assigneeUserId, version: row.version + 1, updatedAt: now })
-			.where(eq(fraudReviews.id, row.id))
-			.returning();
-		await writeAudit(tx, {
-			applicationId: row.applicationId,
-			actor: input.actor.id,
-			action: "fraud_review.assigned",
-			entity: "fraud_review",
-			payload: {
-				feature: "fraud_review",
-				actorRole: input.actor.role,
-				reviewId: row.id,
-				assigneeUserId: input.assigneeUserId,
-			},
-		});
-		return updated;
-	});
+	return { assigned: true };
 }
 
 export async function resolveFraudReview(
@@ -386,7 +303,6 @@ export async function resolveFraudReview(
 		now?: Date;
 	},
 ): Promise<FraudReviewRow> {
-	await requireReviewer(db, input.actor.id);
 	const note = input.note.trim();
 	if (note.length < 10 || note.length > 2_000) {
 		throw new HttpError(400, "VALIDATION_ERROR", "resolution note must be 10-2000 characters");
@@ -449,7 +365,6 @@ export async function explainDuplicate(
 		now?: Date;
 	},
 ): Promise<void> {
-	await requireReviewer(db, input.actor.id);
 	const note = input.note.trim();
 	if (note.length < 5 || note.length > 500) {
 		throw new HttpError(400, "VALIDATION_ERROR", "note must be 5-500 characters");
@@ -507,7 +422,6 @@ export async function buildResolutionDraft(
 	db: Db,
 	input: { reviewId: string; actor: FraudReviewActor },
 ): Promise<{ note: string; citations: Array<{ ref: string; quote: string }> }> {
-	await requireReviewer(db, input.actor.id);
 	const row = await getFraudReviewRow(db, input.reviewId);
 	if (!row) throw new HttpError(404, "NOT_FOUND", "not found");
 	const [consentRow] = await db

@@ -25,8 +25,9 @@ import {
 	type IntegrityAgentMode,
 	type IntegrityAgentRunner,
 	type IntegrityAnalysisOutput,
-	type IntegrityBriefOutput,
 	type IntegrityBriefCitationToken,
+	type IntegrityBriefOutput,
+	type IntegrityBriefResult,
 	type IntegrityConfig,
 	type IntegrityConsistencyProposal,
 	type IntegritySource,
@@ -59,6 +60,8 @@ export interface AnalysisOutcome extends IntegrityAgentOutcomeBase {
 	droppedClaims: number;
 	evidenceHash: string;
 	trace: MemoAgentTrace;
+	/** Present only when the run was for a flagged case. */
+	brief: IntegrityBriefResult | null;
 }
 
 export interface TriageOutcome extends IntegrityAgentOutcomeBase {
@@ -163,6 +166,7 @@ async function runLoop<T>(
 		issues: Array<{ code: string; path: string }>;
 	},
 	signal?: AbortSignal,
+	generateBrief = false,
 ): Promise<AgentLoopResult & { value: T }> {
 	const startedAt = Date.now();
 	const timeout = AbortSignal.timeout(config.timeoutMs);
@@ -177,6 +181,7 @@ async function runLoop<T>(
 	}> => {
 		const raw = await runner.run({
 			mode,
+			generateBrief,
 			source,
 			maxTurns: config.maxSteps,
 			repair:
@@ -295,6 +300,8 @@ const analysisOutputSchema = z
 	.object({
 		candidates: z.array(candidateProposalSchema).max(100),
 		consistency: z.array(consistencyProposalSchema).max(50),
+		/** Present only when the case is flagged and a brief is requested. */
+		brief: z.unknown().optional(),
 	})
 	.strict();
 
@@ -311,12 +318,14 @@ function validateAnalysis(
 	parsed: unknown,
 	source: IntegritySource,
 	now: Date,
+	options: { generateBrief: boolean; forbiddenValues?: string[] },
 ): {
 	ok: boolean;
 	value?: {
 		candidates: ValidatedCandidate[];
 		consistency: ValidatedConsistency[];
 		dropped: number;
+		brief: IntegrityBriefResult | null;
 	};
 	issues: Array<{ code: string; path: string }>;
 } {
@@ -420,8 +429,22 @@ function validateAnalysis(
 		consistency.push(validated);
 	}
 
+	let brief: IntegrityBriefResult | null = null;
+	if (options.generateBrief) {
+		if (input.brief === undefined) {
+			issues.push({ code: "SCHEMA_INVALID", path: "brief" });
+		} else {
+			const validated = validateTriage(input.brief, source, options.forbiddenValues ?? []);
+			if (!validated.ok || !validated.value) {
+				issues.push(...validated.issues);
+			} else {
+				brief = validated.value;
+			}
+		}
+	}
+
 	const ok = dropped === 0 || candidates.length + consistency.length > 0;
-	return { ok, value: { candidates, consistency, dropped }, issues };
+	return { ok, value: { candidates, consistency, dropped, brief }, issues };
 }
 
 export async function runIntegrityAnalysis(input: {
@@ -431,18 +454,27 @@ export async function runIntegrityAnalysis(input: {
 	evidenceHash?: string;
 	signal?: AbortSignal;
 	now?: Date;
+	generateBrief?: boolean;
+	forbiddenValues?: string[];
 }): Promise<AnalysisOutcome> {
+	const generateBrief = input.generateBrief === true;
 	const loop = await runLoop<{
 		candidates: ValidatedCandidate[];
 		consistency: ValidatedConsistency[];
 		dropped: number;
+		brief: IntegrityBriefResult | null;
 	}>(
 		"analysis",
 		input.source,
 		input.runner,
 		input.config,
-		(parsed) => validateAnalysis(parsed, input.source, input.now ?? new Date()),
+		(parsed) =>
+			validateAnalysis(parsed, input.source, input.now ?? new Date(), {
+				generateBrief,
+				forbiddenValues: input.forbiddenValues,
+			}),
 		input.signal,
+		generateBrief,
 	);
 	const value = loop.value;
 	const issues = loop.issues;
@@ -464,6 +496,7 @@ export async function runIntegrityAnalysis(input: {
 		issues,
 		...value,
 		droppedClaims: value.dropped,
+		brief: value.brief,
 		evidenceHash,
 		trace: buildTrace({
 			mode: "analysis",
@@ -837,38 +870,32 @@ export async function runIntegrityTriage(input: {
 	forbiddenValues?: string[];
 	signal?: AbortSignal;
 }): Promise<TriageOutcome> {
-	const loop = await runLoop<{
-		content: DocumentIntegrityBriefContent;
-		citations: CitationRecord[];
-		evidence: EvidenceBundle;
-	}>(
-		"triage",
-		input.source,
-		input.runner,
-		input.config,
-		(parsed) => validateTriage(parsed, input.source, input.forbiddenValues ?? []),
-		input.signal,
-	);
-	return {
-		rawOutput: loop.result.rawOutput,
-		toolCalls: loop.result.toolCalls,
-		sourceRefs: loop.result.sourceRefs,
-		steps: loop.result.steps,
-		usage: loop.result.usage,
-		repairAttempted: loop.repairAttempted,
-		repairSucceeded: loop.repairSucceeded,
-		latencyMs: loop.latencyMs,
-		issues: loop.issues,
-		...loop.value,
+	// Thin compatibility wrapper for the eval harness/tests: one combined
+	// agent call, brief required. Production uses runIntegrityAnalysis directly.
+	const outcome = await runIntegrityAnalysis({
+		source: input.source,
+		runner: input.runner,
+		config: input.config,
 		evidenceHash: input.evidenceHash,
-		trace: buildTrace({
-			mode: "triage",
-			config: input.config,
-			result: loop.result,
-			repairAttempted: loop.repairAttempted,
-			repairSucceeded: loop.repairSucceeded,
-			evidenceHash: input.evidenceHash,
-			latencyMs: loop.latencyMs,
-		}),
+		forbiddenValues: input.forbiddenValues,
+		signal: input.signal,
+		generateBrief: true,
+	});
+	if (!outcome.brief) {
+		throw new IntegrityAgentError("INVALID_OUTPUT", [{ code: "SCHEMA_INVALID", path: "brief" }]);
+	}
+	return {
+		rawOutput: outcome.rawOutput,
+		toolCalls: outcome.toolCalls,
+		sourceRefs: outcome.sourceRefs,
+		steps: outcome.steps,
+		usage: outcome.usage,
+		repairAttempted: outcome.repairAttempted,
+		repairSucceeded: outcome.repairSucceeded,
+		latencyMs: outcome.latencyMs,
+		issues: outcome.issues,
+		...outcome.brief,
+		evidenceHash: outcome.evidenceHash,
+		trace: outcome.trace,
 	};
 }

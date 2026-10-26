@@ -2,7 +2,7 @@
 //
 // Two surfaces, deliberately split:
 // - countDuplicateDocuments: officer/system counts, no other-application refs.
-// - findDuplicateDocuments: reviewer-only rows with internal application refs.
+// - findDuplicateDocuments: assigned-officer rows with internal application refs.
 // Neither returns applicant names, emails, or document text.
 
 import {

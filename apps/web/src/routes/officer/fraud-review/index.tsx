@@ -1,5 +1,5 @@
 // EN-05 fraud-review queue (officer-only): open reviews with brief state,
-// plus a reviewer-only duplicate-hash lookup with per-case explanations.
+// plus a case-scoped duplicate-hash lookup with per-case explanations.
 // Hides itself while the flag is off (404); applicant access is blocked by
 // RequireAuth. Nothing case-derived reaches console, logs, or URLs.
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -32,8 +32,8 @@ function clean(value: string): string {
 function friendlyMessage(err: unknown): string {
 	if (err instanceof ApiError) {
 		switch (err.code) {
-			case "REVIEWER_REQUIRED":
-				return "Fraud reviewer access is required for that action.";
+			case "APPLICATION_REQUIRED":
+				return "Enter the application id for the case being reviewed.";
 			default:
 				break;
 		}
@@ -59,9 +59,10 @@ function DuplicateLookup() {
 		setError("");
 		setExplained(false);
 		try {
-			const res = await lookupDuplicateDocuments(
-				appId === "" ? { sha256: sha256.trim() } : { sha256: sha256.trim(), applicationId: appId },
-			);
+			const res = await lookupDuplicateDocuments({
+				sha256: sha256.trim(),
+				applicationId: appId,
+			});
 			setResult(res);
 		} catch (err) {
 			setResult(null);
@@ -115,7 +116,7 @@ function DuplicateLookup() {
 				</div>
 				<div>
 					<label htmlFor="dup-app" className="mb-1 block text-sm font-medium text-gray-700">
-						Application id (optional, adds counts)
+						Application id (required for case-scoped counts)
 					</label>
 					<input
 						id="dup-app"
@@ -135,7 +136,7 @@ function DuplicateLookup() {
 			<button
 				type="button"
 				onClick={() => void lookup()}
-				disabled={busy || !shaValid}
+				disabled={busy || !shaValid || appId === ""}
 				className="mt-3 rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
 			>
 				{busy ? "Looking up…" : "Look up hash"}
@@ -189,7 +190,7 @@ function DuplicateLookup() {
 					<div className="mt-3 rounded border border-gray-200 p-3">
 						<h3 className="text-sm font-semibold">Attach explanation</h3>
 						<p className="mt-0.5 text-xs text-gray-500">
-							Records a reviewer note against this hash for the application below.
+							Records a note against this hash for the application below.
 						</p>
 						<label htmlFor="dup-note" className="mt-2 mb-1 block text-sm font-medium text-gray-700">
 							Note (≥5 characters)
@@ -296,18 +297,19 @@ function FraudQueue() {
 										{clean(item.reasonCode)}
 									</td>
 									<td className="px-3 py-2 text-xs text-gray-600">
-										{item.briefAvailable ? (
-											<>
-												available
-												{item.briefStale && (
-													<span className="ml-1 rounded bg-amber-100 px-1.5 py-0.5 text-amber-800">
-														stale
-													</span>
-												)}
-											</>
-										) : (
-											"—"
-										)}
+										<span
+											className={
+												item.briefState === "ready"
+													? "rounded bg-green-100 px-1.5 py-0.5 text-green-800"
+													: item.briefState === "pending"
+														? "rounded bg-blue-100 px-1.5 py-0.5 text-blue-800"
+														: item.briefState === "failed"
+															? "rounded bg-red-100 px-1.5 py-0.5 text-red-800"
+															: "rounded bg-amber-100 px-1.5 py-0.5 text-amber-800"
+											}
+										>
+											{item.briefState}
+										</span>
 									</td>
 									<td className="px-3 py-2 tabular-nums">{formatDateTime(item.updatedAt)}</td>
 								</tr>
@@ -316,7 +318,7 @@ function FraudQueue() {
 					</table>
 				</div>
 			)}
-			{queue.data?.reviewer === true && <DuplicateLookup />}
+			<DuplicateLookup />
 		</Page>
 	);
 }

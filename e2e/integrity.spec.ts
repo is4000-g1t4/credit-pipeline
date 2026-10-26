@@ -3,14 +3,12 @@
 // On-path (DOCUMENT_INTEGRITY_ENABLED + FRAUD_REVIEW_ENABLED): applicant
 // grants consent and uploads the text fixture; the officer claims, runs
 // cross-check, and the deterministic mismatch opens a fraud-review item.
-// Queue/item/signals/brief are asserted through the officer UI; resolution
-// is reviewer-grant gated, so when officer@example.com is not a seeded
-// reviewer only the resolve step is skipped — after the queue/item
-// assertions have passed.
+// Queue/item/signals are asserted through the officer UI; the assigned
+// officer can resolve the item (there is no separate reviewer grant).
 //
 // Requires the document stack (see documents.spec.ts) plus the integrity
-// flags; DOCUMENT_INTEGRITY_AGENT_ENABLED=false in e2e, so no triage brief
-// is produced and an unresolved item stays open.
+// flags; DOCUMENT_INTEGRITY_AGENT_ENABLED=false in e2e, so no brief is
+// produced and an unresolved item stays open.
 import { expect, test } from "@playwright/test";
 import dotenv from "dotenv";
 import { readFileSync } from "node:fs";
@@ -201,9 +199,8 @@ test("integrity flags open a fraud-review item; resolution leaves the case untou
 	expect(detail.review.briefAvailable ?? detail.review.briefArtifactId ?? null).toBeFalsy();
 	expect(detail.review.brief ?? null).toBeNull();
 
-	const me = await officer.get<{ reviewer: boolean; canViewQueue: boolean }>(
-		"/api/fraud-review/me",
-	);
+	const me = await officer.get<{ canViewQueue: boolean }>("/api/fraud-review/me");
+	expect(me.canViewQueue).toBe(true);
 
 	// Re-read the case page so the integrity panel refetches: fingerprint
 	// copy, case signals, and the open-review banner.
@@ -223,21 +220,7 @@ test("integrity flags open a fraud-review item; resolution leaves the case untou
 	await row.click();
 	await page.waitForURL(/\/officer\/fraud-review\/.+/);
 
-	if (!me.reviewer) {
-		// Resolve is reviewer-grant gated: skip only that step. The
-		// queue/item assertions above have already passed; the UI shows the
-		// minimal status view and the item stays open with no brief.
-		await expect(page.getByText("not available").first()).toBeVisible({ timeout: 60_000 });
-		await expect(page.getByRole("heading", { name: "Resolve" })).toHaveCount(0);
-		expect(detail.review.status).toBe("open");
-		test.skip(
-			true,
-			"officer@example.com is not a seeded fraud reviewer — resolve step skipped; " +
-				"queue/item assertions above still hold and the item stays open",
-		);
-	}
-
-	// Reviewer path: deterministic signals render as codes; the UI must
+	// The assigned officer sees deterministic signals as codes; the UI must
 	// never state or imply confirmed fraud ("signal, not proof").
 	await expect(page.getByRole("heading", { name: "Signals" })).toBeVisible({
 		timeout: 60_000,

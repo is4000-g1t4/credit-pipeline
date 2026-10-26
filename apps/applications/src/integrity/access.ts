@@ -1,12 +1,10 @@
-// E2 access gates. Integrity is assigned-officer only (never the applicant
-// owner path); fraud review is reviewer-grant or assigned-officer, with brief
-// content reviewer-only. Missing/stranger cases 404 (non-leaking); applicants
-// get 403 before any existence check.
+// E2 access gates. Integrity is assigned-officer only; the fraud review uses
+// the same case assignment (there is no separate reviewer user). Missing or
+// stranger cases 404; applicants get 403 before any existence check.
 
 import { and, eq, isNull } from "drizzle-orm";
 import { applications, caseAccessGrants, type Db } from "@credit/db/applications";
 import { HttpError, type ServiceVariables } from "@credit/service-kit";
-import { isFraudReviewer } from "./fraud.js";
 
 export interface IntegrityActor {
 	id: string;
@@ -55,10 +53,11 @@ export async function requireFraudOfficer(
 	db: Db,
 	actor: IntegrityActor,
 ): Promise<{ reviewer: boolean }> {
+	void db;
 	if (actor.role !== "officer" && actor.role !== "service") {
 		throw new HttpError(403, "FORBIDDEN", "officer role required");
 	}
-	return { reviewer: actor.role === "service" || (await isFraudReviewer(db, actor.id)) };
+	return { reviewer: actor.role === "officer" || actor.role === "service" };
 }
 
 export function actorOf(c: { var: ServiceVariables }): IntegrityActor {

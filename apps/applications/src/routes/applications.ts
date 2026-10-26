@@ -421,7 +421,7 @@ export function applicationsRoutes(deps: ApplicationsRouteDeps): ServiceApp {
 							sql`CAST(${documentFiles.status} AS text) != 'deleted'`,
 						),
 					);
-				// A withdrawn consent invalidates reviewer-facing evidence too:
+				// A withdrawn consent invalidates officer-facing evidence too:
 				// the brief is stale (and the fraud route withholds it).
 				await tx
 					.update(fraudReviews)

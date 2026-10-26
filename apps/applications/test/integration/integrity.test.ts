@@ -1,8 +1,8 @@
 // E2/EN-05 integration (real Postgres, fake OCR/scanner/agent).
 //
 // Covers fingerprint persistence, panel access, async analysis + candidate
-// confirmation, manual flag + async triage brief, reviewer resolution,
-// cross-application duplicate lookup, and no decision mutation.
+// confirmation, manual flag + combined extraction/brief run, assigned-officer
+// resolution, cross-application duplicate lookup, and no decision mutation.
 
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -14,7 +14,6 @@ import {
 	documentFiles,
 	documentFingerprints,
 	documentIntegrityRuns,
-	fraudReviewerGrants,
 	fraudReviews,
 	generatedArtifacts,
 } from "@credit/db/applications";
@@ -78,7 +77,7 @@ let calls: string[] = [];
 function fakeRunner(): IntegrityAgentRunner {
 	return {
 		async run(input) {
-			calls.push(input.mode);
+			calls.push(input.generateBrief ? "triage" : "analysis");
 			const doc = input.source.documents[0];
 			if (!doc) throw new Error("no document");
 			const page = doc.pages[0];
@@ -93,54 +92,50 @@ function fakeRunner(): IntegrityAgentRunner {
 					refs: [`document:${doc.documentFileId}:p${page.pageNumber}:0-${heading.length}`],
 				},
 			];
-			if (input.mode === "analysis") {
-				return {
-					rawOutput: JSON.stringify({
-						candidates: [
-							{
-								documentFileId: doc.documentFileId,
-								field: "document_type",
-								value: "bank_statement",
-								pageNumber: page.pageNumber,
-								quote: heading,
-								confidence: 0.9,
-							},
-							{
-								documentFileId: doc.documentFileId,
-								field: "material_amount",
-								value: "SGD 12,000.00",
-								pageNumber: page.pageNumber,
-								quote: "Total Amount: SGD 12,000.00",
-								confidence: 0.9,
-							},
-						],
-						consistency: [],
-					}),
-					toolCalls,
-					sourceRefs: toolCalls[0]?.refs ?? [],
-					steps: 2,
-					usage: { inputTokens: 10, outputTokens: 10, costUsd: 0.0001 },
-				};
-			}
+			const candidates = [
+				{
+					documentFileId: doc.documentFileId,
+					field: "document_type" as const,
+					value: "bank_statement",
+					pageNumber: page.pageNumber,
+					quote: heading,
+					confidence: 0.9,
+				},
+				{
+					documentFileId: doc.documentFileId,
+					field: "material_amount" as const,
+					value: "SGD 12,000.00",
+					pageNumber: page.pageNumber,
+					quote: "Total Amount: SGD 12,000.00",
+					confidence: 0.9,
+				},
+			];
+			const brief = input.generateBrief
+				? {
+						title: "Document integrity triage",
+						summary: {
+							text: "One document page is available for review.",
+							citations: [
+								{
+									kind: "document",
+									documentFileId: doc.documentFileId,
+									pageNumber: page.pageNumber,
+									quote: heading,
+								},
+							],
+						},
+						candidateContradictions: [],
+						missingEvidence: [],
+						alternativeExplanations: [],
+						questionsForReviewer: ["Could the reviewer confirm the statement period?"],
+						suggestedPriority: "medium",
+					}
+				: undefined;
 			return {
 				rawOutput: JSON.stringify({
-					title: "Document integrity triage",
-					summary: {
-						text: "One document page is available for review.",
-						citations: [
-							{
-								kind: "document",
-								documentFileId: doc.documentFileId,
-								pageNumber: page.pageNumber,
-								quote: heading,
-							},
-						],
-					},
-					candidateContradictions: [],
-					missingEvidence: [],
-					alternativeExplanations: [],
-					questionsForReviewer: ["Could the reviewer confirm the statement period?"],
-					suggestedPriority: "medium",
+					candidates,
+					consistency: [],
+					...(brief ? { brief } : {}),
 				}),
 				toolCalls,
 				sourceRefs: toolCalls[0]?.refs ?? [],
@@ -365,7 +360,7 @@ describe("document integrity", () => {
 		expect(flagged.status).toBe(200);
 		const { review } = (await flagged.json()) as { review: { id: string; version: number } };
 
-		// Triage is queued by the flag route; drain and wait.
+		// The combined extraction+brief run is queued by the flag route.
 		await drainIntegrityRuns(runDeps(ctx));
 		for (let i = 0; i < 40; i++) {
 			const [row] = await ctx.db
@@ -374,7 +369,7 @@ describe("document integrity", () => {
 				.where(
 					and(
 						eq(documentIntegrityRuns.fraudReviewId, review.id),
-						eq(documentIntegrityRuns.feature, "document_triage"),
+						eq(documentIntegrityRuns.feature, "document_analysis"),
 					),
 				);
 			if (row && ["succeeded", "failed", "cancelled"].includes(row.status)) break;
@@ -382,7 +377,12 @@ describe("document integrity", () => {
 		}
 		expect(calls).toContain("triage");
 
-		await ctx.db.insert(fraudReviewerGrants).values({ userId: officer.id });
+		const queue = await api(officer, "GET", "/api/fraud-review/queue");
+		const queueBody = (await queue.json()) as {
+			items: Array<{ id: string; briefState: string }>;
+		};
+		expect(queueBody.items.find((item) => item.id === review.id)?.briefState).toBe("ready");
+
 		const detail = await api(officer, "GET", `/api/fraud-review/${review.id}`);
 		expect(detail.status).toBe(200);
 		const detailBody = (await detail.json()) as {
@@ -413,7 +413,7 @@ describe("document integrity", () => {
 			);
 		expect(artifact?.status).toBe("draft");
 
-		// Withdrawing document consent hides the cited brief from the reviewer
+		// Withdrawing document consent hides the cited brief from the officer
 		// even though the item row remains for audit.
 		const withdrawn = await api(owner, "PATCH", `/api/applications/${appId}/document-consent`, {
 			consent: false,
@@ -469,7 +469,7 @@ describe("document integrity", () => {
 		expect(fingerprint?.redactedAt).not.toBeNull();
 	});
 
-	it("scopes duplicate lookup to reviewers and returns no PII", async () => {
+	it("scopes duplicate lookup to the assigned officer and returns no PII", async () => {
 		const first = await newCase();
 		const second = await newCase();
 		const shared = pdfBytes("same-bytes");
@@ -481,10 +481,6 @@ describe("document integrity", () => {
 			.where(eq(documentFingerprints.applicationId, first.appId));
 		expect(fp).toBeDefined();
 
-		await ctx.db
-			.insert(fraudReviewerGrants)
-			.values({ userId: first.officer.id })
-			.onConflictDoNothing();
 		const lookup = await api(first.officer, "POST", "/api/fraud-review/duplicates/lookup", {
 			sha256: fp!.sha256,
 			applicationId: first.appId,

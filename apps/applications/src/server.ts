@@ -90,9 +90,9 @@ startArtifactRetention({
 	fraudReviewEnabled: env.integrity.fraudReviewEnabled,
 });
 
-// E2 queued analysis/triage runs. Start only when a model runner exists; a
-// disabled feature can still recover a stale row but cannot claim new work
-// without a runner.
+// E2 queued integrity runs. Start only when a model runner exists; a disabled
+// feature can still recover a stale row but cannot claim new work without a
+// runner.
 if (integrityRunner && (env.integrity.enabled || env.integrity.fraudReviewEnabled)) {
 	startIntegrityWorker({
 		db,

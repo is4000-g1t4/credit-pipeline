@@ -1,0 +1,1 @@
+DROP TABLE "fraud_reviewer_grants" CASCADE;

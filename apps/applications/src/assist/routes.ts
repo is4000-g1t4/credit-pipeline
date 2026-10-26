@@ -344,7 +344,7 @@ export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
 		if (!isUuid(id)) throw new HttpError(404, "NOT_FOUND", "not found");
 		const artifact = await getArtifact(db, id);
 		if (!artifact) throw new HttpError(404, "NOT_FOUND", "not found");
-		// Integrity briefs are reviewer-only; the fraud route is the sole reader.
+		// Integrity briefs are served only by the fraud-review route.
 		if (artifact.type === "document_integrity_brief") {
 			throw new HttpError(404, "NOT_FOUND", "not found");
 		}

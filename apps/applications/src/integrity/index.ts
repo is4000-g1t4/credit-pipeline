@@ -10,25 +10,24 @@ export {
 } from "./agent.js";
 export {
 	analysisInputHash,
-	triageInputHash,
 	createIntegrityRun,
-	enqueueTriageRun,
 	drainIntegrityRuns,
 	drainIntegrityRunsSafely,
 	startIntegrityWorker,
 	type IntegrityRunDeps,
 } from "./runs.js";
-export { evaluateIntegrity, queueTriageForReview, reevaluateIntegrity } from "./evaluate.js";
+export {
+	evaluateIntegrity,
+	queueIntegrityRunForReview,
+	requeueActiveReviewForEvidenceChange,
+	reevaluateIntegrity,
+} from "./evaluate.js";
 export {
 	createFraudReview,
 	listFraudQueue,
 	resolveFraudReview,
-	assignFraudReview,
-	grantFraudReviewer,
-	revokeFraudReviewer,
 	buildResolutionDraft,
 	runFraudReviewRetention,
-	isFraudReviewer,
 	hasActiveReviewForApplication,
 	hasActiveReviewForCustomer,
 	activeDocumentHolds,

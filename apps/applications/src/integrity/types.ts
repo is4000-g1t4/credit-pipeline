@@ -7,6 +7,7 @@
 
 import type { DocumentKind } from "../documents/pipeline.js";
 import type { OcrStatus, TextSource } from "../documents/ocr.js";
+import type { CitationRecord, DocumentIntegrityBriefContent, EvidenceBundle } from "@credit/core";
 
 export type IntegritySeverity = "low" | "medium" | "high";
 
@@ -170,7 +171,7 @@ export interface IntegritySource {
 	duplicateCounts: IntegrityDuplicateCounts;
 	duplicateMatches: IntegrityDuplicateMatch[];
 	unavailable: IntegrityUnavailableSource[];
-	/** True only for triage; analysis tools never register customer tools. */
+	/** True only for brief runs; extraction-only runs never register customer tools. */
 	includeCustomerEvidence: boolean;
 }
 
@@ -197,6 +198,12 @@ export interface IntegrityAgentRunResult {
 	usage: IntegrityUsage;
 }
 
+export interface IntegrityBriefResult {
+	content: DocumentIntegrityBriefContent;
+	citations: CitationRecord[];
+	evidence: EvidenceBundle;
+}
+
 export type IntegrityAgentMode = "analysis" | "triage";
 
 export interface IntegrityAgentRepair {
@@ -208,6 +215,8 @@ export interface IntegrityAgentRepair {
 export interface IntegrityAgentRunner {
 	run(input: {
 		mode: IntegrityAgentMode;
+		/** One combined run: candidates always; brief only for a flagged case. */
+		generateBrief?: boolean;
 		source: IntegritySource;
 		maxTurns: number;
 		repair?: IntegrityAgentRepair;
@@ -292,6 +301,7 @@ export interface IntegrityConsistencyProposal {
 export interface IntegrityAnalysisOutput {
 	candidates: IntegrityCandidateProposal[];
 	consistency: IntegrityConsistencyProposal[];
+	brief?: unknown;
 }
 
 // --- Validated candidates (ready for persistence) ---
@@ -335,7 +345,7 @@ export interface ValidatedConsistency {
 	reason: string;
 }
 
-// --- Triage output (model JSON, before server citation resolution) ---
+// --- Brief output (model JSON, before server citation resolution) ---
 
 export interface IntegrityBriefCitationToken {
 	kind: "document" | "customer_document" | "signal" | "duplicate_document";

@@ -1,8 +1,7 @@
-// EN-05 fraud-review detail (officer-only). Reviewers see signals,
-// document refs, and the triage brief; assigned non-reviewer officers see
-// a minimal status view. Stored quotes render as text nodes (never
-// dangerouslySetInnerHTML); nothing case-derived reaches console, logs, or
-// URLs.
+// EN-05 fraud-review detail (assigned officer only). The assigned officer sees
+// signals, document refs, and the advisory brief; there is no separate reviewer
+// user. Stored quotes render as text nodes (never dangerouslySetInnerHTML);
+// nothing case-derived reaches console, logs, or URLs.
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
@@ -18,11 +17,11 @@ import {
 import {
 	ApiError,
 	apiErrorMessage,
-	assignFraudReview,
 	fetchFraudReview,
 	fetchResolutionDraft,
 	formatDateTime,
 	resolveFraudReview,
+	retryIntegrityBrief,
 	type FraudBriefCitation,
 	type FraudBriefClaim,
 	type FraudBriefContent,
@@ -45,8 +44,6 @@ function clean(value: string): string {
 function friendlyMessage(err: unknown): string {
 	if (err instanceof ApiError) {
 		switch (err.code) {
-			case "REVIEWER_REQUIRED":
-				return "Fraud reviewer access is required for that action.";
 			case "CANDIDATE_STALE":
 			case "CANDIDATE_NOT_ACTIVE":
 			case "NOT_CONFIRMED_MISMATCH":
@@ -118,22 +115,58 @@ function ClaimBlock({ claim }: { claim: FraudBriefClaim }) {
 	);
 }
 
-function BriefSection({ review }: { review: FraudReview }) {
-	if (review.briefStale === true && !review.brief) {
+function BriefSection({ review, onRetry }: { review: FraudReview; onRetry: () => void }) {
+	const pending =
+		review.briefUnavailable === "pending" ||
+		review.briefState === "queued" ||
+		review.briefState === "running";
+	if (pending) {
 		return (
-			<p className="mt-2 text-sm text-amber-800" aria-live="polite">
-				The brief is stale — a fresh triage run is pending. Signals below still apply.
-			</p>
+			<div className="mt-3 rounded border border-blue-200 bg-blue-50 p-3" aria-live="polite">
+				<p className="text-sm font-medium text-blue-900">Integrity brief in progress</p>
+				<p className="mt-0.5 text-xs text-blue-800">
+					The agent is gathering evidence, drafting the brief, and validating citations. The
+					deterministic signals below are already available.
+				</p>
+			</div>
+		);
+	}
+	if (review.briefUnavailable === "stale" || review.briefStale === true) {
+		return (
+			<div className="mt-3 rounded border border-amber-200 bg-amber-50 p-3">
+				<p className="text-sm font-medium text-amber-900">Brief stale - re-running</p>
+				<p className="mt-0.5 text-xs text-amber-800">
+					The evidence changed after this brief was written. Signals below still apply.
+				</p>
+				<button
+					type="button"
+					onClick={onRetry}
+					className="mt-2 rounded border border-amber-400 px-3 py-1 text-xs text-amber-900"
+				>
+					Retry brief
+				</button>
+			</div>
+		);
+	}
+	if (review.briefUnavailable === "failed") {
+		return (
+			<div className="mt-3 rounded border border-red-200 bg-red-50 p-3">
+				<p className="text-sm font-medium text-red-900">Brief unavailable</p>
+				<p className="mt-0.5 text-xs text-red-800">
+					The agent failed or timed out. The review stays open; resolve manually or retry.
+				</p>
+				<button
+					type="button"
+					onClick={onRetry}
+					className="mt-2 rounded border border-red-300 px-3 py-1 text-xs text-red-900"
+				>
+					Retry brief
+				</button>
+			</div>
 		);
 	}
 	if (!review.brief) {
-		return (
-			<p className="mt-2 text-sm text-gray-500">
-				{review.briefAvailable === true
-					? "The brief is still being prepared — refresh shortly."
-					: "No brief for this review."}
-			</p>
-		);
+		return <p className="mt-2 text-sm text-gray-500">No brief for this review.</p>;
 	}
 	const content = asBriefContent(review.brief.content);
 	if (!content) {
@@ -211,65 +244,6 @@ function BriefSection({ review }: { review: FraudReview }) {
 			<p className="text-xs text-gray-500">
 				Suggested priority: <StatusBadge status={content.suggestedPriority} />
 			</p>
-		</div>
-	);
-}
-
-function AssignControl({ review }: { review: FraudReview }) {
-	const queryClient = useQueryClient();
-	const [assignee, setAssignee] = useState(review.assigneeUserId ?? "");
-	const [busy, setBusy] = useState(false);
-	const [error, setError] = useState("");
-
-	async function assign() {
-		setBusy(true);
-		setError("");
-		try {
-			await assignFraudReview(review.id, {
-				assigneeUserId: assignee.trim(),
-				expectedVersion: review.version,
-			});
-			void queryClient.invalidateQueries({ queryKey: ["fraud-review", review.id] });
-		} catch (err) {
-			setError(friendlyMessage(err));
-		} finally {
-			setBusy(false);
-		}
-	}
-
-	return (
-		<div className="mt-4 rounded border border-gray-200 p-3">
-			<h3 className="text-sm font-semibold">Assign reviewer</h3>
-			<p className="mt-0.5 text-xs text-gray-500">
-				Current:{" "}
-				<span className="font-mono">
-					{review.assigneeUserId ? clean(review.assigneeUserId) : "—"}
-				</span>
-			</p>
-			{error && (
-				<div className="mt-2">
-					<ErrorBox message={error} />
-				</div>
-			)}
-			<div className="mt-2 flex flex-wrap gap-2">
-				<input
-					type="text"
-					value={assignee}
-					onChange={(e) => setAssignee(e.target.value)}
-					placeholder="Assignee user id"
-					aria-label="Assignee user id"
-					spellCheck={false}
-					className="min-w-52 flex-1 rounded border border-gray-300 px-3 py-2 font-mono text-sm focus:border-blue-500 focus:outline-none"
-				/>
-				<button
-					type="button"
-					onClick={() => void assign()}
-					disabled={busy || assignee.trim() === ""}
-					className="rounded border border-gray-300 px-4 py-2 text-sm disabled:opacity-50"
-				>
-					{busy ? "Assigning…" : "Assign"}
-				</button>
-			</div>
 		</div>
 	);
 }
@@ -387,6 +361,15 @@ function FraudDetail() {
 		queryKey: ["fraud-review", id],
 		queryFn: () => fetchFraudReview(id),
 		retry: false,
+		refetchInterval: (query) => {
+			const current = query.state.data?.review;
+			if (!current) return false;
+			if (current.briefState === "queued" || current.briefState === "running") return 3000;
+			if (current.briefUnavailable === "pending" || current.briefUnavailable === "stale") {
+				return 3000;
+			}
+			return false;
+		},
 	});
 
 	return (
@@ -422,7 +405,10 @@ function FraudDetail() {
 }
 
 function ReviewBody({ review, onRefresh }: { review: FraudReview; onRefresh: () => void }) {
-	const isReviewer = review.signalCodes !== undefined;
+	async function retryBrief(): Promise<void> {
+		await retryIntegrityBrief(review.id);
+		onRefresh();
+	}
 
 	return (
 		<div className="space-y-4">
@@ -469,76 +455,59 @@ function ReviewBody({ review, onRefresh }: { review: FraudReview; onRefresh: () 
 					</div>
 				</dl>
 
-				{isReviewer ? (
-					<>
-						{(review.signalCodes?.length ?? 0) > 0 && (
-							<div className="mt-3">
-								<h2 className="text-sm font-semibold">Signals</h2>
-								<ul className="mt-1 flex flex-wrap gap-1.5">
-									{review.signalCodes?.map((code) => (
-										<li
-											key={code}
-											className="rounded border border-gray-200 bg-gray-50 px-2 py-1 font-mono text-xs"
-										>
-											{clean(code)}
-										</li>
-									))}
-								</ul>
-							</div>
-						)}
-						{(review.documentRefs?.length ?? 0) > 0 && (
-							<div className="mt-3">
-								<h2 className="text-sm font-semibold">Documents</h2>
-								<ul className="mt-1 flex flex-wrap gap-1.5">
-									{review.documentRefs?.map((ref) => (
-										<li
-											key={ref}
-											className="rounded border border-gray-200 bg-gray-50 px-2 py-1 font-mono text-xs"
-											title={ref}
-										>
-											{ref.slice(0, 8)}
-										</li>
-									))}
-								</ul>
-							</div>
-						)}
-						{review.note !== null && review.note !== undefined && review.note !== "" && (
-							<p className="mt-3 text-sm text-gray-700">{clean(review.note)}</p>
-						)}
-						<BriefSection review={review} />
-						{(review.model || review.agentVersion) && (
-							<p className="mt-3 text-xs text-gray-500">
-								Triage: <span className="font-mono">{clean(review.model ?? "—")}</span> ·{" "}
-								<span className="font-mono">{clean(review.promptVersion ?? "—")}</span> ·{" "}
-								<span className="font-mono">{clean(review.agentVersion ?? "—")}</span>
-							</p>
-						)}
-						<AssignControl review={review} />
-						<ResolveForm review={review} />
-						{review.status === "confirmed" && (
-							<p className="mt-3 text-sm">
-								<Link
-									to="/officer/review/$id"
-									params={{ id: review.applicationId }}
-									className="text-blue-700 hover:underline"
+				{(review.signalCodes?.length ?? 0) > 0 && (
+					<div className="mt-3">
+						<h2 className="text-sm font-semibold">Signals</h2>
+						<ul className="mt-1 flex flex-wrap gap-1.5">
+							{review.signalCodes?.map((code) => (
+								<li
+									key={code}
+									className="rounded border border-gray-200 bg-gray-50 px-2 py-1 font-mono text-xs"
 								>
-									Open the case decision path
-								</Link>
-							</p>
-						)}
-					</>
-				) : (
-					<div className="mt-3 text-sm text-gray-600">
-						<p>
-							Status: <StatusBadge status={review.status} />
-						</p>
-						<p className="mt-1">
-							Brief:{" "}
-							{review.briefAvailable === true
-								? `available${review.briefStale === true ? " (stale)" : ""}`
-								: "not available"}
-						</p>
+									{clean(code)}
+								</li>
+							))}
+						</ul>
 					</div>
+				)}
+				{(review.documentRefs?.length ?? 0) > 0 && (
+					<div className="mt-3">
+						<h2 className="text-sm font-semibold">Documents</h2>
+						<ul className="mt-1 flex flex-wrap gap-1.5">
+							{review.documentRefs?.map((ref) => (
+								<li
+									key={ref}
+									className="rounded border border-gray-200 bg-gray-50 px-2 py-1 font-mono text-xs"
+									title={ref}
+								>
+									{ref.slice(0, 8)}
+								</li>
+							))}
+						</ul>
+					</div>
+				)}
+				{review.note !== null && review.note !== undefined && review.note !== "" && (
+					<p className="mt-3 text-sm text-gray-700">{clean(review.note)}</p>
+				)}
+				<BriefSection review={review} onRetry={() => void retryBrief()} />
+				{(review.model || review.agentVersion) && (
+					<p className="mt-3 text-xs text-gray-500">
+						Agent: <span className="font-mono">{clean(review.model ?? "—")}</span> ·{" "}
+						<span className="font-mono">{clean(review.promptVersion ?? "—")}</span> ·{" "}
+						<span className="font-mono">{clean(review.agentVersion ?? "—")}</span>
+					</p>
+				)}
+				<ResolveForm review={review} />
+				{review.status === "confirmed" && (
+					<p className="mt-3 text-sm">
+						<Link
+							to="/officer/review/$id"
+							params={{ id: review.applicationId }}
+							className="text-blue-700 hover:underline"
+						>
+							Open the case decision path
+						</Link>
+					</p>
 				)}
 			</section>
 		</div>

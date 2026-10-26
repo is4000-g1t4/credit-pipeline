@@ -440,7 +440,7 @@ function DocumentCard({
 					{doc.crossApplicationRestricted && (
 						<span
 							className="rounded bg-gray-200 px-1.5 py-0.5 text-gray-700"
-							title="A cross-application match exists but is restricted to fraud reviewers"
+							title="A cross-application match exists but is shown only to the assigned officer"
 						>
 							restricted cross-application match
 						</span>
@@ -744,6 +744,12 @@ export function IntegrityPanel({ applicationId }: { applicationId: string }) {
 		queryKey: ["integrity", applicationId],
 		queryFn: () => fetchIntegrityPanel(applicationId),
 		retry: false,
+		refetchInterval: (query) => {
+			const data = query.state.data;
+			if (!data?.openReview) return false;
+			const status = data.latestAnalysis?.status;
+			return status === "queued" || status === "running" ? 3000 : false;
+		},
 	});
 	const liveRun = useQuery({
 		queryKey: ["integrity-run", applicationId, runId],
@@ -813,6 +819,12 @@ export function IntegrityPanel({ applicationId }: { applicationId: string }) {
 							>
 								open review
 							</Link>
+							{data.latestAnalysis?.status === "queued" ||
+							data.latestAnalysis?.status === "running" ? (
+								<span aria-live="polite"> · Integrity brief in progress</span>
+							) : data.latestAnalysis?.status === "failed" ? (
+								<span> · Brief unavailable - retry from the review</span>
+							) : null}
 						</p>
 					)}
 

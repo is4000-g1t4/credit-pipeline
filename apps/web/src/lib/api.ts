@@ -1158,8 +1158,8 @@ export function evaluateIntegrity(applicationId: string): Promise<{
 	}>(`/api/applications/${applicationId}/integrity/evaluate`, { method: "POST" });
 }
 
-// --- EN-05 fraud review (officer-only; reviewer-only fields are absent for
-// assigned non-reviewer officers). ---
+// --- EN-05 fraud review (officer-only; every officer sees only assigned
+// cases). ---
 
 export interface FraudQueueItem {
 	id: string;
@@ -1170,6 +1170,7 @@ export interface FraudQueueItem {
 	reasonCode: string;
 	briefAvailable: boolean;
 	briefStale: boolean;
+	briefState: "ready" | "stale" | "pending" | "failed" | "missing";
 	createdAt: string;
 	updatedAt: string;
 	version: number;
@@ -1215,10 +1216,20 @@ export interface FraudReview {
 	createdAt: string;
 	updatedAt: string;
 	version: number;
-	/** Present for assigned non-reviewer officers. */
+	/** Combined integrity run/brief state. */
 	briefAvailable?: boolean;
 	briefStale?: boolean;
-	/** Reviewer-only: absent for assigned non-reviewer officers. */
+	briefState?:
+		| "queued"
+		| "running"
+		| "succeeded"
+		| "failed"
+		| "cancelled"
+		| "ready"
+		| "pending"
+		| "stale"
+		| "missing";
+	briefUnavailable?: "pending" | "stale" | "missing" | "failed" | "consent_withdrawn" | null;
 	note?: string | null;
 	assigneeUserId?: string | null;
 	signalCodes?: string[];
@@ -1235,26 +1246,20 @@ export interface FraudReview {
 }
 
 /** 404 → null (feature off); every other error throws. */
-export function fetchFraudMe(): Promise<{ reviewer: boolean; canViewQueue: boolean } | null> {
-	return nullOn404(() => api<{ reviewer: boolean; canViewQueue: boolean }>("/api/fraud-review/me"));
+export function fetchFraudMe(): Promise<{ canViewQueue: boolean } | null> {
+	return nullOn404(() => api<{ canViewQueue: boolean }>("/api/fraud-review/me"));
 }
 
-export function fetchFraudQueue(): Promise<{ items: FraudQueueItem[]; reviewer: boolean }> {
-	return api<{ items: FraudQueueItem[]; reviewer: boolean }>("/api/fraud-review/queue");
+export function fetchFraudQueue(): Promise<{ items: FraudQueueItem[] }> {
+	return api<{ items: FraudQueueItem[] }>("/api/fraud-review/queue");
 }
 
 export function fetchFraudReview(id: string): Promise<{ review: FraudReview }> {
 	return api<{ review: FraudReview }>(`/api/fraud-review/${id}`);
 }
 
-export function assignFraudReview(
-	id: string,
-	body: { assigneeUserId: string; expectedVersion: number },
-): Promise<{ review: FraudReview }> {
-	return api<{ review: FraudReview }>(`/api/fraud-review/${id}/assign`, {
-		method: "PATCH",
-		body,
-	});
+export function retryIntegrityBrief(id: string): Promise<{ ok: boolean }> {
+	return api<{ ok: boolean }>(`/api/fraud-review/${id}/retry-brief`, { method: "POST", body: {} });
 }
 
 export function resolveFraudReview(

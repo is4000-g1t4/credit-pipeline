@@ -1,21 +1,21 @@
-// US-INT-1/3 async run queue.
+// Single async integrity run queue.
 //
-// Analysis runs are officer-requested; triage runs are created only for an
-// active deterministic flag. A short claim transaction leases one row with
-// FOR UPDATE SKIP LOCKED; the model call runs outside that transaction and a
-// second transaction finalizes under the lease token. Attempts increment at
-// claim, so a crash cannot buy unbounded retries. Stale work fails at the cap.
+// One run per case/evidence hash. The same agent call produces extraction and
+// consistency candidates; for a flagged case it also produces the advisory
+// brief. A short claim transaction leases one row with FOR UPDATE SKIP LOCKED;
+// the model call runs outside that transaction and a second transaction
+// finalizes under the lease token. Attempts increment at claim, so a crash
+// cannot buy unbounded retries.
 
 import { randomUUID } from "node:crypto";
 import { documentIntegrityRuns, fraudReviews, type Db } from "@credit/db/applications";
 import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { hashCanonical } from "@credit/core";
 import { HttpError, writeAudit, type Logger } from "@credit/service-kit";
-import { lockApplication } from "../documents/access.js";
 import { runIntegrityAnalysis } from "./agent.js";
-import { insertAnalysisResults } from "./store.js";
+import { lockApplication } from "../documents/access.js";
+import { insertAnalysisResults, insertBriefArtifact } from "./store.js";
 import { loadIntegritySource } from "./source.js";
-import { executeTriage } from "./triage.js";
 import {
 	IntegrityAgentError,
 	type IntegrityAgentRunner,
@@ -37,36 +37,22 @@ function nowOf(deps: IntegrityRunDeps): Date {
 	return deps.now?.() ?? new Date();
 }
 
-export function analysisInputHash(source: IntegritySource, config: IntegrityConfig): string {
-	return hashCanonical({
-		feature: "document_analysis",
-		applicationId: source.applicationId,
-		documentConsent: source.documentConsent,
-		documents: source.documents
-			.map((doc) => ({
-				id: doc.documentFileId,
-				sha256: doc.sha256,
-				pageCount: doc.pageCount,
-				ocrStatus: doc.ocrStatus,
-				pages: doc.pages.map((page) => [page.pageNumber, page.textSha256]),
-			}))
-			.sort((a, b) => a.id.localeCompare(b.id)),
-		fingerprintVersion: "document-fingerprint-v1",
-		model: config.model,
-		promptVersion: config.promptVersion,
-		agentVersion: config.agentVersion,
-	});
+export interface IntegrityHashOptions {
+	generateBrief?: boolean;
+	reviewId?: string;
 }
 
-export function triageInputHash(
+export function analysisInputHash(
 	source: IntegritySource,
 	config: IntegrityConfig,
-	reviewId: string,
+	options: IntegrityHashOptions = {},
 ): string {
+	const generateBrief = options.generateBrief === true;
 	return hashCanonical({
-		feature: "document_triage",
+		feature: "integrity",
 		applicationId: source.applicationId,
-		reviewId,
+		generateBrief,
+		reviewId: generateBrief ? (options.reviewId ?? null) : null,
 		documentConsent: source.documentConsent,
 		contextConsent: source.contextConsent,
 		documents: source.documents
@@ -102,7 +88,7 @@ export function triageInputHash(
 				.sort() ?? [],
 		fingerprintVersion: "document-fingerprint-v1",
 		model: config.model,
-		promptVersion: config.triagePromptVersion,
+		promptVersion: config.promptVersion,
 		agentVersion: config.agentVersion,
 	});
 }
@@ -110,7 +96,6 @@ export function triageInputHash(
 async function recentRunCount(
 	db: Db,
 	applicationId: string,
-	feature: "document_analysis" | "document_triage",
 	inputHash: string,
 	since: Date,
 ): Promise<number> {
@@ -120,7 +105,7 @@ async function recentRunCount(
 		.where(
 			and(
 				eq(documentIntegrityRuns.applicationId, applicationId),
-				eq(documentIntegrityRuns.feature, feature),
+				eq(documentIntegrityRuns.feature, "document_analysis"),
 				eq(documentIntegrityRuns.inputHash, inputHash),
 				gte(documentIntegrityRuns.createdAt, since),
 			),
@@ -131,7 +116,6 @@ async function recentRunCount(
 async function findActiveRun(
 	db: Db,
 	applicationId: string,
-	feature: "document_analysis" | "document_triage",
 	inputHash: string,
 ): Promise<RunRow | null> {
 	const rows = await db
@@ -140,7 +124,7 @@ async function findActiveRun(
 		.where(
 			and(
 				eq(documentIntegrityRuns.applicationId, applicationId),
-				eq(documentIntegrityRuns.feature, feature),
+				eq(documentIntegrityRuns.feature, "document_analysis"),
 				eq(documentIntegrityRuns.inputHash, inputHash),
 				sql`${documentIntegrityRuns.status} IN ('queued','running','succeeded')`,
 			),
@@ -150,12 +134,12 @@ async function findActiveRun(
 	return rows[0] ?? null;
 }
 
-interface CreateRunInput {
+export interface CreateRunInput {
 	applicationId: string;
-	feature: "document_analysis" | "document_triage";
 	inputHash: string;
 	documentSha256: string[];
 	requestedBy: string;
+	generateBrief?: boolean;
 	fraudReviewId?: string | null;
 	reviewVersion?: number | null;
 	now?: Date;
@@ -166,37 +150,30 @@ export async function createIntegrityRun(
 	input: CreateRunInput,
 ): Promise<{ run: RunRow; replayed: boolean }> {
 	const { db, config } = deps;
-	const existing = await findActiveRun(db, input.applicationId, input.feature, input.inputHash);
+	const existing = await findActiveRun(db, input.applicationId, input.inputHash);
 	if (existing) return { run: existing, replayed: true };
 	const now = input.now ?? nowOf(deps);
 	const since = new Date(now.getTime() - 24 * 3_600_000);
-	const attempts = await recentRunCount(
-		db,
-		input.applicationId,
-		input.feature,
-		input.inputHash,
-		since,
-	);
+	const attempts = await recentRunCount(db, input.applicationId, input.inputHash, since);
 	if (attempts >= config.maxRunsPerHash) {
 		throw new HttpError(429, "RETRY_LIMIT", "too many runs for this evidence set");
 	}
-	const promptVersion =
-		input.feature === "document_triage" ? config.triagePromptVersion : config.promptVersion;
+	const generateBrief = input.generateBrief === true;
 	const [inserted] = await db
 		.insert(documentIntegrityRuns)
 		.values({
 			applicationId: input.applicationId,
-			feature: input.feature,
+			feature: "document_analysis",
 			status: "queued",
 			inputHash: input.inputHash,
 			documentSha256: input.documentSha256,
 			fingerprintVersion: "document-fingerprint-v1",
 			model: config.model,
-			promptVersion,
+			promptVersion: config.promptVersion,
 			agentVersion: config.agentVersion,
 			requestedBy: input.requestedBy,
-			fraudReviewId: input.fraudReviewId ?? null,
-			reviewVersion: input.reviewVersion ?? null,
+			fraudReviewId: generateBrief ? (input.fraudReviewId ?? null) : null,
+			reviewVersion: generateBrief ? (input.reviewVersion ?? null) : null,
 			createdAt: now,
 		})
 		.onConflictDoNothing({
@@ -209,74 +186,34 @@ export async function createIntegrityRun(
 		})
 		.returning();
 	if (inserted) return { run: inserted, replayed: false };
-	const winner = await findActiveRun(db, input.applicationId, input.feature, input.inputHash);
+	const winner = await findActiveRun(db, input.applicationId, input.inputHash);
 	if (!winner) throw new HttpError(500, "INTERNAL_ERROR", "internal error");
 	return { run: winner, replayed: true };
-}
-
-export async function enqueueTriageRun(
-	deps: IntegrityRunDeps,
-	input: {
-		applicationId: string;
-		reviewId: string;
-		reviewVersion: number;
-		source: IntegritySource;
-		requestedBy: string;
-	},
-): Promise<{ run: RunRow; replayed: boolean } | null> {
-	if (
-		!deps.config.triageEnabled ||
-		!deps.config.agentEnabled ||
-		!deps.config.fraudReviewEnabled ||
-		!deps.config.enabled ||
-		!deps.runner
-	) {
-		return null;
-	}
-	return createIntegrityRun(deps, {
-		applicationId: input.applicationId,
-		feature: "document_triage",
-		inputHash: triageInputHash(input.source, deps.config, input.reviewId),
-		documentSha256: input.source.documents.map((doc) => doc.sha256).sort(),
-		requestedBy: input.requestedBy,
-		fraudReviewId: input.reviewId,
-		reviewVersion: input.reviewVersion,
-	});
 }
 
 interface ClaimedRow {
 	id: string;
 	application_id: string;
-	feature: "document_analysis" | "document_triage";
 	input_hash: string;
 	attempts: number;
 	max_attempts: number;
-	model: string;
-	prompt_version: string;
-	agent_version: string;
 	requested_by: string | null;
 	fraud_review_id: string | null;
 	review_version: number | null;
 	lease_token: string;
-	created_at: string | Date;
 }
 
 function mapClaimed(row: Record<string, unknown>): ClaimedRow {
 	return {
 		id: String(row.id),
 		application_id: String(row.application_id),
-		feature: row.feature as ClaimedRow["feature"],
 		input_hash: String(row.input_hash),
 		attempts: Number(row.attempts),
 		max_attempts: Number(row.max_attempts),
-		model: String(row.model),
-		prompt_version: String(row.prompt_version),
-		agent_version: String(row.agent_version),
 		requested_by: typeof row.requested_by === "string" ? row.requested_by : null,
 		fraud_review_id: typeof row.fraud_review_id === "string" ? row.fraud_review_id : null,
 		review_version: row.review_version === null ? null : Number(row.review_version),
 		lease_token: String(row.lease_token),
-		created_at: row.created_at as string | Date,
 	};
 }
 
@@ -285,7 +222,8 @@ export async function claimIntegrityRun(deps: IntegrityRunDeps): Promise<Claimed
 	await db.execute(sql`
 		UPDATE document_integrity_runs
 		SET status = 'failed', error_code = 'LEASE_EXPIRED', finished_at = now()
-		WHERE status = 'running'
+		WHERE feature = 'document_analysis'
+			AND status = 'running'
 			AND lease_expires_at < now()
 			AND attempts >= max_attempts
 	`);
@@ -299,7 +237,8 @@ export async function claimIntegrityRun(deps: IntegrityRunDeps): Promise<Claimed
 			started_at = COALESCE(started_at, now())
 		WHERE id = (
 			SELECT id FROM document_integrity_runs
-			WHERE (
+			WHERE feature = 'document_analysis'
+			AND (
 				status = 'queued'
 				OR (status = 'running' AND lease_expires_at < now())
 				OR (status = 'running' AND lease_expires_at IS NULL)
@@ -315,14 +254,120 @@ export async function claimIntegrityRun(deps: IntegrityRunDeps): Promise<Claimed
 	return rows[0] ? mapClaimed(rows[0]) : null;
 }
 
+class ReviewClosed extends Error {
+	constructor() {
+		super("review closed");
+		this.name = "ReviewClosed";
+	}
+}
+
+async function persistBrief(
+	tx: Parameters<Parameters<Db["transaction"]>[0]>[0],
+	input: {
+		applicationId: string;
+		runId: string;
+		reviewId: string;
+		reviewVersion: number | null;
+		leaseToken: string;
+		brief: NonNullable<Awaited<ReturnType<typeof runIntegrityAnalysis>>["brief"]>;
+		agentTrace: Awaited<ReturnType<typeof runIntegrityAnalysis>>["trace"];
+		evidenceHash: string;
+		now: Date;
+		config: IntegrityConfig;
+		requestedBy: string | null;
+	},
+): Promise<void> {
+	const [review] = await tx
+		.select()
+		.from(fraudReviews)
+		.where(eq(fraudReviews.id, input.reviewId))
+		.limit(1)
+		.for("update");
+	if (
+		!review ||
+		!["open", "needs_info"].includes(review.status) ||
+		(input.reviewVersion !== null && review.version !== input.reviewVersion)
+	) {
+		throw new ReviewClosed();
+	}
+	await tx
+		.update(documentIntegrityRuns)
+		.set({
+			status: "succeeded",
+			finishedAt: input.now,
+		})
+		.where(
+			and(
+				eq(documentIntegrityRuns.id, input.runId),
+				eq(documentIntegrityRuns.status, "running"),
+				eq(documentIntegrityRuns.leaseToken, input.leaseToken),
+			),
+		);
+	const artifactId = await insertBriefArtifact(tx, {
+		applicationId: input.applicationId,
+		content: input.brief.content,
+		citations: input.brief.citations,
+		agentTrace: input.agentTrace,
+		evidenceHash: input.evidenceHash,
+		model: input.config.model,
+		promptVersion: input.config.promptVersion,
+		retentionDays: input.config.retentionDays,
+		createdBy: review.createdBy || input.config.systemUserId,
+		auditActor: "system:integrity-agent",
+		now: input.now,
+	}).catch((err) => {
+		throw err;
+	});
+	await tx
+		.update(fraudReviews)
+		.set({
+			briefArtifactId: artifactId,
+			agentRunId: input.runId,
+			model: input.config.model,
+			promptVersion: input.config.promptVersion,
+			agentVersion: input.config.agentVersion,
+			briefStaleAt: null,
+		})
+		.where(eq(fraudReviews.id, input.reviewId));
+	await tx
+		.update(documentIntegrityRuns)
+		.set({ artifactId })
+		.where(eq(documentIntegrityRuns.id, input.runId));
+	await writeAudit(tx, {
+		applicationId: input.applicationId,
+		actor: "system:integrity-agent",
+		action: "integrity.triage_succeeded",
+		entity: "fraud_review",
+		payload: {
+			feature: "document_integrity",
+			reviewId: input.reviewId,
+			runId: input.runId,
+			artifactId,
+			model: input.config.model,
+			promptVersion: input.config.promptVersion,
+			agentVersion: input.config.agentVersion,
+		},
+	});
+}
+
 export async function drainIntegrityRuns(deps: IntegrityRunDeps): Promise<void> {
 	const claimed = await claimIntegrityRun(deps);
 	if (!claimed) return;
-	if (
-		(claimed.feature === "document_analysis" && !deps.config.enabled) ||
-		(claimed.feature === "document_triage" &&
-			(!deps.config.enabled || !deps.config.fraudReviewEnabled || !deps.config.triageEnabled))
-	) {
+	if (!deps.config.enabled) {
+		await deps.db
+			.update(documentIntegrityRuns)
+			.set({ status: "cancelled", errorCode: "FEATURE_DISABLED", finishedAt: new Date() })
+			.where(
+				and(
+					eq(documentIntegrityRuns.id, claimed.id),
+					eq(documentIntegrityRuns.status, "running"),
+					eq(documentIntegrityRuns.leaseToken, claimed.lease_token),
+				),
+			);
+		return;
+	}
+	const generateBrief = claimed.fraud_review_id !== null;
+	if (generateBrief && (!deps.config.fraudReviewEnabled || !deps.config.triageEnabled)) {
 		await deps.db
 			.update(documentIntegrityRuns)
 			.set({ status: "cancelled", errorCode: "FEATURE_DISABLED", finishedAt: new Date() })
@@ -342,10 +387,7 @@ export async function drainIntegrityRuns(deps: IntegrityRunDeps): Promise<void> 
 		await writeAudit(tx, {
 			applicationId: claimed.application_id,
 			actor: claimed.requested_by ?? "system:integrity",
-			action:
-				claimed.feature === "document_analysis"
-					? "integrity.analysis_started"
-					: "integrity.triage_started",
+			action: "integrity.analysis_started",
 			entity: "document_integrity_run",
 			payload: {
 				feature: "document_integrity",
@@ -353,142 +395,133 @@ export async function drainIntegrityRuns(deps: IntegrityRunDeps): Promise<void> 
 				reviewId: claimed.fraud_review_id,
 				attempts: claimed.attempts,
 				model: deps.config.model,
-				promptVersion:
-					claimed.feature === "document_analysis"
-						? deps.config.promptVersion
-						: deps.config.triagePromptVersion,
+				promptVersion: deps.config.promptVersion,
 				agentVersion: deps.config.agentVersion,
 			},
 		});
 	});
 	try {
-		if (claimed.feature === "document_analysis") {
-			if (!deps.runner) throw new IntegrityAgentError("AGENT_UNAVAILABLE");
-			const source = await loadIntegritySource(deps.db, claimed.application_id, {
-				includeCustomerEvidence: false,
+		if (!deps.runner) throw new IntegrityAgentError("AGENT_UNAVAILABLE");
+		const source = await loadIntegritySource(deps.db, claimed.application_id, {
+			includeCustomerEvidence: generateBrief,
+		});
+		const result = await runIntegrityAnalysis({
+			source,
+			runner: deps.runner,
+			config: deps.config,
+			evidenceHash: claimed.input_hash,
+			generateBrief,
+		});
+		const persisted = await deps.db.transaction(async (tx) => {
+			await lockApplication(tx, claimed.application_id, 5_000);
+			const fresh = await loadIntegritySource(tx as unknown as Db, claimed.application_id, {
+				includeCustomerEvidence: generateBrief,
 			});
-			const result = await runIntegrityAnalysis({
-				source,
-				runner: deps.runner,
-				config: deps.config,
-				evidenceHash: claimed.input_hash,
+			const currentHash = analysisInputHash(fresh, deps.config, {
+				generateBrief,
+				reviewId: claimed.fraud_review_id ?? undefined,
 			});
-			const currentSource = await loadIntegritySource(deps.db, claimed.application_id, {
-				includeCustomerEvidence: false,
+			if (currentHash !== claimed.input_hash) return { changed: true as const, briefLost: false };
+			const fenced = await tx
+				.update(documentIntegrityRuns)
+				.set({
+					status: "succeeded",
+					steps: result.steps,
+					toolCalls: result.toolCalls,
+					sourceRefs: result.sourceRefs,
+					repairAttempted: result.repairAttempted,
+					repairSucceeded: result.repairSucceeded,
+					usage: result.usage,
+					errorCode: null,
+					errorDetail: null,
+					finishedAt: new Date(),
+				})
+				.where(
+					and(
+						eq(documentIntegrityRuns.id, claimed.id),
+						eq(documentIntegrityRuns.status, "running"),
+						eq(documentIntegrityRuns.leaseToken, claimed.lease_token),
+					),
+				)
+				.returning({ id: documentIntegrityRuns.id });
+			if (fenced.length === 0) throw new Error("lease_lost");
+			await insertAnalysisResults(tx, {
+				applicationId: claimed.application_id,
+				runId: claimed.id,
+				candidates: result.candidates,
+				consistency: result.consistency,
 			});
-			if (analysisInputHash(currentSource, deps.config) !== claimed.input_hash) {
-				await deps.db
-					.update(documentIntegrityRuns)
-					.set({
-						status: "cancelled",
-						errorCode: "EVIDENCE_CHANGED",
-						finishedAt: new Date(),
-					})
-					.where(
-						and(
-							eq(documentIntegrityRuns.id, claimed.id),
-							eq(documentIntegrityRuns.status, "running"),
-							eq(documentIntegrityRuns.leaseToken, claimed.lease_token),
-						),
-					);
-				outcome = "cancelled";
-				return;
-			}
-			const persisted = await deps.db.transaction(async (tx) => {
-				await lockApplication(tx, claimed.application_id, 5_000);
-				const fresh = await loadIntegritySource(tx as unknown as Db, claimed.application_id, {
-					includeCustomerEvidence: false,
-				});
-				if (analysisInputHash(fresh, deps.config) !== claimed.input_hash) {
-					return { changed: true as const };
-				}
-				const updated = await tx
-					.update(documentIntegrityRuns)
-					.set({
-						status: "succeeded",
-						steps: result.steps,
-						toolCalls: result.toolCalls,
-						sourceRefs: result.sourceRefs,
-						repairAttempted: result.repairAttempted,
-						repairSucceeded: result.repairSucceeded,
-						usage: result.usage,
-						errorCode: null,
-						finishedAt: new Date(),
-					})
-					.where(
-						and(
-							eq(documentIntegrityRuns.id, claimed.id),
-							eq(documentIntegrityRuns.status, "running"),
-							eq(documentIntegrityRuns.leaseToken, claimed.lease_token),
-						),
-					)
-					.returning({ id: documentIntegrityRuns.id });
-				if (updated.length === 0) throw new Error("lease_lost");
-				await insertAnalysisResults(tx, {
+			if (result.brief && claimed.fraud_review_id) {
+				await persistBrief(tx, {
 					applicationId: claimed.application_id,
 					runId: claimed.id,
-					candidates: result.candidates,
-					consistency: result.consistency,
+					reviewId: claimed.fraud_review_id,
+					reviewVersion: claimed.review_version,
+					leaseToken: claimed.lease_token,
+					brief: result.brief,
+					agentTrace: result.trace,
+					evidenceHash: result.evidenceHash,
+					now: new Date(),
+					config: deps.config,
+					requestedBy: claimed.requested_by,
 				});
-				await writeAudit(tx, {
-					applicationId: claimed.application_id,
-					actor: claimed.requested_by ?? deps.config.systemUserId,
-					action: "integrity.analysis_succeeded",
-					entity: "document_integrity_run",
-					payload: {
-						feature: "document_integrity",
-						runId: claimed.id,
-						candidateCount: result.candidates.length,
-						consistencyCount: result.consistency.length,
-						droppedClaims: result.droppedClaims,
-						model: deps.config.model,
-						promptVersion: deps.config.promptVersion,
-						agentVersion: deps.config.agentVersion,
-						toolCallCount: result.toolCalls.length,
-						repairAttempted: result.repairAttempted,
-					},
-				});
-				return { changed: false as const };
-			});
-			if (persisted.changed) {
-				await deps.db
-					.update(documentIntegrityRuns)
-					.set({
-						status: "cancelled",
-						errorCode: "EVIDENCE_CHANGED",
-						finishedAt: new Date(),
-					})
-					.where(
-						and(
-							eq(documentIntegrityRuns.id, claimed.id),
-							eq(documentIntegrityRuns.status, "running"),
-							eq(documentIntegrityRuns.leaseToken, claimed.lease_token),
-						),
-					);
-				outcome = "cancelled";
-				return;
 			}
-			outcome = "succeeded";
-		} else {
-			if (!deps.runner) throw new IntegrityAgentError("AGENT_UNAVAILABLE");
-			const result = await executeTriage(deps, {
-				runId: claimed.id,
+			await writeAudit(tx, {
 				applicationId: claimed.application_id,
-				reviewId: claimed.fraud_review_id,
-				reviewVersion: claimed.review_version,
-				requestedBy: claimed.requested_by,
-				leaseToken: claimed.lease_token,
+				actor: claimed.requested_by ?? deps.config.systemUserId,
+				action: "integrity.analysis_succeeded",
+				entity: "document_integrity_run",
+				payload: {
+					feature: "document_integrity",
+					runId: claimed.id,
+					candidateCount: result.candidates.length,
+					consistencyCount: result.consistency.length,
+					droppedClaims: result.droppedClaims,
+					brief: result.brief !== null,
+					model: deps.config.model,
+					promptVersion: deps.config.promptVersion,
+					agentVersion: deps.config.agentVersion,
+					toolCallCount: result.toolCalls.length,
+					repairAttempted: result.repairAttempted,
+				},
 			});
-			outcome = result;
+			return { changed: false as const };
+		});
+		if (persisted.changed) {
+			await deps.db
+				.update(documentIntegrityRuns)
+				.set({ status: "cancelled", errorCode: "EVIDENCE_CHANGED", finishedAt: new Date() })
+				.where(
+					and(
+						eq(documentIntegrityRuns.id, claimed.id),
+						eq(documentIntegrityRuns.status, "running"),
+						eq(documentIntegrityRuns.leaseToken, claimed.lease_token),
+					),
+				);
+			outcome = "cancelled";
+			return;
 		}
+		outcome = "succeeded";
 	} catch (err) {
+		if (err instanceof ReviewClosed) {
+			await deps.db
+				.update(documentIntegrityRuns)
+				.set({ status: "cancelled", errorCode: "REVIEW_CLOSED", finishedAt: new Date() })
+				.where(
+					and(
+						eq(documentIntegrityRuns.id, claimed.id),
+						eq(documentIntegrityRuns.status, "running"),
+						eq(documentIntegrityRuns.leaseToken, claimed.lease_token),
+					),
+				);
+			return;
+		}
 		errorCode =
 			err instanceof IntegrityAgentError
 				? err.code
 				: err instanceof HttpError
 					? err.code
 					: "INTERNAL_ERROR";
-		if (errorCode === "cancelled") outcome = "cancelled";
 		const retry = claimed.attempts < claimed.max_attempts;
 		const fenced = await deps.db
 			.update(documentIntegrityRuns)
@@ -506,67 +539,40 @@ export async function drainIntegrityRuns(deps: IntegrityRunDeps): Promise<void> 
 				),
 			)
 			.returning({ id: documentIntegrityRuns.id });
-		if (fenced.length === 0) {
-			deps.logger.warn(
-				{ runId: claimed.id, applicationId: claimed.application_id, errorCode },
-				"stale integrity worker lost its lease",
-			);
-			return;
-		}
-		if (claimed.feature === "document_analysis") {
-			await deps.db.transaction(async (tx) => {
-				await writeAudit(tx, {
-					applicationId: claimed.application_id,
-					actor: "system:integrity",
-					action: "integrity.analysis_failed",
-					entity: "document_integrity_run",
-					payload: {
-						feature: "document_integrity",
-						runId: claimed.id,
-						errorCode,
-						attempts: claimed.attempts,
-						model: deps.config.model,
-						promptVersion: deps.config.promptVersion,
-						agentVersion: deps.config.agentVersion,
-					},
-				});
+		if (fenced.length === 0) return;
+		await deps.db.transaction(async (tx) => {
+			await writeAudit(tx, {
+				applicationId: claimed.application_id,
+				actor: "system:integrity",
+				action: "integrity.analysis_failed",
+				entity: "document_integrity_run",
+				payload: {
+					feature: "document_integrity",
+					runId: claimed.id,
+					errorCode,
+					attempts: claimed.attempts,
+					model: deps.config.model,
+					promptVersion: deps.config.promptVersion,
+					agentVersion: deps.config.agentVersion,
+				},
 			});
-		}
-		if (claimed.fraud_review_id) {
-			const reviewId = claimed.fraud_review_id;
-			await deps.db.transaction(async (tx) => {
+			if (claimed.fraud_review_id) {
 				await tx
 					.update(fraudReviews)
 					.set({
 						agentRunId: claimed.id,
 						model: deps.config.model,
-						promptVersion: deps.config.triagePromptVersion,
+						promptVersion: deps.config.promptVersion,
 						agentVersion: deps.config.agentVersion,
 					})
 					.where(
 						and(
-							eq(fraudReviews.id, reviewId),
+							eq(fraudReviews.id, claimed.fraud_review_id),
 							sql`${fraudReviews.status} IN ('open','needs_info')`,
 						),
 					);
-				await writeAudit(tx, {
-					applicationId: claimed.application_id,
-					actor: "system:integrity-triage",
-					action: "integrity.triage_failed",
-					entity: "fraud_review",
-					payload: {
-						feature: "document_integrity",
-						reviewId: claimed.fraud_review_id,
-						runId: claimed.id,
-						errorCode,
-						attempts: claimed.attempts,
-						model: deps.config.model,
-						promptVersion: deps.config.triagePromptVersion,
-						agentVersion: deps.config.agentVersion,
-					},
-				});
-			});
-		}
+			}
+		});
 		deps.logger.warn(
 			{ runId: claimed.id, applicationId: claimed.application_id, errorCode, outcome },
 			"integrity run failed",
@@ -576,7 +582,6 @@ export async function drainIntegrityRuns(deps: IntegrityRunDeps): Promise<void> 
 		{
 			runId: claimed.id,
 			applicationId: claimed.application_id,
-			feature: claimed.feature,
 			outcome,
 			durationMs: Date.now() - started,
 		},

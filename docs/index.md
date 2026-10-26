@@ -16,7 +16,7 @@ Start here. Each section names one audience and the page that serves it.
 - [Lifecycle](explanation/lifecycle.md) — explanation. Status machines, expiry, the booking saga, and alert behavior.
 - [Eval design](explanation/eval-design.md) - guideline. Lab practices, a small suite per AI feature, and the Grafana split.
 - [Adverse action](explanation/adverse-action.md) - explanation. EN-08 taxonomy, jurisdiction profiles, fair-lending gates, and letter provenance.
-- [Document integrity](explanation/document-integrity.md) — explanation. Fingerprint/provenance, signals, extraction/consistency pass, triage brief, and fraud review.
+- [Document integrity](explanation/document-integrity.md) — explanation. Fingerprint/provenance, signals, combined extraction/consistency/brief pass, and fraud review.
 - [Agentic memo](explanation/agentic-memo.md) - explanation. Bounded tool loop, allowlisted evidence tools, validation/repair, trace, replay, and writer modes.
 - [Credit pipeline pain points](explanation/credit-pipeline-pain-points.md) — research. Bank and credit-officer bottlenecks, current coverage, and feature options.
 - [Extend the pipeline](how-to/extend-the-pipeline.md) — how-to. Recipes for routes, events, migrations, policy, and demo checks.

@@ -1,9 +1,10 @@
-// Deterministic flag evaluation + triage enqueue.
+// Deterministic flag evaluation + one async integrity run.
 //
-// Runs only after an officer/service mutation. Applicant uploads never create
-// items or spend triage budget. Both feature flags are required. Evaluation is
-// best-effort at the route boundary: the deterministic computation is
-// synchronous, and a failure is audited without failing the primary action.
+// An officer mutation or the manual evaluate route computes deterministic
+// signals. At/above the threshold it creates/updates one case-level item and
+// queues the single integrity agent run (candidates + optional brief). New
+// evidence on an already-open item re-queues the same run, keeping the brief
+// current. Applicant evidence changes only refresh an existing item.
 
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { documentIntegrityRuns, fraudReviews } from "@credit/db/applications";
@@ -11,9 +12,9 @@ import { hashCanonical } from "@credit/core";
 import { writeAudit } from "@credit/service-kit";
 import { createFraudReview, findActiveFraudReview } from "./fraud.js";
 import {
+	analysisInputHash,
+	createIntegrityRun,
 	drainIntegrityRunsSafely,
-	enqueueTriageRun,
-	triageInputHash,
 	type IntegrityRunDeps,
 } from "./runs.js";
 import { loadIntegritySource } from "./source.js";
@@ -57,7 +58,7 @@ function sourceHash(source: IntegritySource, signals: DeterministicSignal[]): st
 	});
 }
 
-async function latestTriageRun(
+async function latestReviewRun(
 	deps: IntegrityRunDeps,
 	reviewId: string,
 ): Promise<typeof documentIntegrityRuns.$inferSelect | null> {
@@ -67,7 +68,7 @@ async function latestTriageRun(
 		.where(
 			and(
 				eq(documentIntegrityRuns.fraudReviewId, reviewId),
-				eq(documentIntegrityRuns.feature, "document_triage"),
+				eq(documentIntegrityRuns.feature, "document_analysis"),
 			),
 		)
 		.orderBy(desc(documentIntegrityRuns.createdAt))
@@ -98,7 +99,8 @@ async function markBriefStale(
 	});
 }
 
-async function synchronizeTriage(
+/** Queue (or replay) the single integrity run for an active review. */
+async function synchronizeRun(
 	deps: IntegrityRunDeps,
 	input: {
 		source: IntegritySource;
@@ -107,50 +109,60 @@ async function synchronizeTriage(
 		now: Date;
 	},
 ): Promise<void> {
-	const currentHash = triageInputHash(input.source, deps.config, input.review.id);
-	const latest = await latestTriageRun(deps, input.review.id);
+	if (!deps.config.triageEnabled) return;
+	const currentHash = analysisInputHash(input.source, deps.config, {
+		generateBrief: true,
+		reviewId: input.review.id,
+	});
+	const latest = await latestReviewRun(deps, input.review.id);
 	if (
-		input.review.briefStaleAt === null &&
 		latest &&
 		latest.inputHash === currentHash &&
-		["queued", "running", "succeeded"].includes(latest.status)
+		["queued", "running", "succeeded"].includes(latest.status) &&
+		input.review.briefArtifactId !== null &&
+		input.review.briefStaleAt === null
 	) {
 		return;
 	}
 	if (input.review.briefArtifactId) {
 		await markBriefStale(deps, input.review.id, input.review.applicationId, input.now);
 	}
-	const queued = await enqueueTriageRun(deps, {
+	const queued = await createIntegrityRun(deps, {
 		applicationId: input.review.applicationId,
-		reviewId: input.review.id,
-		reviewVersion: input.review.version,
-		source: input.source,
+		inputHash: currentHash,
+		documentSha256: input.source.documents.map((doc) => doc.sha256).sort(),
 		requestedBy: input.requestedBy,
+		generateBrief: true,
+		fraudReviewId: input.review.id,
+		reviewVersion: input.review.version,
+		now: input.now,
 	});
-	if (queued) {
-		await deps.db.transaction(async (tx) => {
-			await writeAudit(tx, {
-				applicationId: input.review.applicationId,
-				actor: "system:integrity-evaluate",
-				action: "integrity.triage_queued",
-				entity: "document_integrity_run",
-				payload: {
-					feature: "document_integrity",
-					reviewId: input.review.id,
-					runId: queued.run.id,
-					replayed: queued.replayed,
-					model: deps.config.model,
-					promptVersion: deps.config.triagePromptVersion,
-					agentVersion: deps.config.agentVersion,
-				},
-			});
+	await deps.db.transaction(async (tx) => {
+		await tx
+			.update(fraudReviews)
+			.set({ agentRunId: queued.run.id })
+			.where(eq(fraudReviews.id, input.review.id));
+		await writeAudit(tx, {
+			applicationId: input.review.applicationId,
+			actor: "system:integrity-evaluate",
+			action: "integrity.run_queued",
+			entity: "document_integrity_run",
+			payload: {
+				feature: "document_integrity",
+				reviewId: input.review.id,
+				runId: queued.run.id,
+				replayed: queued.replayed,
+				model: deps.config.model,
+				promptVersion: deps.config.promptVersion,
+				agentVersion: deps.config.agentVersion,
+			},
 		});
-		void drainIntegrityRunsSafely(deps);
-	}
+	});
+	void drainIntegrityRunsSafely(deps);
 }
 
-/** Manual/created-item path: load the triage snapshot and queue a brief. */
-export async function queueTriageForReview(
+/** Manual/created-item path: queue the combined run for an active item. */
+export async function queueIntegrityRunForReview(
 	deps: IntegrityRunDeps,
 	input: {
 		applicationId: string;
@@ -164,7 +176,7 @@ export async function queueTriageForReview(
 		includeCustomerEvidence: true,
 		now,
 	});
-	await synchronizeTriage(deps, {
+	await synchronizeRun(deps, {
 		source,
 		review: input.review,
 		requestedBy: input.requestedBy,
@@ -172,8 +184,8 @@ export async function queueTriageForReview(
 	});
 }
 
-/** Applicant/service evidence change on an already-open review: mark the
- * brief stale and queue a fresh triage run without creating a new flag. */
+/** Applicant/service evidence change on an already-open review: refresh the
+ * combined run without creating a new flag. */
 export async function requeueActiveReviewForEvidenceChange(
 	deps: IntegrityRunDeps,
 	input: { applicationId: string; requestedBy: string; now?: Date },
@@ -186,7 +198,7 @@ export async function requeueActiveReviewForEvidenceChange(
 		includeCustomerEvidence: true,
 		now,
 	});
-	await synchronizeTriage(deps, {
+	await synchronizeRun(deps, {
 		source,
 		review,
 		requestedBy: input.requestedBy,
@@ -194,8 +206,8 @@ export async function requeueActiveReviewForEvidenceChange(
 	});
 }
 
-/** Evaluate signals, create/refresh one active item, and queue triage when the
- * evidence hash changed. Caller has already checked assigned case access. */
+/** Evaluate signals, create/refresh one active item, and queue the one
+ * combined run. Caller has already checked assigned case access. */
 export async function evaluateIntegrity(
 	deps: IntegrityRunDeps,
 	input: EvaluateIntegrityInput,
@@ -212,13 +224,10 @@ export async function evaluateIntegrity(
 		now,
 	});
 	const signals = source.signals;
+	const existing = await findActiveFraudReview(deps.db, input.applicationId);
 	if (!shouldFlag(signals, deps.config.flagSeverity)) {
-		const existing = await findActiveFraudReview(deps.db, input.applicationId);
 		if (existing) {
-			// New evidence can arrive while an item is already open; the brief
-			// must go stale and be regenerated even when no new threshold is
-			// crossed.
-			await synchronizeTriage(deps, {
+			await synchronizeRun(deps, {
 				source,
 				review: existing,
 				requestedBy: input.actor.id,
@@ -250,7 +259,7 @@ export async function evaluateIntegrity(
 		customerProfileId: source.customerProfileId,
 		now,
 	});
-	await synchronizeTriage(deps, {
+	await synchronizeRun(deps, {
 		source,
 		review,
 		requestedBy: input.actor.id,
