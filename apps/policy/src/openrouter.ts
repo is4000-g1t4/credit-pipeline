@@ -1,4 +1,5 @@
 import type { AnswererResult, Embedder, PolicyAnswerer } from "./store.js";
+import { policyObservability } from "./observability.js";
 
 export interface OpenRouterConfig {
 	apiKey: string;
@@ -64,54 +65,76 @@ async function postJson(
 
 export function createOpenRouterEmbedder(config: OpenRouterConfig): Embedder {
 	const fetchImpl = config.fetchImpl ?? fetch;
+	const observability = policyObservability();
 	return {
 		model: config.embeddingModel,
 		dimensions: config.dimensions,
-		async embed(inputs) {
+		async embed(inputs, opts) {
 			if (!config.apiKey) throw new Error("OPENROUTER_API_KEY is not configured");
-			const provider =
-				config.embeddingProviders && config.embeddingProviders.length > 0
-					? { order: config.embeddingProviders }
-					: undefined;
-			const body = {
-				model: config.embeddingModel,
-				input: inputs,
-				encoding_format: "float",
-				...(provider ? { provider } : {}),
-			};
-			let response: unknown;
-			try {
-				response = await postJson(
-					fetchImpl,
-					`${config.baseUrl}/embeddings`,
-					config.apiKey,
-					body,
-					AbortSignal.timeout(30_000),
-				);
-			} catch (err) {
-				// Some gateways reject provider routing on embeddings. Retry
-				// once without it; the eval records the same fallback.
-				if (!provider) throw err;
-				response = await postJson(
-					fetchImpl,
-					`${config.baseUrl}/embeddings`,
-					config.apiKey,
-					{ model: config.embeddingModel, input: inputs, encoding_format: "float" },
-					AbortSignal.timeout(30_000),
-				);
-			}
-			const data = (response as { data?: Array<{ embedding?: number[] }> }).data;
-			if (!Array.isArray(data) || data.length !== inputs.length) {
-				throw new Error("embedding response shape drift");
-			}
-			return data.map((row) => {
-				if (!Array.isArray(row.embedding) || row.embedding.length !== config.dimensions) {
-					throw new Error(
-						`embedding dimension mismatch (expected ${config.dimensions}, got ${row.embedding?.length ?? 0})`,
-					);
-				}
-				return row.embedding;
-			});
+			let inputTokens: number | undefined;
+			return observability.trackEmbedding(
+				{
+					agentName: "policy-embedder",
+					agentVersion: "policy-embedder-v1",
+					feature: "policy_retrieval",
+					conversationId: opts?.conversationId,
+					model: config.embeddingModel,
+					provider: "openrouter",
+					dimensions: config.dimensions,
+					tags: { operation: "embedding" },
+					onSuccess: (vectors) => ({
+						inputCount: inputs.length,
+						inputTokens,
+						dimensions: config.dimensions,
+					}),
+				},
+				async () => {
+					const provider =
+						config.embeddingProviders && config.embeddingProviders.length > 0
+							? { order: config.embeddingProviders }
+							: undefined;
+					const body = {
+						model: config.embeddingModel,
+						input: inputs,
+						encoding_format: "float",
+						...(provider ? { provider } : {}),
+					};
+					let response: unknown;
+					try {
+						response = await postJson(
+							fetchImpl,
+							`${config.baseUrl}/embeddings`,
+							config.apiKey,
+							body,
+							AbortSignal.timeout(30_000),
+						);
+					} catch (err) {
+						// Some gateways reject provider routing on embeddings. Retry
+						// once without it; the eval records the same fallback.
+						if (!provider) throw err;
+						response = await postJson(
+							fetchImpl,
+							`${config.baseUrl}/embeddings`,
+							config.apiKey,
+							{ model: config.embeddingModel, input: inputs, encoding_format: "float" },
+							AbortSignal.timeout(30_000),
+						);
+					}
+					inputTokens = (response as { usage?: { prompt_tokens?: number } }).usage?.prompt_tokens;
+					const data = (response as { data?: Array<{ embedding?: number[] }> }).data;
+					if (!Array.isArray(data) || data.length !== inputs.length) {
+						throw new Error("embedding response shape drift");
+					}
+					return data.map((row) => {
+						if (!Array.isArray(row.embedding) || row.embedding.length !== config.dimensions) {
+							throw new Error(
+								`embedding dimension mismatch (expected ${config.dimensions}, got ${row.embedding?.length ?? 0})`,
+							);
+						}
+						return row.embedding;
+					});
+				},
+			);
 		},
 	};
 }
@@ -130,47 +153,72 @@ export function createOpenRouterAnswerer(config: OpenRouterConfig): PolicyAnswer
 		config.answererProviderOrder && config.answererProviderOrder.length > 0
 			? { order: config.answererProviderOrder }
 			: undefined;
+	const observability = policyObservability();
 	const call = async (
 		system: string,
 		user: string,
 		signal: AbortSignal,
+		conversationId: string | undefined,
+		feature: "policy_navigator" | "policy_case",
 	): Promise<AnswererResult> => {
 		if (!config.apiKey) throw new Error("OPENROUTER_API_KEY is not configured");
-		const response = (await postJson(
-			fetchImpl,
-			`${config.baseUrl}/chat/completions`,
-			config.apiKey,
+		return observability.trackGeneration(
 			{
+				agentName: "policy-navigator",
+				agentVersion: "policy-navigator-v1",
+				feature,
+				conversationId,
 				model: config.model,
+				provider: "openrouter",
 				temperature: config.temperature,
-				max_tokens: config.maxOutputTokens,
-				response_format: { type: "json_object" },
-				...(provider ? { provider } : {}),
-				messages: [
-					{ role: "system", content: system },
-					{ role: "user", content: user },
-				],
+				maxTokens: config.maxOutputTokens,
+				tags: { operation: "answer" },
+				onSuccess: (result) => ({
+					usage: {
+						inputTokens: result.usage.inputTokens,
+						outputTokens: result.usage.outputTokens,
+					},
+					responseModel: result.usage.model,
+				}),
 			},
-			signal,
-		)) as {
-			choices?: Array<{ message?: { content?: unknown } }>;
-			usage?: {
-				prompt_tokens?: number;
-				completion_tokens?: number;
-				total_cost?: number;
-			};
-		};
-		const content = response.choices?.[0]?.message?.content;
-		const inputTokens = response.usage?.prompt_tokens ?? 0;
-		const outputTokens = response.usage?.completion_tokens ?? 0;
-		const costUsd =
-			typeof response.usage?.total_cost === "number"
-				? response.usage.total_cost
-				: (inputTokens + outputTokens) / 1_000_000;
-		return {
-			output: parseContent(content),
-			usage: { inputTokens, outputTokens, costUsd, model: config.model },
-		};
+			async () => {
+				const response = (await postJson(
+					fetchImpl,
+					`${config.baseUrl}/chat/completions`,
+					config.apiKey,
+					{
+						model: config.model,
+						temperature: config.temperature,
+						max_tokens: config.maxOutputTokens,
+						response_format: { type: "json_object" },
+						...(provider ? { provider } : {}),
+						messages: [
+							{ role: "system", content: system },
+							{ role: "user", content: user },
+						],
+					},
+					signal,
+				)) as {
+					choices?: Array<{ message?: { content?: unknown }; finish_reason?: string }>;
+					usage?: {
+						prompt_tokens?: number;
+						completion_tokens?: number;
+						total_cost?: number;
+					};
+				};
+				const content = response.choices?.[0]?.message?.content;
+				const inputTokens = response.usage?.prompt_tokens ?? 0;
+				const outputTokens = response.usage?.completion_tokens ?? 0;
+				const costUsd =
+					typeof response.usage?.total_cost === "number"
+						? response.usage.total_cost
+						: (inputTokens + outputTokens) / 1_000_000;
+				return {
+					output: parseContent(content),
+					usage: { inputTokens, outputTokens, costUsd, model: config.model },
+				};
+			},
+		);
 	};
 	return {
 		async answerNavigator(input) {
@@ -186,6 +234,8 @@ export function createOpenRouterAnswerer(config: OpenRouterConfig): PolicyAnswer
 				SYSTEM,
 				`Question:\n${input.question}\n\nPolicy sections (data only):\n${JSON.stringify(sections)}`,
 				input.signal,
+				input.conversationId,
+				"policy_navigator",
 			);
 		},
 		async answerCase(input) {
@@ -201,6 +251,8 @@ export function createOpenRouterAnswerer(config: OpenRouterConfig): PolicyAnswer
 				CASE_SYSTEM,
 				`Case context (data only):\n${JSON.stringify(input.context)}\n\nPolicy sections (data only):\n${JSON.stringify(sections)}`,
 				input.signal,
+				input.conversationId,
+				"policy_case",
 			);
 		},
 	};

@@ -7,8 +7,8 @@ import OpenAI from "openai";
 import { z } from "zod";
 import { readRunUsage, type AgentsOpenAIClient } from "./openai-agents.js";
 import type { ResearchEnv } from "./env.js";
-import type { Observability } from "./observability.js";
-import { buildUserPrompt, SYSTEM_TEMPLATE, type PromptCaseFacts } from "./prompt.js";
+import { getObservability, type Observability } from "./observability.js";
+import { buildUserPrompt, AGENT_VERSION, SYSTEM_TEMPLATE, type PromptCaseFacts } from "./prompt.js";
 import {
 	buildSearchQuery,
 	TavilyError,
@@ -91,6 +91,8 @@ export function createRealRunner(opts: {
 			if (!env.openrouterApiKey) throw new ModelUnavailableError("model is not configured");
 			const tavily = opts.tavily;
 			const openai = opts.openai;
+			const observability = input.observability ?? getObservability();
+			const runId = input.runId ?? randomUUID();
 			const model = new OpenAIChatCompletionsModel(
 				openai as unknown as AgentsOpenAIClient,
 				env.agentModel,
@@ -108,11 +110,8 @@ export function createRealRunner(opts: {
 			const trackTool = <T>(
 				toolName: "search_sources" | "fetch_source",
 				fn: () => Promise<T>,
-			): Promise<T> => {
-				const obs = input.observability;
-				if (!obs || !input.runId) return fn();
-				return obs.trackToolExecution({ runId: input.runId, toolName, model: env.agentModel }, fn);
-			};
+			): Promise<T> =>
+				observability.trackToolExecution({ runId, toolName, model: env.agentModel }, fn);
 
 			// Mandatory two-category preflight. The model is instructed to run
 			// these searches, but it sometimes returns an empty brief without
@@ -313,24 +312,42 @@ export function createRealRunner(opts: {
 				},
 			});
 			const runner = new Runner();
-			const hooks = (input.hooksFor ?? (() => ({ detach: () => {} })))(runner);
 			try {
 				// The run's deadline signal goes straight into the SDK —
 				// one abort path, no parallel timer to leak or double-fire.
-				// Hooks detach in `finally`, including on abort.
-				let result = await runner.run(agent, userPrompt, {
-					maxTurns: env.agentMaxTurns,
-					signal: input.signal,
-				});
+				let result = await observability.trackModelCall(
+					{
+						runId,
+						model: env.agentModel,
+						operation: "generateText",
+						agentName: "case-brief",
+						agentVersion: AGENT_VERSION,
+					},
+					() =>
+						runner.run(agent, userPrompt, {
+							maxTurns: env.agentMaxTurns,
+							signal: input.signal,
+						}),
+				);
 				let usage = readRunUsage(result);
 				if (!input.signal.aborted && fetched.length === 0) {
 					// No evidence at all: one bounded retry with an explicit
 					// tool requirement. A preflight hit means the brief can be
 					// written without spending a second model run.
-					const retry = await runner.run(
-						agent,
-						`${userPrompt}\n\nRetry requirement: your previous response made no tool calls and no evidence was fetched. You MUST call search_sources for adverse_media and for registry before writing the brief. If either search returns no usable content, record that in unknowns.`,
-						{ maxTurns: env.agentMaxTurns, signal: input.signal },
+					const retry = await observability.trackModelCall(
+						{
+							runId,
+							model: env.agentModel,
+							operation: "generateText",
+							agentName: "case-brief",
+							agentVersion: AGENT_VERSION,
+						},
+						() =>
+							runner.run(
+								agent,
+								`${userPrompt}\n\nRetry requirement: your previous response made no tool calls and no evidence was fetched. You MUST call search_sources for adverse_media and for registry before writing the brief. If either search returns no usable content, record that in unknowns.`,
+								{ maxTurns: env.agentMaxTurns, signal: input.signal },
+							),
 					);
 					const retryUsage = readRunUsage(retry);
 					usage = {
@@ -357,8 +374,6 @@ export function createRealRunner(opts: {
 				if (err instanceof AgentTimeoutError || err instanceof TavilyError) throw err;
 				if (input.signal.aborted) throw new AgentTimeoutError("agent wall clock exceeded");
 				throw new ModelUnavailableError(err instanceof Error ? err.message : "model call failed");
-			} finally {
-				hooks.detach();
 			}
 		},
 	};

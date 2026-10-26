@@ -11,6 +11,7 @@ e2e/.e2e-pids.json
 .tanstack/
 .data/
 .scratch/
+.opencode/
 artifacts/
 pipeline.html
 .DS_Store

@@ -58,14 +58,16 @@ export function embeddingText(section: RetrievedSection): string {
 
 export async function embedCorpus(
 	sections: CorpusSection[],
-	embedder: { embed(inputs: string[]): Promise<number[][]> },
+	embedder: { embed(inputs: string[], opts?: { conversationId?: string }): Promise<number[][]> },
 	model: string,
 	dimensions: number,
 	batchSize = 16,
 ): Promise<void> {
 	for (let i = 0; i < sections.length; i += batchSize) {
 		const batch = sections.slice(i, i + batchSize);
-		const vectors = await embedder.embed(batch.map(embeddingText));
+		const vectors = await embedder.embed(batch.map(embeddingText), {
+			conversationId: "policy-eval:corpus",
+		});
 		for (const [j, section] of batch.entries()) {
 			const vector = vectors[j];
 			if (!vector || vector.length !== dimensions) {

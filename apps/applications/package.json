@@ -15,6 +15,7 @@
 		"eval:integrity": "tsx eval/integrity-eval.ts"
 	},
 	"dependencies": {
+		"@credit/agent-observability": "workspace:*",
 		"@credit/core": "workspace:*",
 		"@credit/db": "workspace:*",
 		"@credit/service-kit": "workspace:*",

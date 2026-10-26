@@ -2,6 +2,7 @@
 // `OpenAIChatCompletionsModel` + `Runner` + `tool`) over the pure evidence
 // tools. The orchestrator (`memo-agent.ts`) owns bounds, grounding, repair
 // policy, and the trace; this module produces one raw draft per `run`.
+import { randomUUID } from "node:crypto";
 import {
 	Agent,
 	MaxTurnsExceededError,
@@ -12,6 +13,7 @@ import {
 import OpenAI, { APIConnectionTimeoutError } from "openai";
 import type { applications } from "@credit/db/applications";
 import type { EvidenceBundle } from "@credit/core";
+import { applicationObservability } from "../observability.js";
 import { MemoAgentError, type MemoAgentRunner, type MemoAgentRunResult } from "./memo-agent.js";
 import {
 	getEvidenceParams,
@@ -28,6 +30,8 @@ export interface AgentsMemoRunnerOptions {
 	apiKey: string;
 	baseUrl: string;
 	model: string;
+	agentVersion?: string;
+	promptVersion?: string;
 	maxToolCalls: number;
 	maxOutputTokens: number;
 	timeoutMs: number;
@@ -101,6 +105,8 @@ export function createAgentsMemoRunner(opts: AgentsMemoRunnerOptions): MemoAgent
 	return {
 		async run(input): Promise<MemoAgentRunResult> {
 			if (!opts.apiKey) throw new MemoAgentError("MODEL_ERROR");
+			const observability = applicationObservability();
+			const conversationId = input.conversationId ?? randomUUID();
 			const openai = new OpenAI({
 				apiKey: opts.apiKey,
 				baseURL: opts.baseUrl,
@@ -116,13 +122,23 @@ export function createAgentsMemoRunner(opts: AgentsMemoRunnerOptions): MemoAgent
 			const toolCalls: MemoAgentRunResult["toolCalls"] = [];
 			const seenRefs = new Set<string>();
 			const budget = { calls: 0, exceeded: false };
-			const invoke = (name: string, args: unknown): string => {
+			const invoke = async (name: string, args: unknown): Promise<string> => {
 				budget.calls += 1;
 				if (budget.calls > opts.maxToolCalls) {
 					budget.exceeded = true;
 					throw new Error(`memo tool budget exceeded after ${opts.maxToolCalls} calls`);
 				}
-				const outcome = runMemoEvidenceTool(name, args, input.evidence);
+				const outcome = await observability.trackToolExecution(
+					{
+						agentName: "credit-memo-writer",
+						agentVersion: opts.agentVersion ?? "memo-agent-v1",
+						feature: "memo",
+						conversationId,
+						toolName: name,
+						model: opts.model,
+					},
+					async () => runMemoEvidenceTool(name, args, input.evidence),
+				);
 				toolCalls.push({
 					step: toolCalls.length + 1,
 					name: name.slice(0, 80),
@@ -180,13 +196,37 @@ export function createAgentsMemoRunner(opts: AgentsMemoRunnerOptions): MemoAgent
 			// deadline, combined up front instead of a parallel timer.
 			const timeout = AbortSignal.timeout(opts.timeoutMs);
 			const signal = input.signal ? AbortSignal.any([input.signal, timeout]) : timeout;
+			const runner = new Runner();
 			try {
 				// ponytail: maxTurns covers one tool round per call plus the
 				// final draft; exact step accounting lives in the orchestrator.
-				const result = await new Runner().run(agent, prompt, {
-					maxTurns: Math.max(2, input.maxTurns),
-					signal,
-				});
+				const result = await observability.trackGeneration(
+					{
+						agentName: "credit-memo-writer",
+						agentVersion: opts.agentVersion ?? "memo-agent-v1",
+						feature: "memo",
+						conversationId,
+						model: opts.model,
+						provider: "openrouter",
+						tags: { operation: "agent" },
+						metadata: { promptVersion: opts.promptVersion },
+						onSuccess: (value) => {
+							const runUsage = readRunUsage(value);
+							return {
+								usage: {
+									inputTokens: runUsage.inputTokens,
+									outputTokens: runUsage.outputTokens,
+								},
+								responseModel: opts.model,
+							};
+						},
+					},
+					() =>
+						runner.run(agent, prompt, {
+							maxTurns: Math.max(2, input.maxTurns),
+							signal,
+						}),
+				);
 				if (budget.exceeded) throw new MemoAgentError("TOOL_CALL_LIMIT");
 				const usage = readRunUsage(result);
 				return {

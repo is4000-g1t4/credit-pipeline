@@ -411,6 +411,7 @@ export async function drainIntegrityRuns(deps: IntegrityRunDeps): Promise<void> 
 			config: deps.config,
 			evidenceHash: claimed.input_hash,
 			generateBrief,
+			conversationId: claimed.id,
 		});
 		const persisted = await deps.db.transaction(async (tx) => {
 			await lockApplication(tx, claimed.application_id, 5_000);

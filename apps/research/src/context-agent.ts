@@ -7,6 +7,7 @@
 // observed, so it can correct tuples without inventing new data. Validation
 // lives in run.ts; the runner only produces raw output plus the snapshots
 // and evidence the validator needs.
+import { randomUUID } from "node:crypto";
 import { Agent, OpenAIChatCompletionsModel, Runner, tool } from "@openai/agents";
 import OpenAI from "openai";
 import { z } from "zod";
@@ -14,7 +15,7 @@ import { readRunUsage, type AgentsOpenAIClient } from "./openai-agents.js";
 import { createContextTools, ContextToolError, type CandidateSnapshot } from "./context-tools.js";
 import { contextModelOutputSchema, CONTEXT_PROMPT_VERSION } from "./context-validator.js";
 import type { ResearchEnv } from "./env.js";
-import type { Observability } from "./observability.js";
+import { getObservability, type Observability } from "./observability.js";
 
 export interface ContextUsage {
 	inputTokens: number;
@@ -396,14 +397,20 @@ async function runContextModel(
 	// it so the stage appends a server-authored stop gap instead of
 	// presenting a complete-looking review.
 	const budget: ModelBudget = { calls: 0, exceeded: false };
+	const observability = input.observability ?? getObservability();
+	const runId = input.runId ?? randomUUID();
 	const track = (name: string, fn: () => Promise<string>): Promise<string> => {
 		if (nextModelBudgetCall(budget, env.contextMaxToolCalls) !== null) {
 			return Promise.resolve(MODEL_BUDGET_STOP);
 		}
-		const obs = input.observability;
-		if (!obs || !input.runId) return fn();
-		return obs.trackToolExecution(
-			{ runId: input.runId, toolName: name, model: env.contextModel },
+		return observability.trackToolExecution(
+			{
+				runId,
+				toolName: name,
+				model: env.contextModel,
+				agentName: "context-analyst",
+				agentVersion: CONTEXT_PROMPT_VERSION,
+			},
 			fn,
 		);
 	};
@@ -520,17 +527,21 @@ async function runContextModel(
 		},
 	});
 	const runner = new Runner();
-	const hooks = input.observability?.hooksFor(runner, {
-		runId: input.runId ?? input.applicationId,
-		asOf: input.asOfDate,
-		promptVersion: CONTEXT_PROMPT_VERSION,
-		model: env.contextModel,
-	});
 	try {
-		const result = await runner.run(agent, prompt, {
-			maxTurns: isRepair ? 4 : env.contextMaxTurns,
-			signal: input.signal,
-		});
+		const result = await observability.trackModelCall(
+			{
+				runId,
+				model: env.contextModel,
+				operation: "generateText",
+				agentName: "context-analyst",
+				agentVersion: CONTEXT_PROMPT_VERSION,
+			},
+			() =>
+				runner.run(agent, prompt, {
+					maxTurns: isRepair ? 4 : env.contextMaxTurns,
+					signal: input.signal,
+				}),
+		);
 		if (result.finalOutput === null || result.finalOutput === undefined) {
 			throw new Error("context model returned no structured output");
 		}
@@ -545,8 +556,6 @@ async function runContextModel(
 		throw new ContextUnavailableError(
 			err instanceof Error ? err.message : "context model call failed",
 		);
-	} finally {
-		hooks?.detach();
 	}
 }
 

@@ -9,6 +9,7 @@ Related: [API](../reference/api.md#document-integrity-e2--en-04en-05) (route
 contract and error codes),
 [configuration](../reference/configuration.md) (`DOCUMENT_INTEGRITY_*`,
 `FRAUD_REVIEW_ENABLED`),
+[agent observability](agent-observability.md) (generation/trace verification),
 [data and events](../reference/data-and-events.md) (artifact storage and audit).
 
 Non-negotiables:

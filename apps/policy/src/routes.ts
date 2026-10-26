@@ -241,7 +241,7 @@ export function createPolicyRoutes(deps: PolicyDeps): Hono<{ Variables: ServiceV
 		);
 		try {
 			const active = await requireActiveIndex(store, env);
-			const [vector] = await deps.embedder.embed([question]);
+			const [vector] = await deps.embedder.embed([question], { conversationId: queryId });
 			if (!vector) throw new Error("policy query embedding is empty");
 			const chunks = await store.loadChunks({
 				asOf,
@@ -268,6 +268,7 @@ export function createPolicyRoutes(deps: PolicyDeps): Hono<{ Variables: ServiceV
 				question,
 				sections: ranked,
 				signal: AbortSignal.timeout(env.agentTimeoutMs),
+				conversationId: queryId,
 			});
 			const validation = validateNavigatorAnswer(result.output, ranked, {
 				secret: env.citationSecret,
@@ -372,7 +373,7 @@ export function createPolicyRoutes(deps: PolicyDeps): Hono<{ Variables: ServiceV
 		try {
 			const active = await requireActiveIndex(store, env);
 			const retrievalText = caseRetrievalText(caseContext);
-			const [vector] = await deps.embedder.embed([retrievalText]);
+			const [vector] = await deps.embedder.embed([retrievalText], { conversationId: queryId });
 			if (!vector) throw new Error("case query embedding is empty");
 			const chunks = await store.loadChunks({
 				asOf: caseContext.asOf,
@@ -405,6 +406,7 @@ export function createPolicyRoutes(deps: PolicyDeps): Hono<{ Variables: ServiceV
 				context: caseContext,
 				sections: ranked,
 				signal: AbortSignal.timeout(env.caseTimeoutMs),
+				conversationId: queryId,
 			});
 			const validation = validateCaseAnswer(result.output, caseContext, ranked, {
 				secret: env.citationSecret,

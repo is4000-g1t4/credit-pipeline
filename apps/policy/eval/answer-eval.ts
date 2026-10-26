@@ -26,6 +26,7 @@ import {
 	createOpenRouterEmbedder,
 	POLICY_ANSWERER_PROMPT_VERSION,
 } from "../src/openrouter.js";
+import { policyObservability } from "../src/observability.js";
 import { rankChunks } from "../src/retrieval.js";
 import { embedCorpus, loadCorpus, type CorpusSection } from "./corpus.js";
 
@@ -350,6 +351,7 @@ async function runTrial(
 	c: AnswerCase,
 	corpus: CorpusSection[],
 	timeoutMs: number,
+	trial: number,
 ): Promise<TrialRow> {
 	const started = Date.now();
 	const expected = expectedList(c.expectedStatus);
@@ -390,6 +392,7 @@ async function runTrial(
 					question: c.question,
 					sections: ranked,
 					signal: AbortSignal.timeout(timeoutMs),
+					conversationId: `policy-eval:${c.id}:${trial}`,
 				});
 				usage = {
 					inputTokens: result.usage.inputTokens,
@@ -533,7 +536,7 @@ async function main(): Promise<void> {
 	for (const c of selected) {
 		for (let t = 0; t < trials; t++) {
 			console.log(`  ${c.id} trial ${t + 1}/${trials} ...`);
-			rows.push(await runTrial(c, corpus, timeoutMs));
+			rows.push(await runTrial(c, corpus, timeoutMs, t));
 			if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
 		}
 	}
@@ -675,3 +678,4 @@ async function main(): Promise<void> {
 }
 
 await main();
+await policyObservability().shutdown();

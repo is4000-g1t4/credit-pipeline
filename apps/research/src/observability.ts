@@ -23,7 +23,7 @@ export interface RunHooks {
 }
 
 /** Direct-model-call operations tracked as generations under the run conversation. */
-export type ModelOperation = "agent" | "language_repair" | "support_judge";
+export type ModelOperation = "agent" | "generateText" | "language_repair" | "support_judge";
 
 export interface ModelCallOpts {
 	/** Run id doubles as the Grafana conversation id (not PII). */
@@ -31,6 +31,8 @@ export interface ModelCallOpts {
 	/** Exact model name (e.g. deepseek/deepseek-v3.2-exp). */
 	model: string;
 	operation: ModelOperation;
+	agentName?: string;
+	agentVersion?: string;
 }
 
 export interface Observability {
@@ -54,9 +56,17 @@ export interface Observability {
 	 * never arguments or results. Always executes `fn`, never fails the run.
 	 */
 	trackToolExecution<T>(
-		opts: { runId: string; toolName: string; model?: string },
+		opts: {
+			runId: string;
+			toolName: string;
+			model?: string;
+			agentName?: string;
+			agentVersion?: string;
+		},
 		fn: () => Promise<T>,
 	): Promise<T>;
+	/** Flush/shutdown for short-lived eval processes. */
+	shutdown?(): Promise<void>;
 }
 
 const NOOP: Observability = {
@@ -64,6 +74,7 @@ const NOOP: Observability = {
 	hooksFor: () => ({ detach: () => {} }),
 	trackModelCall: (_opts, fn) => fn(),
 	trackToolExecution: (_opts, fn) => fn(),
+	shutdown: async () => {},
 };
 
 let cached: Observability | null = null;
@@ -80,6 +91,7 @@ export function getObservability(): Observability {
 			cached = NOOP;
 			return cached;
 		}
+		process.env.OTEL_SERVICE_NAME ??= "credit-research";
 		const client = new Agento11yClient({
 			contentCapture: "metadata_only",
 			generationExport: { timeoutMs: EXPORT_TIMEOUT_MS },
@@ -89,8 +101,9 @@ export function getObservability(): Observability {
 		// the existing OTEL_EXPORTER_OTLP_* env. Skip when unconfigured so
 		// tests/local runs stay hermetic instead of dialling localhost.
 		let sdkOk = false;
+		let sdk: NodeSDK | undefined;
 		if (process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
-			const sdk = new NodeSDK({
+			sdk = new NodeSDK({
 				traceExporter: new OTLPTraceExporter({ timeoutMillis: EXPORT_TIMEOUT_MS }),
 				metricReader: new PeriodicExportingMetricReader({
 					exporter: new OTLPMetricExporter({ timeoutMillis: EXPORT_TIMEOUT_MS }),
@@ -99,7 +112,7 @@ export function getObservability(): Observability {
 			sdk.start();
 			sdkOk = true;
 			process.once("beforeExit", () => {
-				void Promise.race([sdk.shutdown(), new Promise((r) => setTimeout(r, EXPORT_TIMEOUT_MS))]);
+				void Promise.race([sdk?.shutdown(), new Promise((r) => setTimeout(r, EXPORT_TIMEOUT_MS))]);
 			});
 		}
 		let degraded = !sdkOk;
@@ -151,8 +164,8 @@ export function getObservability(): Observability {
 				() =>
 					client.startGeneration({
 						conversationId: opts.runId,
-						agentName: "case-brief",
-						agentVersion: AGENT_VERSION,
+						agentName: opts.agentName ?? "case-brief",
+						agentVersion: opts.agentVersion ?? AGENT_VERSION,
 						operationName: opts.operation,
 						model: { provider: "openrouter", name: opts.model },
 						temperature: 0,
@@ -180,6 +193,22 @@ export function getObservability(): Observability {
 			get status(): "ok" | "degraded" {
 				return degraded ? "degraded" : "ok";
 			},
+			shutdown: async () => {
+				try {
+					await Promise.race([
+						client.shutdown(),
+						new Promise((resolve) => setTimeout(resolve, EXPORT_TIMEOUT_MS)),
+					]);
+					if (sdk) {
+						await Promise.race([
+							sdk.shutdown(),
+							new Promise((resolve) => setTimeout(resolve, EXPORT_TIMEOUT_MS)),
+						]);
+					}
+				} catch {
+					degraded = true;
+				}
+			},
 			trackModelCall,
 			trackToolExecution: async (opts, fn) =>
 				withRecorder(
@@ -187,8 +216,8 @@ export function getObservability(): Observability {
 						client.startToolExecution({
 							toolName: opts.toolName,
 							conversationId: opts.runId,
-							agentName: "case-brief",
-							agentVersion: AGENT_VERSION,
+							agentName: opts.agentName ?? "case-brief",
+							agentVersion: opts.agentVersion ?? AGENT_VERSION,
 							requestModel: opts.model,
 							requestProvider: "openrouter",
 							contentCapture: "metadata_only",
@@ -241,7 +270,11 @@ export function getObservability(): Observability {
  * the internal `inputTokens/outputTokens` carried by test doubles. */
 function readCallUsage(result: unknown): { inputTokens: number; outputTokens: number } | undefined {
 	if (typeof result !== "object" || result === null) return undefined;
-	const usage = (result as { usage?: unknown }).usage;
+	const r = result as {
+		state?: { usage?: unknown };
+		usage?: unknown;
+	};
+	const usage = r.state?.usage ?? r.usage;
 	if (typeof usage !== "object" || usage === null) return undefined;
 	const u = usage as {
 		prompt_tokens?: unknown;

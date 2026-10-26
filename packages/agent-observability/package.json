@@ -1,0 +1,26 @@
+{
+	"name": "@credit/agent-observability",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"@grafana/agento11y": "catalog:",
+		"@openai/agents": "catalog:",
+		"@opentelemetry/exporter-metrics-otlp-http": "catalog:",
+		"@opentelemetry/exporter-trace-otlp-http": "catalog:",
+		"@opentelemetry/sdk-metrics": "catalog:",
+		"@opentelemetry/sdk-node": "catalog:"
+	},
+	"devDependencies": {
+		"@types/node": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
+	}
+}

@@ -64,6 +64,8 @@ export interface MemoAgentRunner {
 		application: ApplicationRow;
 		evidence: EvidenceBundle;
 		signal: AbortSignal;
+		/** Grafana Agent Observability conversation id (metadata only). */
+		conversationId?: string;
 		/** SDK turn cap for this run. */
 		maxTurns: number;
 		repair?: {
@@ -147,6 +149,8 @@ export async function runMemoAgent(input: {
 	evidence: EvidenceBundle;
 	runner: MemoAgentRunner;
 	config: MemoAgentConfig;
+	/** Grafana Agent Observability conversation id (metadata only). */
+	runId?: string;
 	signal?: AbortSignal;
 }): Promise<{ content: CreditMemoContent; trace: MemoAgentTrace }> {
 	const { application, evidence, runner, config } = input;
@@ -167,6 +171,7 @@ export async function runMemoAgent(input: {
 				evidence,
 				signal: signal ?? AbortSignal.timeout(Math.max(0, deadline - Date.now())),
 				maxTurns: config.maxSteps,
+				...(input.runId ? { conversationId: input.runId } : {}),
 				...(repair ? { repair } : {}),
 			});
 		} catch (err) {

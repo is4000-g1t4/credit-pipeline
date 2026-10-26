@@ -7,6 +7,9 @@ dotenv.config({
 	path: fileURLToPath(new URL("../../../.env", import.meta.url)),
 });
 
+// Hermetic tests: never export generations or OTel spans to the Cloud tenant.
+process.env.OTEL_SDK_DISABLED = "true";
+
 import { randomBytes, randomUUID } from "node:crypto";
 import { createDb } from "@credit/db";
 import { createLogger, signInternalHeaders } from "@credit/service-kit";

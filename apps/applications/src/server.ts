@@ -4,6 +4,7 @@ import { assertDemoBoot } from "@credit/core";
 import { createApp } from "./app.js";
 import { createAgentsMemoRunner, startArtifactRetention } from "./assist/index.js";
 import { createAgentsIntegrityRunner } from "./integrity/agent-sdk.js";
+import { applicationObservability } from "./observability.js";
 import { startIntegrityWorker } from "./integrity/runs.js";
 import { configFromEnv } from "./documents/index.js";
 import { startDocumentMaintenance } from "./documents/retention.js";
@@ -31,11 +32,17 @@ const integrityRunner =
 				apiKey: env.integrity.openRouterApiKey,
 				baseUrl: env.integrity.openRouterBaseUrl,
 				model: env.integrity.model,
+				agentVersion: env.integrity.agentVersion,
+				promptVersion: env.integrity.promptVersion,
 				maxToolCalls: env.integrity.maxToolCalls,
 				maxOutputTokens: env.integrity.maxOutputTokens,
 				timeoutMs: env.integrity.timeoutMs,
 			})
 		: null;
+
+// Start the OTel providers before any agent client is used. Metadata-only;
+// a missing endpoint/token degrades observability, never the service.
+applicationObservability();
 
 const app = createApp({
 	db,
@@ -52,6 +59,8 @@ const app = createApp({
 						apiKey: env.assist.openRouterApiKey,
 						baseUrl: env.assist.openRouterBaseUrl,
 						model: env.assist.memoModel,
+						agentVersion: env.assist.memoAgentVersion,
+						promptVersion: env.assist.memoPromptVersion,
 						maxToolCalls: env.assist.memoMaxToolCalls,
 						maxOutputTokens: env.assist.memoMaxOutputTokens,
 						timeoutMs: env.assist.memoTimeoutMs,

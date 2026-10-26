@@ -11,6 +11,7 @@ import { createDb } from "@credit/db/applications";
 import OpenAI from "openai";
 import { OPENROUTER_BASE_URL, projectCostUsd } from "../src/agent.js";
 import { createRealContextRunner } from "../src/context-agent.js";
+import { getObservability } from "../src/observability.js";
 import {
 	validateContextOutput,
 	CONTEXT_PROMPT_VERSION,
@@ -75,8 +76,9 @@ function keywordHits(text: string, keywords: string[]): number {
 	return keywords.filter((keyword) => lower.includes(keyword.toLowerCase())).length;
 }
 
-async function runTrial(c: ContextCase, persona: PersonaName): Promise<TrialRow> {
+async function runTrial(c: ContextCase, persona: PersonaName, trial: number): Promise<TrialRow> {
 	const started = Date.now();
+	const observability = getObservability();
 	const runner = createRealContextRunner({ env, openai });
 	let usage = { inputTokens: 0, outputTokens: 0, toolCalls: 0 };
 	let candidates = 0;
@@ -89,6 +91,8 @@ async function runTrial(c: ContextCase, persona: PersonaName): Promise<TrialRow>
 			asOfDate: c.asOfDate,
 			externalSummary: null,
 			signal: AbortSignal.timeout(env.contextTimeoutMs),
+			runId: `context-eval:${c.name}:${persona}:${trial}`,
+			observability,
 		});
 		usage = raw.usage;
 		candidates = raw.snapshots.length;
@@ -223,7 +227,7 @@ try {
 		const persona = c.name as PersonaName;
 		for (let t = 0; t < trials; t++) {
 			console.log(`  ${c.name} trial ${t + 1}/${trials} ...`);
-			rows.push(await runTrial(c, persona));
+			rows.push(await runTrial(c, persona, t + 1));
 		}
 	}
 } finally {
@@ -328,3 +332,4 @@ const file = writeResults("context", {
 	rows,
 });
 console.log(`\nwrote ${file}`);
+await getObservability().shutdown?.();

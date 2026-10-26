@@ -167,6 +167,7 @@ async function runLoop<T>(
 	},
 	signal?: AbortSignal,
 	generateBrief = false,
+	conversationId?: string,
 ): Promise<AgentLoopResult & { value: T }> {
 	const startedAt = Date.now();
 	const timeout = AbortSignal.timeout(config.timeoutMs);
@@ -184,6 +185,7 @@ async function runLoop<T>(
 			generateBrief,
 			source,
 			maxTurns: config.maxSteps,
+			conversationId,
 			repair:
 				repair === undefined
 					? undefined
@@ -456,6 +458,8 @@ export async function runIntegrityAnalysis(input: {
 	now?: Date;
 	generateBrief?: boolean;
 	forbiddenValues?: string[];
+	/** Grafana Agent Observability conversation id (metadata only). */
+	conversationId?: string;
 }): Promise<AnalysisOutcome> {
 	const generateBrief = input.generateBrief === true;
 	const loop = await runLoop<{
@@ -475,6 +479,7 @@ export async function runIntegrityAnalysis(input: {
 			}),
 		input.signal,
 		generateBrief,
+		input.conversationId,
 	);
 	const value = loop.value;
 	const issues = loop.issues;
@@ -869,6 +874,7 @@ export async function runIntegrityTriage(input: {
 	evidenceHash: string;
 	forbiddenValues?: string[];
 	signal?: AbortSignal;
+	conversationId?: string;
 }): Promise<TriageOutcome> {
 	// Thin compatibility wrapper for the eval harness/tests: one combined
 	// agent call, brief required. Production uses runIntegrityAnalysis directly.
@@ -880,6 +886,7 @@ export async function runIntegrityTriage(input: {
 		forbiddenValues: input.forbiddenValues,
 		signal: input.signal,
 		generateBrief: true,
+		conversationId: input.conversationId,
 	});
 	if (!outcome.brief) {
 		throw new IntegrityAgentError("INVALID_OUTPUT", [{ code: "SCHEMA_INVALID", path: "brief" }]);

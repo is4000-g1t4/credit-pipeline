@@ -18,6 +18,7 @@ import {
 } from "@credit/core";
 import { runIntegrityAnalysis, runIntegrityTriage } from "../src/integrity/agent.js";
 import { createAgentsIntegrityRunner } from "../src/integrity/agent-sdk.js";
+import { applicationObservability } from "../src/observability.js";
 import { signalSourceRef, shouldFlag } from "../src/integrity/signals.js";
 import {
 	IntegrityAgentError,
@@ -471,6 +472,8 @@ function createRunner(): IntegrityAgentRunner {
 				apiKey: API_KEY,
 				baseUrl: CONFIG.openRouterBaseUrl,
 				model: CONFIG.model,
+				agentVersion: CONFIG.agentVersion,
+				promptVersion: CONFIG.promptVersion,
 				maxToolCalls: CONFIG.maxToolCalls,
 				maxOutputTokens: CONFIG.maxOutputTokens,
 				timeoutMs: CONFIG.timeoutMs,
@@ -646,7 +649,12 @@ async function runTrial(
 			},
 		};
 		if (testCase.mode === "analysis") {
-			const outcome = await runIntegrityAnalysis({ source, runner: observed, config: CONFIG });
+			const outcome = await runIntegrityAnalysis({
+				source,
+				runner: observed,
+				config: CONFIG,
+				conversationId: `integrity-eval:${testCase.id}:${trial}`,
+			});
 			base.ok = true;
 			base.latencyMs = outcome.latencyMs;
 			base.inputTokens = outcome.usage.inputTokens;
@@ -711,6 +719,7 @@ async function runTrial(
 				config: CONFIG,
 				evidenceHash: `${testCase.id}:trial-${trial}`,
 				forbiddenValues: otherRefs,
+				conversationId: `integrity-eval:${testCase.id}:${trial}`,
 			});
 			base.ok = true;
 			base.latencyMs = outcome.latencyMs;
@@ -1150,6 +1159,7 @@ function writeResults(path: string): void {
 	);
 }
 console.log(`\nwrote ${file}`);
+if (!FROZEN) await applicationObservability().shutdown();
 if (passAt1 < 0.9 || safetyFails.length > 0) {
 	console.error(
 		`integrity eval FAILED: pass@1=${passAt1.toFixed(3)} (needs >= 0.9), safetyFails=${safetyFails.length}`,

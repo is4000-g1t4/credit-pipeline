@@ -4,6 +4,7 @@
 // tools only, temperature 0, no SDK tracing, and typed errors. The
 // orchestrator owns validation, repair, and the persisted trace.
 
+import { randomUUID } from "node:crypto";
 import {
 	Agent,
 	MaxTurnsExceededError,
@@ -14,6 +15,7 @@ import {
 import OpenAI, { APIConnectionTimeoutError } from "openai";
 import type { MemoAgentTrace } from "../assist/memo-trace.js";
 import { readRunUsage, type AgentsOpenAIClient } from "../assist/openai-agents.js";
+import { applicationObservability } from "../observability.js";
 import {
 	INTEGRITY_TOOL_NAMES,
 	getCustomerPageParams,
@@ -38,6 +40,8 @@ export interface AgentsIntegrityRunnerOptions {
 	apiKey: string;
 	baseUrl: string;
 	model: string;
+	agentVersion?: string;
+	promptVersion?: string;
 	maxToolCalls: number;
 	maxOutputTokens: number;
 	timeoutMs: number;
@@ -178,6 +182,8 @@ export function createAgentsIntegrityRunner(
 	return {
 		async run(input): Promise<IntegrityAgentRunResult> {
 			if (!opts.apiKey) throw new IntegrityAgentError("AGENT_UNAVAILABLE");
+			const observability = applicationObservability();
+			const conversationId = input.conversationId ?? randomUUID();
 			const openai = new OpenAI({
 				apiKey: opts.apiKey,
 				baseURL: opts.baseUrl,
@@ -194,13 +200,23 @@ export function createAgentsIntegrityRunner(
 			const budget = { calls: 0, exceeded: false };
 			const generateBrief = input.generateBrief === true;
 			const toolMode = generateBrief ? "triage" : "analysis";
-			const invoke = (name: string, args: unknown): string => {
+			const invoke = async (name: string, args: unknown): Promise<string> => {
 				budget.calls += 1;
 				if (budget.calls > opts.maxToolCalls) {
 					budget.exceeded = true;
 					throw new Error(`integrity tool budget exceeded after ${opts.maxToolCalls} calls`);
 				}
-				const outcome = runIntegrityTool(name, args, input.source, toolMode);
+				const outcome = await observability.trackToolExecution(
+					{
+						agentName: "document-integrity-agent",
+						agentVersion: opts.agentVersion ?? "integrity-agent-v1",
+						feature: "document_integrity",
+						conversationId,
+						toolName: name,
+						model: opts.model,
+					},
+					async () => runIntegrityTool(name, args, input.source, toolMode),
+				);
 				toolCalls.push(makeToolCall(toolCalls.length + 1, name, outcome));
 				for (const ref of outcome.refs) seenRefs.add(ref);
 				return JSON.stringify(outcome.payload);
@@ -240,11 +256,35 @@ export function createAgentsIntegrityRunner(
 				: buildInitialPrompt(input.source, generateBrief);
 			const timeout = AbortSignal.timeout(opts.timeoutMs);
 			const signal = input.signal ? AbortSignal.any([input.signal, timeout]) : timeout;
+			const runner = new Runner();
 			try {
-				const result = await new Runner().run(agent, prompt, {
-					maxTurns: Math.max(2, input.maxTurns),
-					signal,
-				});
+				const result = await observability.trackGeneration(
+					{
+						agentName: "document-integrity-agent",
+						agentVersion: opts.agentVersion ?? "integrity-agent-v1",
+						feature: "document_integrity",
+						conversationId,
+						model: opts.model,
+						provider: "openrouter",
+						tags: { operation: "agent" },
+						metadata: { generateBrief, promptVersion: opts.promptVersion },
+						onSuccess: (value) => {
+							const runUsage = readRunUsage(value);
+							return {
+								usage: {
+									inputTokens: runUsage.inputTokens,
+									outputTokens: runUsage.outputTokens,
+								},
+								responseModel: opts.model,
+							};
+						},
+					},
+					() =>
+						runner.run(agent, prompt, {
+							maxTurns: Math.max(2, input.maxTurns),
+							signal,
+						}),
+				);
 				if (budget.exceeded) throw new IntegrityAgentError("TOOL_CALL_LIMIT");
 				const usage = readRunUsage(result);
 				return {

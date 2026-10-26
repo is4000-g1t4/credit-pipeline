@@ -6,6 +6,7 @@
 // repair, citation, and safety stats.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import dotenv from "dotenv";
 import {
 	hashQuote,
 	sourceRefKey,
@@ -24,6 +25,8 @@ import {
 } from "../src/assist/memo-agent.js";
 import { runMemoEvidenceTool } from "../src/assist/memo-tools.js";
 import type { MemoAgentTrace } from "../src/assist/memo-trace.js";
+
+dotenv.config({ path: fileURLToPath(new URL("../../../.env", import.meta.url)) });
 
 const APP_ID = "55555555-5555-4555-8555-555555555555";
 const SCORE_ID = "33333333-3333-4333-8333-333333333333";
@@ -565,3 +568,60 @@ writeFileSync(
 );
 console.log(JSON.stringify(summary, null, 2));
 if (passAt1 < 1) process.exitCode = 1;
+
+if (process.argv.includes("--live")) {
+	const { createAgentsMemoRunner } = await import("../src/assist/memo-agent-sdk.js");
+	const { applicationObservability } = await import("../src/observability.js");
+	const apiKey = process.env.OPENROUTER_API_KEY ?? "";
+	if (!apiKey) throw new Error("OPENROUTER_API_KEY is required for --live");
+	const model = process.env.ASSIST_MEMO_MODEL ?? "deepseek/deepseek-v4.1-flash-1017";
+	const promptVersion = process.env.ASSIST_MEMO_PROMPT_VERSION ?? "memo-agent-v1";
+	const agentVersion = process.env.ASSIST_MEMO_AGENT_VERSION ?? "memo-agent-v1";
+	const runner = createAgentsMemoRunner({
+		apiKey,
+		baseUrl: process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1",
+		model,
+		agentVersion,
+		promptVersion,
+		maxToolCalls: 32,
+		maxOutputTokens: 4000,
+		timeoutMs: 90_000,
+	});
+	const live = await runMemoAgent({
+		application,
+		evidence: bundle,
+		runner,
+		runId: `memo-eval:live:${Date.now()}`,
+		config: {
+			model,
+			promptVersion,
+			agentVersion,
+			maxSteps: 40,
+			maxToolCalls: 32,
+			timeoutMs: 90_000,
+			maxCostUsd: 0.25,
+		},
+	});
+	const validation = validateGeneratedText({
+		artifactType: "credit_memo",
+		content: live.content,
+		evidence: bundle,
+	});
+	console.log(
+		JSON.stringify(
+			{
+				live: true,
+				model,
+				steps: live.trace.steps,
+				toolCalls: live.trace.toolCalls.map((call) => call.name),
+				usage: { inputTokens: live.trace.inputTokens, outputTokens: live.trace.outputTokens },
+				validationOk: validation.ok,
+				issues: validation.ok ? [] : validation.issues,
+			},
+			null,
+			2,
+		),
+	);
+	await applicationObservability().shutdown();
+	if (!validation.ok) process.exitCode = 1;
+}

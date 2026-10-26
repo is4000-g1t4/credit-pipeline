@@ -131,7 +131,7 @@ export interface PolicyDeps {
 export interface Embedder {
 	model: string;
 	dimensions: number;
-	embed(inputs: string[]): Promise<number[][]>;
+	embed(inputs: string[], opts?: { conversationId?: string }): Promise<number[][]>;
 }
 
 export interface PolicyAnswerer {
@@ -139,11 +139,13 @@ export interface PolicyAnswerer {
 		question: string;
 		sections: RetrievedSection[];
 		signal: AbortSignal;
+		conversationId?: string;
 	}): Promise<AnswererResult>;
 	answerCase(input: {
 		context: PolicyCaseContext;
 		sections: RetrievedSection[];
 		signal: AbortSignal;
+		conversationId?: string;
 	}): Promise<AnswererResult>;
 }
 

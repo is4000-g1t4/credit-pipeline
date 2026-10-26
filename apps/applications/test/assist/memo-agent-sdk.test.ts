@@ -5,6 +5,8 @@ import type { EvidenceBundle } from "@credit/core";
 import type { applications } from "@credit/db/applications";
 import { createAgentsMemoRunner } from "../../src/assist/memo-agent-sdk.js";
 
+process.env.OTEL_SDK_DISABLED = "true";
+
 function noNetworkFetch(): typeof fetch {
 	return (async () => {
 		throw new Error("network disabled");

@@ -7,7 +7,6 @@
 // are the model, prompt, and settings. `validateAndBuild` is the exact
 // production validation/persistence-shaped pipeline (schema, quote snapshots,
 // source tiers, entity match, support judge, language repair).
-import { randomUUID } from "node:crypto";
 import OpenAI from "openai";
 import {
 	createRealRunner,
@@ -21,6 +20,7 @@ import { validateAndBuild, VALIDATOR_VERSION } from "../src/run.js";
 import { PROMPT_VERSION } from "../src/prompt.js";
 import { countsTowardTwoSourceRule, isIndependent, tierForHost } from "../src/sources.js";
 import { createLlmSupportJudge } from "../src/support.js";
+import { getObservability } from "../src/observability.js";
 import type { TavilyClient, TavilyExtractHit, TavilySearchHit } from "../src/tavily.js";
 import { scanForbidden, scanProtected, type CaseEntity } from "../src/validator.js";
 import { arg, mean, p95, wilson, writeResults } from "./lib.js";
@@ -30,8 +30,10 @@ const openai = new OpenAI({
 	apiKey: env.openrouterApiKey || "unconfigured",
 	baseURL: OPENROUTER_BASE_URL,
 });
-const judge = createLlmSupportJudge(openai, env.agentModel);
-const repair = createLlmLanguageRepair(openai, env.agentModel);
+const judge = createLlmSupportJudge(openai, env.agentModel, { observability: getObservability() });
+const repair = createLlmLanguageRepair(openai, env.agentModel, {
+	observability: getObservability(),
+});
 
 interface FixtureDoc {
 	url: string;
@@ -404,8 +406,10 @@ async function judgeSummary(
 	}
 }
 
-async function runTrial(c: BriefCase): Promise<TrialRow> {
+async function runTrial(c: BriefCase, trial: number): Promise<TrialRow> {
 	const started = Date.now();
+	const observability = getObservability();
+	const runId = `brief-eval:${c.id}:${trial}`;
 	const tavilyMisses: string[] = [];
 	const runner = createRealRunner({
 		env: { ...env, tavilyApiKey: env.tavilyApiKey || "fixture" },
@@ -429,6 +433,15 @@ async function runTrial(c: BriefCase): Promise<TrialRow> {
 			},
 			asOfDate: c.asOf,
 			signal: AbortSignal.timeout(180_000),
+			hooksFor: (runner) =>
+				observability.hooksFor(runner, {
+					runId,
+					asOf: c.asOf,
+					promptVersion: PROMPT_VERSION,
+					model: env.agentModel,
+				}),
+			observability,
+			runId,
 		});
 		usage = result.usage;
 		const output = await validateAndBuild({
@@ -439,7 +452,7 @@ async function runTrial(c: BriefCase): Promise<TrialRow> {
 			judge,
 			repair,
 			signal: AbortSignal.timeout(180_000),
-			runId: randomUUID(),
+			runId,
 		});
 		const brief = output.brief as {
 			summary?: string;
@@ -633,7 +646,7 @@ const rows: TrialRow[] = [];
 for (const c of selected) {
 	for (let t = 0; t < trials; t++) {
 		console.log(`  ${c.id} trial ${t + 1}/${trials} ...`);
-		rows.push(await runTrial(c));
+		rows.push(await runTrial(c, t + 1));
 	}
 }
 console.table(
@@ -726,3 +739,4 @@ const file = writeResults("brief", {
 	rows,
 });
 console.log(`\nwrote ${file}`);
+await getObservability().shutdown?.();

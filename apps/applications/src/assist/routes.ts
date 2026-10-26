@@ -5,6 +5,7 @@
 // 404. Service-only hold/retention routes stay available while disabled.
 // Artifact content never enters logs or telemetry — only ids, versions, and
 // counts. Validation runs before persistence and again before approval.
+import { randomUUID } from "node:crypto";
 import { decisions, scores, withTx, type Db } from "@credit/db/applications";
 import {
 	ADVERSE_TAXONOMY_VERSION,
@@ -517,6 +518,7 @@ export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
 					application: kase.application,
 					evidence,
 					runner: memoAgentRunner,
+					runId: randomUUID(),
 					config: {
 						model: config.memoModel,
 						promptVersion: config.memoPromptVersion,

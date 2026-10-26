@@ -219,6 +219,8 @@ export interface IntegrityAgentRunner {
 		generateBrief?: boolean;
 		source: IntegritySource;
 		maxTurns: number;
+		/** Grafana Agent Observability conversation id (metadata only). */
+		conversationId?: string;
 		repair?: IntegrityAgentRepair;
 		signal?: AbortSignal;
 	}): Promise<IntegrityAgentRunResult>;

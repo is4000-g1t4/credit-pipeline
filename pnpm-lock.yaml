@@ -325,6 +325,9 @@ importers:
 
   apps/applications:
     dependencies:
+      '@credit/agent-observability':
+        specifier: workspace:*
+        version: link:../../packages/agent-observability
       '@credit/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -460,6 +463,9 @@ importers:
 
   apps/policy:
     dependencies:
+      '@credit/agent-observability':
+        specifier: workspace:*
+        version: link:../../packages/agent-observability
       '@credit/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -727,6 +733,37 @@ importers:
       '@temporalio/testing':
         specifier: 'catalog:'
         version: 1.24.0(esbuild@0.28.2)(lightningcss@1.33.0)(postcss@8.5.30)
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.6.5
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+      vitest:
+        specifier: 'catalog:'
+        version: 5.0.5(@opentelemetry/api@1.9.1)(@types/node@26.6.5)(vite@8.3.4(@types/node@26.6.5)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1))
+
+  packages/agent-observability:
+    dependencies:
+      '@grafana/agento11y':
+        specifier: 'catalog:'
+        version: 0.14.0(c8afea27e44a3dc24d1ed36f43a8a8fe)
+      '@openai/agents':
+        specifier: 'catalog:'
+        version: 0.8.0(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(ws@8.22.0)(zod@4.6.7)
+      '@opentelemetry/exporter-metrics-otlp-http':
+        specifier: 'catalog:'
+        version: 0.223.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/exporter-trace-otlp-http':
+        specifier: 'catalog:'
+        version: 0.223.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/sdk-metrics':
+        specifier: 'catalog:'
+        version: 2.12.0(@opentelemetry/api@1.9.1)
+      '@opentelemetry/sdk-node':
+        specifier: 'catalog:'
+        version: 0.223.0(@opentelemetry/api@1.9.1)(supports-color@8.1.1)
+    devDependencies:
       '@types/node':
         specifier: 'catalog:'
         version: 26.6.5

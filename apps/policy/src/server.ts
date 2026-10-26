@@ -3,10 +3,13 @@ import { createLogger } from "@credit/service-kit";
 import { createApp } from "./app.js";
 import { loadEnv } from "./env.js";
 import { createOpenRouterAnswerer, createOpenRouterEmbedder } from "./openrouter.js";
+import { policyObservability } from "./observability.js";
 import { createPostgresPolicyStore } from "./postgres-store.js";
 
 const env = loadEnv();
 const logger = createLogger("policy");
+// Start OTel providers before any agent client is used.
+policyObservability();
 const { sql } = createDb(env.databaseUrl);
 const store = createPostgresPolicyStore(sql);
 const openRouter = {
