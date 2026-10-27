@@ -11,9 +11,10 @@ import { ResearchPanel } from "../../../components/ResearchPanel";
 import { EmptyState, ErrorBox, Page, Skeleton } from "../../../components/ui";
 import {
 	ApiError,
-	api,
 	apiErrorMessage,
-	type CaseDetail,
+	fetchCase,
+	isTerminal,
+	queryKeys,
 	type ResearchSelection,
 } from "../../../lib/api";
 import { RequireAuth } from "../../../lib/auth";
@@ -31,10 +32,14 @@ function ReviewCase() {
 	const navigate = useNavigate();
 	const [researchSelection, setResearchSelection] = useState<ResearchSelection | null>(null);
 	const detail = useQuery({
-		queryKey: ["application", id],
-		queryFn: () => api<CaseDetail>(`/api/applications/${id}`),
+		queryKey: queryKeys.case(id),
+		queryFn: () => fetchCase(id),
 		retry: false,
-		refetchInterval: 5000,
+		// Poll while the case is active; stop on terminal (SPEC FR-7.4).
+		refetchInterval: (query) => {
+			const status = query.state.data?.application.status;
+			return !status || isTerminal(status) ? false : 5000;
+		},
 	});
 	return (
 		<Page>

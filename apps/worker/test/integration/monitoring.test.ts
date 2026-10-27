@@ -85,7 +85,8 @@ beforeAll(async () => {
 afterAll(async () => {
 	try {
 		if (loanId) {
-			await db.delete(auditLog).where(eq(auditLog.loanId, loanId));
+			// audit_log is append-only by DB trigger; leave the monitoring
+			// rows (they reference this unique loan id and are never re-read).
 			await db.delete(ewsAlerts).where(eq(ewsAlerts.loanId, loanId));
 			await db.delete(outboxEvents).where(eq(outboxEvents.key, loanId));
 			await db.delete(installments).where(eq(installments.loanId, loanId));

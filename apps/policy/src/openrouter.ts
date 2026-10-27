@@ -14,6 +14,33 @@ export interface OpenRouterConfig {
 	fetchImpl?: typeof fetch;
 }
 
+export interface OpenRouterEnv {
+	openrouterApiKey: string;
+	openrouterBaseUrl: string;
+	agentModel: string;
+	embeddingDimensions: number;
+	embeddingModel: string;
+	agentTemperature: number;
+	agentMaxOutputTokens: number;
+	embeddingProviders: string;
+	answererProviderOrder: string;
+}
+
+/** Single construction site for the OpenRouter client config (server/seed/reindex). */
+export function openRouterConfigFromEnv(env: OpenRouterEnv): OpenRouterConfig {
+	return {
+		apiKey: env.openrouterApiKey,
+		baseUrl: env.openrouterBaseUrl,
+		model: env.agentModel,
+		dimensions: env.embeddingDimensions,
+		embeddingModel: env.embeddingModel,
+		temperature: env.agentTemperature,
+		maxOutputTokens: env.agentMaxOutputTokens,
+		embeddingProviders: env.embeddingProviders ? env.embeddingProviders.split(",") : [],
+		answererProviderOrder: env.answererProviderOrder ? env.answererProviderOrder.split(",") : [],
+	};
+}
+
 function parseContent(value: unknown): unknown {
 	if (typeof value !== "string") throw new Error("model returned no content");
 	const trimmed = value

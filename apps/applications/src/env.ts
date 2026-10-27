@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { resolveWorkspacePath } from "@credit/core";
+import { resolveWorkspacePath } from "@credit/service-kit";
 import { MAX_UPLOAD_BYTES } from "@credit/service-kit";
 import { createEnv } from "@t3-oss/env-core";
 import dotenv from "dotenv";

@@ -8,7 +8,6 @@ import { useState } from "react";
 import { EmptyState, ErrorBox, Page, Skeleton, StatusBadge } from "../../../components/ui";
 import {
 	ApiError,
-	apiErrorMessage,
 	explainDuplicateDocument,
 	formatDateTime,
 	lookupDuplicateDocuments,
@@ -16,6 +15,7 @@ import {
 	type DuplicateLookupResult,
 } from "../../../lib/api";
 import { RequireAuth } from "../../../lib/auth";
+import { clean, friendlyMessage } from "../../../lib/format";
 
 export const Route = createFileRoute("/officer/fraud-review/")({
 	component: () => (
@@ -24,22 +24,6 @@ export const Route = createFileRoute("/officer/fraud-review/")({
 		</RequireAuth>
 	),
 });
-
-function clean(value: string): string {
-	return value.replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/g, "");
-}
-
-function friendlyMessage(err: unknown): string {
-	if (err instanceof ApiError) {
-		switch (err.code) {
-			case "APPLICATION_REQUIRED":
-				return "Enter the application id for the case being reviewed.";
-			default:
-				break;
-		}
-	}
-	return apiErrorMessage(err);
-}
 
 function DuplicateLookup() {
 	const [sha256, setSha256] = useState("");

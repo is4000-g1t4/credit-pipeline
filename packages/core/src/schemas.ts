@@ -12,6 +12,7 @@ import {
 	TERM_MAX_MONTHS,
 	TERM_MIN_MONTHS,
 } from "./constants.js";
+import { OFFICER_REASON_CODES } from "./reasons.js";
 
 export const applicationTypeSchema = z.enum(["individual", "sme"]);
 export const productSchema = z.enum(["personal_loan", "sme_term_loan"]);
@@ -187,9 +188,7 @@ const officerDecisionBase = z
 		outcome: z.enum(["approve", "decline"]),
 		approvedAmountCents: centsSchema.positive().optional(),
 		termMonths: z.number().int().min(TERM_MIN_MONTHS).max(TERM_MAX_MONTHS).optional(),
-		reasonCode: z
-			.enum(["OFFICER_JUDGEMENT", "INSUFFICIENT_EVIDENCE", "POLICY_EXCEPTION"])
-			.optional(),
+		reasonCode: z.enum(OFFICER_REASON_CODES).optional(),
 		notes: z.string().max(2000).optional(),
 	})
 	.strict();
@@ -269,21 +268,14 @@ export type ResearchBundle = z.infer<typeof researchBundleSchema>;
  * The research selection never travels here — review strips it after
  * resolving the frozen bundle. */
 export const internalOfficerDecisionSchema = officerDecisionBase
-	.extend({ research: researchBundleSchema.optional() })
+	.extend({
+		research: researchBundleSchema.optional(),
+		// The gateway/review authenticate the officer; the worker persists
+		// this id on the decision row, so validate it at the update boundary.
+		officerUserId: z.uuid().optional(),
+	})
 	.strict()
 	.superRefine(refineDeclineFields);
-
-export const apiErrorSchema = z
-	.object({
-		error: z
-			.object({
-				code: z.string().min(1),
-				message: z.string().min(1),
-				fields: z.record(z.string(), z.array(z.string())).optional(),
-			})
-			.strict(),
-	})
-	.strict();
 
 // --- Case facts (SPEC §3.1): single source of truth (16 keys). ---
 // Applications builds it, review allowlists it, research validates + stores

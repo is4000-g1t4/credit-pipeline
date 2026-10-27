@@ -15,9 +15,11 @@ import {
 	ApiError,
 	api,
 	apiErrorMessage,
+	fetchLoan,
 	formatDate,
 	formatDateTime,
 	formatMoney,
+	queryKeys,
 	type LoanDetail,
 	toast,
 } from "../../lib/api";
@@ -35,8 +37,8 @@ function LoanPage() {
 	const { id } = Route.useParams();
 	const me = useMe();
 	const loan = useQuery({
-		queryKey: ["loan", id],
-		queryFn: () => api<LoanDetail>(`/api/loans/${id}`),
+		queryKey: queryKeys.loan(id),
+		queryFn: () => fetchLoan(id),
 		retry: false,
 	});
 	return (
@@ -187,7 +189,7 @@ function AlertsCard({
 				method: "POST",
 			});
 			await queryClient.invalidateQueries({
-				queryKey: ["loan", detail.loan.id],
+				queryKey: queryKeys.loan(detail.loan.id),
 			});
 			onChanged();
 		} catch (err) {

@@ -15,6 +15,8 @@ import {
 } from "@credit/db/research";
 import { HttpError } from "@credit/service-kit";
 import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { getRun, type RunRow } from "./lifecycle.js";
+import { isUuid } from "./ids.js";
 
 export const ACCESS_ROLES = [
 	"assigned_officer",
@@ -111,6 +113,31 @@ export async function requireResearchAccess(
 		});
 		throw new HttpError(404, "NOT_FOUND", "not found");
 	}
+}
+
+/**
+ * Pair run scoping with the grant guard for review routes that resolve the
+ * run from a child row (finding/signal): unknown ids and cross-case runs
+ * return the same non-disclosing 404 before any audit (the same shape as the
+ * guard); only a grant denial is audited. Scope first, then guard. Returns
+ * the scoped run for status checks.
+ */
+export async function requireRunAccess(
+	db: Db,
+	applicationId: string,
+	runId: string,
+	userId: string,
+	actorRole = "officer",
+): Promise<RunRow> {
+	if (!isUuid(applicationId) || !isUuid(runId)) {
+		throw new HttpError(404, "NOT_FOUND", "not found");
+	}
+	const run = await getRun(db, runId);
+	if (!run || run.applicationId !== applicationId) {
+		throw new HttpError(404, "NOT_FOUND", "not found");
+	}
+	await requireResearchAccess(db, applicationId, userId, actorRole);
+	return run;
 }
 
 /**

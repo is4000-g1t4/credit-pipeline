@@ -34,8 +34,6 @@ export const POLICY_EXCEPTION_TOOL_NAMES = [
 	"list_unavailable",
 ] as const;
 
-export type PolicyExceptionToolName = (typeof POLICY_EXCEPTION_TOOL_NAMES)[number];
-
 /** Tools that fetch policy bodies; the orchestrator requires ≥1 per run. */
 export const POLICY_RETRIEVAL_TOOL_NAMES = ["search_policy", "get_policy_section"] as const;
 
@@ -73,18 +71,6 @@ export const getPolicySectionParams = z
 		sectionId: z.string().min(1).max(64),
 	})
 	.strict();
-
-export const POLICY_EXCEPTION_TOOL_PARAMS: Record<string, z.ZodType> = {
-	list_failed_rules: listFailedRulesParams,
-	get_rule_mapping: getRuleMappingParams,
-	get_exception_path: getExceptionPathParams,
-	search_policy: searchPolicyParams,
-	get_policy_section: getPolicySectionParams,
-	list_evidence: listEvidenceParams,
-	search_evidence: searchEvidenceParams,
-	get_evidence: getEvidenceParams,
-	list_unavailable: listUnavailableParams,
-};
 
 export interface PolicyExceptionToolDeps {
 	context: CaseRuleContext;

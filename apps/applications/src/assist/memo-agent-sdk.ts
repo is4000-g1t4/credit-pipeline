@@ -22,7 +22,7 @@ import {
 	runMemoEvidenceTool,
 	searchEvidenceParams,
 } from "./memo-tools.js";
-import { readRunUsage, type AgentsOpenAIClient } from "./openai-agents.js";
+import { readRunUsage, type AgentsOpenAIClient } from "@credit/agent-observability/openai-agents";
 
 type ApplicationRow = typeof applications.$inferSelect;
 

@@ -4,11 +4,47 @@
 // by apps/applications integration tests.
 import { expect, test } from "@playwright/test";
 import dotenv from "dotenv";
-import { Api, ApiError, gotoHydrated, smeApplication, uiLogin, waitStatus } from "./helpers.js";
+import {
+	Api,
+	ApiError,
+	type CaseDetail,
+	gotoHydrated,
+	smeApplication,
+	uiLogin,
+	waitStatus,
+} from "./helpers.js";
 
 dotenv.config();
 
 const enabled = process.env.ASSIST_ENABLED === "true";
+
+/** Cases this file created. Declined in afterEach so repeat runs never hit
+ * the 3-active-application cap (the 4th submit 409s). Memo version
+ * assertions never reuse a case — cleanup only fires after the test,
+ * leaving a terminal decline behind. */
+const createdCases: string[] = [];
+
+test.afterEach(async () => {
+	if (!enabled || createdCases.length === 0) return;
+	const ids = createdCases.splice(0);
+	try {
+		const officer = new Api();
+		await officer.login("officer@example.com");
+		for (const id of ids) {
+			const detail = await officer.get<CaseDetail>(`/api/applications/${id}`);
+			if (detail.application.status !== "pending_review") continue;
+			await officer.post(`/api/review/${id}/decision`, {
+				requestId: crypto.randomUUID(),
+				outcome: "decline",
+				reasonCode: "OFFICER_JUDGEMENT",
+				notes: "e2e cleanup: decline leftover assist case",
+			});
+		}
+	} catch {
+		// Best-effort: a decided/expired case, a login limiter, or a stack
+		// torn down mid-cleanup must not fail the spec.
+	}
+});
 
 test("officer drafts, validates, and approves a credit memo", async () => {
 	test.skip(!enabled, "set ASSIST_ENABLED=true to run the assist happy path");
@@ -41,6 +77,7 @@ test("officer drafts, validates, and approves a credit memo", async () => {
 		}),
 	});
 	const appId = created.id;
+	createdCases.push(appId);
 	await waitStatus(applicant, appId, "pending_review");
 
 	const officer = new Api();
@@ -157,6 +194,7 @@ test("officer sees the drafted memo and its trace in the review UI", async ({ pa
 		}),
 	});
 	const appId = created.id;
+	createdCases.push(appId);
 	await waitStatus(applicant, appId, "pending_review");
 
 	const officer = new Api();

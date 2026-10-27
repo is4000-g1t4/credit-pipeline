@@ -2,12 +2,12 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { EmptyState, ErrorBox, Page, Skeleton, StatusBadge } from "../../../components/ui";
 import {
-	api,
 	apiErrorMessage,
+	fetchReviewQueue,
 	formatDate,
 	formatMoney,
 	formatWait,
-	type QueueItem,
+	queryKeys,
 } from "../../../lib/api";
 import { RequireAuth } from "../../../lib/auth";
 
@@ -21,8 +21,8 @@ export const Route = createFileRoute("/officer/review/")({
 
 function Queue() {
 	const queue = useQuery({
-		queryKey: ["review-queue"],
-		queryFn: () => api<{ items: QueueItem[] }>("/api/review/queue"),
+		queryKey: queryKeys.reviewQueue,
+		queryFn: fetchReviewQueue,
 		refetchInterval: 5000,
 	});
 	return (

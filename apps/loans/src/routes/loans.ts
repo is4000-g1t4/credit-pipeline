@@ -9,6 +9,7 @@ import {
 	internalFetch,
 	requireOfficer,
 	requireService,
+	UUID_RE,
 	writeAudit,
 	type ServiceApp,
 } from "@credit/service-kit";
@@ -16,7 +17,6 @@ import { and, count, desc, eq, inArray, lte } from "drizzle-orm";
 import { Hono } from "hono";
 import type { LoansEnv } from "../env.js";
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export function summarizeLoan(loan: typeof loans.$inferSelect): Record<string, unknown> {
@@ -217,27 +217,23 @@ export function loansRoutes(deps: LoansRouteDeps): ServiceApp {
 		// Bind to the calling case before touching loan rows: consent and
 		// applicant ownership come from the applications service, never
 		// from the caller. Any failure (network, timeout, non-OK, shape
-		// drift) fails closed with no loan query.
+		// drift) fails closed with no loan query. Transport failures throw
+		// the service-kit 502, which propagates as-is.
 		const bindPath = `/internal/applications/${applicationId}/research-context`;
-		let bindRes: Response;
-		try {
-			bindRes = await internalFetch(
-				env.applicationsUrl,
-				bindPath,
-				// The applications internal route is service-only: sign the
-				// caller's id/email with the service role (never forward the
-				// officer's role to a service gate).
-				{ id: me.id, email: me.email, role: "service" },
-				{
-					secret: env.internalSecret,
-					fetchImpl: (async (url, init) =>
-						fetchImpl(String(url), init as RequestInit)) as typeof fetch,
-					timeoutMs: 5_000,
-				},
-			);
-		} catch {
-			throw new HttpError(503, "APPLICATIONS_UNAVAILABLE", "application context is unavailable");
-		}
+		const bindRes = await internalFetch(
+			env.applicationsUrl,
+			bindPath,
+			// The applications internal route is service-only: sign the
+			// caller's id/email with the service role (never forward the
+			// officer's role to a service gate).
+			{ id: me.id, email: me.email, role: "service" },
+			{
+				secret: env.internalSecret,
+				fetchImpl: (async (url, init) =>
+					fetchImpl(String(url), init as RequestInit)) as typeof fetch,
+				timeoutMs: 5_000,
+			},
+		);
 		if (bindRes.status === 404) throw new HttpError(404, "NOT_FOUND", "not found");
 		if (!bindRes.ok) {
 			throw new HttpError(503, "APPLICATIONS_UNAVAILABLE", "application context is unavailable");

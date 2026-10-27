@@ -138,6 +138,28 @@ export function documentRoutes(deps: DocumentRouteDeps): ServiceApp {
 		}
 	};
 
+	/** Shared uuid → feature → resolve prefix for the document gates.
+	 * Draft/consent checks stay in the wrappers: the owner gate 404s
+	 * drafts for non-owners while the officer gate 404s every draft and
+	 * 403s the owner — intentionally different. */
+	const resolveCaseGate = async (
+		c: {
+			req: { param: (name: string) => string };
+			var: { user: { id: string; role: string } };
+		},
+		attemptedAction: string,
+	) => {
+		const applicationId = c.req.param("id");
+		if (!isUuid(applicationId)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!config.featureEnabled) throw new HttpError(404, "NOT_FOUND", "not found");
+		const resolved = await resolveDocumentAccess(db, applicationId, c.var.user);
+		if (!resolved) {
+			await auditDenied(applicationId, c.var.user, attemptedAction);
+			throw new HttpError(404, "NOT_FOUND", "not found");
+		}
+		return { applicationId, resolved };
+	};
+
 	/** Feature → access → consent gate shared by every document route.
 	 * T17: drafts are owner-only — officers (even assigned) 404, so drafts
 	 * never surface in document access, claim, or crosscheck. */
@@ -145,14 +167,7 @@ export function documentRoutes(deps: DocumentRouteDeps): ServiceApp {
 		req: { param: (name: string) => string };
 		var: { user: { id: string; role: string } };
 	}) => {
-		const applicationId = c.req.param("id");
-		if (!isUuid(applicationId)) throw new HttpError(404, "NOT_FOUND", "not found");
-		if (!config.featureEnabled) throw new HttpError(404, "NOT_FOUND", "not found");
-		const resolved = await resolveDocumentAccess(db, applicationId, c.var.user);
-		if (!resolved) {
-			await auditDenied(applicationId, c.var.user, "document_read");
-			throw new HttpError(404, "NOT_FOUND", "not found");
-		}
+		const { applicationId, resolved } = await resolveCaseGate(c, "document_read");
 		if (resolved.application.status === "draft" && resolved.access !== "owner") {
 			await auditDenied(applicationId, c.var.user, "document_read");
 			throw new HttpError(404, "NOT_FOUND", "not found");
@@ -186,14 +201,7 @@ export function documentRoutes(deps: DocumentRouteDeps): ServiceApp {
 		req: { param: (name: string) => string };
 		var: { user: { id: string; role: string } };
 	}) => {
-		const applicationId = c.req.param("id");
-		if (!isUuid(applicationId)) throw new HttpError(404, "NOT_FOUND", "not found");
-		if (!config.featureEnabled) throw new HttpError(404, "NOT_FOUND", "not found");
-		const resolved = await resolveDocumentAccess(db, applicationId, c.var.user);
-		if (!resolved) {
-			await auditDenied(applicationId, c.var.user, "document_crosscheck");
-			throw new HttpError(404, "NOT_FOUND", "not found");
-		}
+		const { applicationId, resolved } = await resolveCaseGate(c, "document_crosscheck");
 		// Drafts never cross-check (claim is draft-blocked, so no grant can
 		// exist — this is the belt to that suspenders).
 		if (resolved.application.status === "draft") {

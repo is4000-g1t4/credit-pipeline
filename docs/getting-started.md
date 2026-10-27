@@ -71,7 +71,7 @@ pnpm demo:check
 pnpm demo:monitor
 ```
 
-`pnpm test:e2e` runs nine Playwright specs (`maria`, `tomas`, `sam`, `monitoring`, `research`, `documents`, `breadtalk`, `assist`, `adverse`) against `http://127.0.0.1:3000`. Its global setup always starts a worker, reuses a healthy gateway, services, and web when up (it starts only what is down), and stops only the processes it started. It needs Docker Compose running. Install the browser once with `pnpm exec playwright install chromium`.
+`pnpm test:e2e` runs eleven Playwright specs (`maria`, `tomas`, `sam`, `monitoring`, `research`, `documents`, `breadtalk`, `assist`, `adverse`, `integrity`, `policy-exception`) against `http://127.0.0.1:3000`. Its global setup always starts a worker, reuses a healthy gateway, services, and web when up (it starts only what is down), and stops only the processes it started. It needs Docker Compose running. Install the browser once with `pnpm exec playwright install chromium`.
 
 ## 6. Recover a half-run demo
 

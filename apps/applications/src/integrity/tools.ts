@@ -4,7 +4,7 @@
 // never from the model. Every payload is capped; text never reaches a trace.
 
 import { z } from "zod";
-import { codePointLength, utf16IndexToCodePoint } from "@credit/core";
+import { codePointLength, escapeRegExp, utf16IndexToCodePoint } from "@credit/core";
 import type {
 	IntegrityDocumentSnapshot,
 	IntegrityPage,
@@ -30,12 +30,6 @@ const ANALYSIS_TOOLS: ReadonlySet<IntegrityToolName> = new Set([
 	"get_page",
 	"list_signals",
 ]);
-
-const TRIAGE_TOOLS: ReadonlySet<IntegrityToolName> = new Set(INTEGRITY_TOOL_NAMES);
-
-export function toolsForMode(mode: "analysis" | "triage"): IntegrityToolName[] {
-	return [...(mode === "analysis" ? ANALYSIS_TOOLS : TRIAGE_TOOLS)];
-}
 
 export const listDocumentsParams = z.object({}).strict();
 export const searchPagesParams = z
@@ -71,10 +65,6 @@ const EMPTY: ToolOutcome = { payload: null, resultCount: 0, sourceTypes: [], ref
 const MAX_EXCERPT = 300;
 const MAX_PAGE_TEXT = 8_000;
 const MAX_REFS_PER_CALL = 20;
-
-function escapeRegExp(value: string): string {
-	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 function documentMap(source: IntegritySource): Map<string, IntegrityDocumentSnapshot> {
 	return new Map(source.documents.map((doc) => [doc.documentFileId, doc]));

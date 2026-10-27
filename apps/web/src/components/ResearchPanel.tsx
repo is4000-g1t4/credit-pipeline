@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from "react";
 import {
 	ApiError,
 	apiErrorMessage,
+	apiErrorWithCode,
 	ensureResearch,
 	fetchResearch,
 	fetchResearchAudit,
@@ -33,11 +34,8 @@ import {
 	type ResearchSelection,
 } from "../lib/api";
 import { CitedSegments } from "./PolicyCitations";
+import { shortId } from "../lib/format";
 import { EmptyState, ErrorBox, Skeleton } from "./ui";
-
-function shortId(id: string): string {
-	return id.length > 8 ? id.slice(0, 8) : id;
-}
 
 function hostOf(url: string): string {
 	try {
@@ -477,17 +475,6 @@ function ContextSection({
 	const [retrying, setRetrying] = useState(false);
 	const [retryError, setRetryError] = useState("");
 
-	// Poll latest while the stage is active — the run itself may already be
-	// terminal (context is a stage, not the run), so the panel-level run
-	// poll does not cover it.
-	useEffect(() => {
-		if (context?.status !== "queued" && context?.status !== "running") return;
-		const timer = setInterval(() => {
-			void queryClient.invalidateQueries({ queryKey: ["research", applicationId] });
-		}, 2000);
-		return () => clearInterval(timer);
-	}, [context?.status, queryClient, applicationId]);
-
 	async function retry() {
 		setRetrying(true);
 		setRetryError("");
@@ -644,18 +631,6 @@ function PolicyReviewSection({
 	applicationId: string;
 	policy?: ResearchPolicy | null;
 }) {
-	const queryClient = useQueryClient();
-
-	// Poll latest while the stage is active — same version-proof pattern as
-	// the context section above.
-	useEffect(() => {
-		if (policy?.status !== "running") return;
-		const timer = setInterval(() => {
-			void queryClient.invalidateQueries({ queryKey: ["research", applicationId] });
-		}, 2000);
-		return () => clearInterval(timer);
-	}, [policy?.status, queryClient, applicationId]);
-
 	let body: React.ReactNode;
 	switch (policy?.status) {
 		case "succeeded": {
@@ -809,6 +784,18 @@ export function ResearchPanel({
 		queryKey: ["research", applicationId],
 		queryFn: () => fetchResearch(applicationId),
 		retry: false,
+		// One poll covers the run and both stages: the context/policy stages
+		// can still be active after the run itself settles.
+		refetchInterval: (query) => {
+			const latest = query.state.data;
+			if (!latest) return false;
+			if (latest.run.status === "queued" || latest.run.status === "running") return 2000;
+			if (latest.context?.status === "queued" || latest.context?.status === "running") {
+				return 2000;
+			}
+			if (latest.policy?.status === "running") return 2000;
+			return false;
+		},
 	});
 
 	const data: ResearchAggregate | undefined = research.data;
@@ -838,16 +825,6 @@ export function ResearchPanel({
 	const consentMissing = aiResearchConsent === false;
 	const caseDecided = caseStatus !== undefined && caseStatus !== "pending_review";
 	const canRun = !consentMissing && !caseDecided;
-
-	// Poll while the run is active (function-form refetchInterval varies by
-	// TanStack minor; an explicit interval is version-proof).
-	useEffect(() => {
-		if (status !== "queued" && status !== "running") return;
-		const timer = setInterval(() => {
-			void refetch();
-		}, 2000);
-		return () => clearInterval(timer);
-	}, [status, refetch]);
 
 	// Explicit view, once per run, after the panel has the succeeded brief.
 	// The run is marked only after the view records: a failure leaves it
@@ -919,9 +896,7 @@ export function ResearchPanel({
 			await ensureResearch(applicationId);
 			await queryClient.invalidateQueries({ queryKey: ["research", applicationId] });
 		} catch (err) {
-			setRunError(
-				err instanceof ApiError ? `${err.code}: ${apiErrorMessage(err)}` : apiErrorMessage(err),
-			);
+			setRunError(apiErrorWithCode(err));
 		} finally {
 			setRunning(false);
 		}

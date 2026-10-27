@@ -5,7 +5,7 @@
 // overwritten. Temporal calls are injected (describe/startWorkflow), as is
 // the store, so unit tests run compose-free with fakes.
 
-import { applicationWorkflowId, TASK_QUEUE } from "@credit/core";
+import { APPLICATION_WORKFLOW_NAME, applicationWorkflowId, TASK_QUEUE } from "@credit/core";
 import { applications, decisions } from "@credit/db/applications";
 import { loans } from "@credit/db/loans";
 import {
@@ -20,7 +20,11 @@ import { expireReview } from "./activities/decisions.js";
 import { markFailed } from "./activities/fail.js";
 import { resumeBooking } from "./activities/booking.js";
 import { getApplicationsDb, getLoansDb, reserveApplications } from "./db.js";
+import { workerEnv } from "./env.js";
+import { logger } from "./logger.js";
 
+// 4243 reuses the loans-relay value safely: advisory locks are
+// per-database, and the reconciler runs on the applications DB.
 export const RECONCILER_LOCK_KEY = 4243;
 export const SUBMITTED_GRACE_MS = 30_000;
 export const STALE_ACTIVE_MS = 15 * 60_000;
@@ -151,7 +155,7 @@ let temporalClient: Client | null = null;
 async function getTemporalClient(): Promise<Client> {
 	if (!temporalClient) {
 		const connection = await Connection.connect({
-			address: process.env.TEMPORAL_ADDRESS ?? "localhost:7233",
+			address: workerEnv.temporalAddress,
 		});
 		temporalClient = new Client({ connection });
 	}
@@ -172,7 +176,7 @@ export async function describeWorkflow(workflowId: string): Promise<DescribeStat
 export async function startApplicationWorkflow(applicationId: string): Promise<StartOutcome> {
 	const client = await getTemporalClient();
 	try {
-		await client.workflow.start("applicationWorkflow", {
+		await client.workflow.start(APPLICATION_WORKFLOW_NAME, {
 			args: [{ applicationId }],
 			taskQueue: TASK_QUEUE,
 			workflowId: applicationWorkflowId(applicationId),
@@ -260,10 +264,10 @@ export async function reconcileOnce(opts: {
 			} catch (err) {
 				// Retry policy: never terminalise an approved case on a repair
 				// error. Surface it for operators and retry next tick.
-				console.error("reconciler: booking repair failed", {
-					applicationId: app.id,
-					error: err instanceof Error ? err.message : String(err),
-				});
+				logger.error(
+					{ applicationId: app.id, err },
+					"reconciler: booking repair failed",
+				);
 				counts.skipped++;
 			}
 			continue;
@@ -279,7 +283,7 @@ export async function reconcileOnce(opts: {
 }
 
 export interface ReconcilerLoopHandle {
-	stop(): void;
+	stop(): Promise<void>;
 }
 
 /** 30s loop guarded by advisory lock 4243 (multi-worker safe). Tick errors
@@ -287,6 +291,7 @@ export interface ReconcilerLoopHandle {
 export function startReconcilerLoop(opts: { intervalMs?: number } = {}): ReconcilerLoopHandle {
 	const intervalMs = opts.intervalMs ?? 30_000;
 	let stopped = false;
+	let inFlight: Promise<void> | null = null;
 
 	const tick = async () => {
 		const conn = await reserveApplications();
@@ -299,31 +304,38 @@ export function startReconcilerLoop(opts: { intervalMs?: number } = {}): Reconci
 			try {
 				await reconcileOnce({ now: new Date() });
 			} catch (err) {
-				console.error("worker reconciler: tick failed:", err);
+				logger.error({ err }, "worker reconciler: tick failed");
 			} finally {
 				try {
 					await conn`SELECT pg_advisory_unlock(${RECONCILER_LOCK_KEY})`;
 				} catch (err) {
-					console.error("worker reconciler: unlock failed:", err);
+					logger.error({ err }, "worker reconciler: unlock failed");
 				}
 			}
 		} catch (err) {
-			console.error("worker reconciler: lock failed:", err);
+			logger.error({ err }, "worker reconciler: lock failed");
 		} finally {
 			conn.release();
 		}
 	};
 
 	const timer = setInterval(() => {
-		if (stopped) return;
-		void tick();
+		if (stopped || inFlight) return;
+		inFlight = tick()
+			.catch((err) => {
+				logger.error({ err }, "worker reconciler: tick failed");
+			})
+			.finally(() => {
+				inFlight = null;
+			});
 	}, intervalMs);
 	timer.unref?.();
 
 	return {
-		stop() {
+		async stop() {
 			stopped = true;
 			clearInterval(timer);
+			await inFlight?.catch(() => {});
 		},
 	};
 }

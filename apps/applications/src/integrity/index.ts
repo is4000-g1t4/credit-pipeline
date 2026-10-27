@@ -17,6 +17,7 @@ export {
 	type IntegrityRunDeps,
 } from "./runs.js";
 export {
+	createDocumentMutationHandler,
 	evaluateIntegrity,
 	queueIntegrityRunForReview,
 	requeueActiveReviewForEvidenceChange,
@@ -30,7 +31,6 @@ export {
 	runFraudReviewRetention,
 	hasActiveReviewForApplication,
 	hasActiveReviewForCustomer,
-	activeDocumentHolds,
 } from "./fraud.js";
 export { loadIntegritySource, type LoadIntegritySourceOptions } from "./source.js";
 export {

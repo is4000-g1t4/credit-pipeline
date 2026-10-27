@@ -10,9 +10,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import {
-	ApiError,
 	actOnIntegrityCandidate,
-	apiErrorMessage,
 	escalateIntegrityConsistency,
 	evaluateIntegrity,
 	fetchDocumentPages,
@@ -25,42 +23,12 @@ import {
 	type IntegrityConsistency,
 	type IntegrityDocumentPanel,
 	type IntegrityFlagReason,
-	type IntegrityPanel as IntegrityPanelData,
-	type IntegrityRunTrace,
 	type IntegritySeverity,
 	type IntegritySignal,
 } from "../lib/api";
+import { clean, friendlyMessage, shortId } from "../lib/format";
+import { TraceDetails } from "./TraceDetails";
 import { Card, ErrorBox, StatusBadge } from "./ui";
-
-/** Strip bidi/zero-width controls so pasted document text cannot reorder UI. */
-function clean(value: string): string {
-	return value.replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/g, "");
-}
-
-function shortId(id: string): string {
-	return id.length > 8 ? id.slice(0, 8) : id;
-}
-
-function friendlyMessage(err: unknown): string {
-	if (err instanceof ApiError) {
-		switch (err.code) {
-			case "INTEGRITY_AGENT_UNAVAILABLE":
-				return "The integrity agent is temporarily unavailable — retry shortly.";
-			case "CANDIDATE_STALE":
-				return "The source changed since analysis — refresh the panel before confirming.";
-			case "CANDIDATE_NOT_ACTIVE":
-				return "That candidate was already decided — refresh the panel.";
-			case "NOT_CONFIRMED_MISMATCH":
-				return "Only a confirmed mismatch can be escalated.";
-			case "DOCUMENT_NOT_AVAILABLE":
-				return "A cited document is not available in this case.";
-			default:
-				break;
-		}
-		if (err.status === 503) return "The service is temporarily unavailable — retry shortly.";
-	}
-	return apiErrorMessage(err);
-}
 
 function unknown(value: string | null | undefined): string {
 	return value && value.length > 0 ? value : "unknown";
@@ -483,94 +451,6 @@ function DocumentCard({
 	);
 }
 
-function TraceSection({ run }: { run: IntegrityRunTrace }) {
-	return (
-		<section
-			aria-label="Latest analysis (metadata)"
-			className="mt-3 rounded border border-gray-200 p-3"
-		>
-			<h4 className="text-sm font-semibold">Latest analysis (metadata)</h4>
-			<dl className="mt-1 grid gap-x-4 gap-y-0.5 text-xs text-gray-600 sm:grid-cols-2">
-				<div>
-					<dt className="inline font-medium">Run: </dt>
-					<dd className="inline font-mono">{shortId(run.id)}</dd>
-				</div>
-				<div>
-					<dt className="inline font-medium">Status: </dt>
-					<dd className="inline">
-						<StatusBadge status={run.status} />
-					</dd>
-				</div>
-				<div>
-					<dt className="inline font-medium">Model: </dt>
-					<dd className="inline font-mono">{clean(run.model)}</dd>
-				</div>
-				<div>
-					<dt className="inline font-medium">Prompt: </dt>
-					<dd className="inline font-mono">{clean(run.promptVersion)}</dd>
-				</div>
-				<div>
-					<dt className="inline font-medium">Agent: </dt>
-					<dd className="inline font-mono">{clean(run.agentVersion)}</dd>
-				</div>
-				<div>
-					<dt className="inline font-medium">Steps: </dt>
-					<dd className="inline tabular-nums">
-						{run.steps ?? "—"} · {run.toolCalls.length} tool call
-						{run.toolCalls.length === 1 ? "" : "s"} · {run.sourceRefs.length} sources
-					</dd>
-				</div>
-				<div>
-					<dt className="inline font-medium">Repair: </dt>
-					<dd className="inline">
-						{run.repairAttempted
-							? run.repairSucceeded
-								? "attempted, succeeded"
-								: "attempted, failed"
-							: "not needed"}
-					</dd>
-				</div>
-				<div>
-					<dt className="inline font-medium">Cost: </dt>
-					<dd className="inline tabular-nums">
-						{run.usage ? `$${run.usage.costUsd.toFixed(4)}` : "—"}
-					</dd>
-				</div>
-				{run.errorCode && (
-					<div>
-						<dt className="inline font-medium">Error: </dt>
-						<dd className="inline font-mono">{clean(run.errorCode)}</dd>
-					</div>
-				)}
-			</dl>
-			{run.toolCalls.length > 0 && (
-				<table className="mt-2 w-full text-xs">
-					<thead>
-						<tr className="text-left text-gray-500">
-							<th className="py-1 pr-2 font-medium">Step</th>
-							<th className="py-1 pr-2 font-medium">Tool</th>
-							<th className="py-1 pr-2 font-medium">Results</th>
-							<th className="py-1 font-medium">Source types</th>
-						</tr>
-					</thead>
-					<tbody>
-						{run.toolCalls.map((call, i) => (
-							<tr key={`${call.step}-${call.name}-${i}`} className="border-t border-gray-100">
-								<td className="py-1 pr-2 tabular-nums">{call.step}</td>
-								<td className="py-1 pr-2 font-mono">{clean(call.name)}</td>
-								<td className="py-1 pr-2 tabular-nums">{call.resultCount}</td>
-								<td className="py-1 text-gray-600">
-									{call.sourceTypes.map(clean).join(", ") || "—"}
-								</td>
-							</tr>
-						))}
-					</tbody>
-				</table>
-			)}
-		</section>
-	);
-}
-
 const FLAG_REASONS: IntegrityFlagReason[] = [
 	"document_integrity",
 	"duplicate_document",
@@ -774,10 +654,8 @@ export function IntegrityPanel({ applicationId }: { applicationId: string }) {
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [liveRun.data, runId]);
 
-	// Feature off (or caller not assigned) → invisible.
-	if (panel.isError && panel.error instanceof ApiError && panel.error.status === 404) {
-		return null;
-	}
+	// Feature off (or caller not assigned) → invisible. A 404 never reaches
+	// panel.isError: fetchIntegrityPanel maps it to null data.
 	if (panel.data === null) return null;
 
 	async function analyse() {
@@ -794,7 +672,7 @@ export function IntegrityPanel({ applicationId }: { applicationId: string }) {
 		}
 	}
 
-	const data: IntegrityPanelData | null | undefined = panel.data;
+	const data = panel.data;
 	const live = liveRun.data?.run;
 	const liveActive = live !== undefined && (live.status === "queued" || live.status === "running");
 
@@ -804,9 +682,7 @@ export function IntegrityPanel({ applicationId }: { applicationId: string }) {
 				<p className="text-sm text-gray-500">Loading integrity…</p>
 			) : panel.isError ? (
 				<ErrorBox message={friendlyMessage(panel.error)} onRetry={() => void panel.refetch()} />
-			) : data === null || data === undefined ? (
-				<p className="text-sm text-gray-500">Integrity is not available for this case.</p>
-			) : (
+			) : data === null || data === undefined ? null : (
 				<div>
 					{data.openReview !== null && (
 						<p className="mb-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
@@ -852,7 +728,27 @@ export function IntegrityPanel({ applicationId }: { applicationId: string }) {
 						</ul>
 					)}
 
-					{data.latestAnalysis !== null && <TraceSection run={data.latestAnalysis} />}
+					{data.latestAnalysis !== null && (
+						<TraceDetails
+							title="Latest analysis (metadata)"
+							trace={{
+								runId: data.latestAnalysis.id,
+								runStatus: data.latestAnalysis.status,
+								model: data.latestAnalysis.model,
+								promptVersion: data.latestAnalysis.promptVersion,
+								agentVersion: data.latestAnalysis.agentVersion,
+								steps: data.latestAnalysis.steps,
+								toolCalls: data.latestAnalysis.toolCalls,
+								sourceRefs: data.latestAnalysis.sourceRefs,
+								repairAttempted: data.latestAnalysis.repairAttempted,
+								repairSucceeded: data.latestAnalysis.repairSucceeded,
+								inputTokens: data.latestAnalysis.usage?.inputTokens,
+								outputTokens: data.latestAnalysis.usage?.outputTokens,
+								costUsd: data.latestAnalysis.usage?.costUsd,
+								errorCode: data.latestAnalysis.errorCode,
+							}}
+						/>
+					)}
 
 					{analyseError && (
 						<div className="mt-3">

@@ -2,7 +2,8 @@
 // Usage: pnpm --filter @credit/policy reindex -- --version=<versionId>
 import { createDb } from "@credit/db";
 import { loadEnv } from "../src/env.js";
-import { createOpenRouterEmbedder } from "../src/openrouter.js";
+import { createOpenRouterEmbedder, openRouterConfigFromEnv } from "../src/openrouter.js";
+import { embeddingText, writeChunks } from "../src/chunks.js";
 
 function arg(name: string): string | undefined {
 	const hit = process.argv.find((value) => value.startsWith(`--${name}=`));
@@ -59,43 +60,33 @@ try {
 	}>;
 	if (sections.length === 0)
 		throw new Error(`policy reindex: version has no sections: ${versionId}`);
-	const embedder = createOpenRouterEmbedder({
-		apiKey: env.openrouterApiKey,
-		baseUrl: env.openrouterBaseUrl,
-		model: env.agentModel,
-		dimensions: env.embeddingDimensions,
-		embeddingModel: env.embeddingModel,
-		temperature: env.agentTemperature,
-		maxOutputTokens: env.agentMaxOutputTokens,
-		embeddingProviders: env.embeddingProviders ? env.embeddingProviders.split(",") : [],
-		answererProviderOrder: [],
-	});
-	const vectors = await embedder.embed(
-		sections.map((s) => `${s.title} > ${s.heading} > ${s.body}`),
-	);
-	await sql.begin(async (tx) => {
-		await tx`DELETE FROM policy_chunks WHERE version_id = ${versionId} AND index_version = ${active.index_version}`;
-		for (const [i, section] of sections.entries()) {
-			const vector = vectors[i];
-			if (!vector || vector.length !== env.embeddingDimensions) {
-				throw new Error(
-					`policy reindex: embedding dimension mismatch for ${section.section_id} (expected ${env.embeddingDimensions}, got ${vector?.length ?? 0})`,
-				);
-			}
-			await tx`
-				INSERT INTO policy_chunks (
-					index_version, version_id, section_id, chunk_index, heading, text,
-					char_start, char_end, token_count, content_hash, chunking_version,
-					embedding, embedding_model, embedding_dimensions, embedding_version
-				) VALUES (
-					${active.index_version}, ${versionId}, ${section.section_id}, 0,
-					${section.heading}, ${section.body}, ${section.char_start}, ${section.char_end},
-					${Math.max(1, Math.ceil(section.body.length / 4))}, ${section.content_hash},
-					${active.chunking_version}, ${JSON.stringify(vector)}::vector, ${env.embeddingModel},
-					${env.embeddingDimensions}, ${`${env.embeddingModel}:${env.embeddingDimensions}:${active.chunking_version}`}
-				)
-			`;
+	const embedder = createOpenRouterEmbedder(openRouterConfigFromEnv(env));
+	const vectors = await embedder.embed(sections.map((s) => embeddingText(s)));
+	for (const [i, section] of sections.entries()) {
+		const vector = vectors[i];
+		if (!vector || vector.length !== env.embeddingDimensions) {
+			throw new Error(
+				`policy reindex: embedding dimension mismatch for ${section.section_id} (expected ${env.embeddingDimensions}, got ${vector?.length ?? 0})`,
+			);
 		}
+	}
+	await sql.begin(async (tx) => {
+		await writeChunks(tx, {
+			indexVersion: active.index_version,
+			versionId,
+			sections: sections.map((s) => ({
+				sectionId: s.section_id,
+				heading: s.heading,
+				body: s.body,
+				charStart: s.char_start,
+				charEnd: s.char_end,
+				contentHash: s.content_hash,
+			})),
+			vectors,
+			embeddingModel: env.embeddingModel,
+			embeddingDimensions: env.embeddingDimensions,
+			chunkingVersion: active.chunking_version,
+		});
 	});
 	console.log(
 		`reindex: version ${versionId} (${sections.length} sections) into ${active.index_version} (${active.embedding_model}, ${active.embedding_dimensions})`,

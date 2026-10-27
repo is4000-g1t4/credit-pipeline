@@ -4,6 +4,11 @@ Corpus: 8 synthetic credit policies, 35 sections. 60 labelled queries:
 30 dev / 30 frozen held-out. Retrieval is exact cosine; quotes and citations
 are not part of this eval.
 
+> Re-run note (2026-10-27): the harness now uses the production corpus
+> loader and embedding text (raw section bodies, no eval-only 2k
+> truncation/whitespace collapse). This table predates that change —
+> re-baseline before comparing new scores against it.
+
 **Winner: `voyageai/voyage-4-large` (1024 dims).**
 
 | Model                         | Dims | Dev recall@5 | Held-out recall@5 | Wilson 95%  | Held-out exact |

@@ -192,6 +192,10 @@ describe("trackModelCall generation payload", () => {
 		state.toolStartThrows = false;
 		resetObservability();
 		process.env.OTEL_EXPORTER_OTLP_ENDPOINT = "http://127.0.0.1:4318";
+		// The shared pipeline gates on AGENTO11Y ingest config (repo .env
+		// sets these for real deployments); the client itself is mocked.
+		process.env.AGENTO11Y_ENDPOINT = "http://127.0.0.1:4318";
+		process.env.AGENTO11Y_AUTH_TOKEN = "test-token";
 		delete process.env.OTEL_SDK_DISABLED;
 		return () => {
 			for (const key of Object.keys(process.env)) {
@@ -301,6 +305,8 @@ describe("trackToolExecution payload", () => {
 		state.toolStartThrows = false;
 		resetObservability();
 		process.env.OTEL_EXPORTER_OTLP_ENDPOINT = "http://127.0.0.1:4318";
+		process.env.AGENTO11Y_ENDPOINT = "http://127.0.0.1:4318";
+		process.env.AGENTO11Y_AUTH_TOKEN = "test-token";
 		delete process.env.OTEL_SDK_DISABLED;
 		return () => {
 			for (const key of Object.keys(process.env)) {

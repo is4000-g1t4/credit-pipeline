@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { Hono } from "hono";
 import { signCaseToken } from "../src/case-token.js";
 import { createDrawerToken } from "../src/answer.js";
-import type { PolicyDeps, PolicyStore } from "../src/store.js";
+import type { PolicyDeps } from "../src/store.js";
 import type { ServiceVariables } from "@credit/service-kit";
-import { appWithUser, baseContext, testChunk } from "./helper.js";
+import { appWithUser, baseContext, baseDeps, fakePolicyStore } from "./helper.js";
 
 const versionId = "11111111-1111-4111-8111-111111111111";
 const policyId = "22222222-2222-4222-8222-222222222222";
@@ -19,168 +19,6 @@ const service = {
 	email: "research@internal.local",
 	role: "service" as const,
 };
-
-function deps(overrides: Partial<PolicyDeps> = {}): {
-	deps: PolicyDeps;
-	stats: { queries: number; embeds: number; answers: number; citations: number };
-} {
-	const stats = { queries: 0, embeds: 0, answers: 0, citations: 0 };
-	const store: PolicyStore = {
-		async getActiveIndex() {
-			return {
-				indexVersion: "idx-v1",
-				embeddingModel: "voyageai/voyage-4-large",
-				embeddingDimensions: 1024,
-				chunkingVersion: "sections-v1",
-			};
-		},
-		async loadChunks() {
-			return [testChunk];
-		},
-		async loadAcls() {
-			return [
-				{
-					policyId,
-					principalType: "role" as const,
-					principal: "officer",
-					permission: "read" as const,
-				},
-				{
-					policyId,
-					principalType: "service" as const,
-					principal: "case_explain",
-					permission: "case_explain" as const,
-				},
-			];
-		},
-		async loadPolicyRoles() {
-			return [];
-		},
-		async getSection() {
-			return null;
-		},
-		async getSectionByRef() {
-			return null;
-		},
-		async listVersionSectionIds() {
-			return [];
-		},
-		async listVersionCorpusSections() {
-			return [];
-		},
-		async listApprovedCorpusSections() {
-			return [];
-		},
-		async hasVersionChunks() {
-			return true;
-		},
-		async insertQuery() {
-			stats.queries += 1;
-		},
-		async insertCitations() {
-			stats.citations += 1;
-		},
-		async consumeCaseToken() {
-			return true;
-		},
-		async getVersion() {
-			return null;
-		},
-		async submitVersion() {},
-		async approveVersion() {},
-		async retireVersion() {},
-		async reserveBudget() {
-			return { reservationId: "33333333-3333-4333-8333-333333333333" };
-		},
-		async settleBudget() {},
-	};
-	const base: PolicyDeps = {
-		store,
-		embedder: {
-			model: "voyageai/voyage-4-large",
-			dimensions: 1024,
-			async embed(inputs) {
-				stats.embeds += inputs.length;
-				return inputs.map(() => [1, ...Array(1023).fill(0)]);
-			},
-		},
-		answerer: {
-			async answerNavigator() {
-				stats.answers += 1;
-				return {
-					output: {
-						status: "succeeded",
-						segments: [
-							{ text: "SME term loans require a DSCR of at least 1.25x.", citationIndexes: [0] },
-						],
-						citations: [
-							{
-								policyKey: "POL-CR-001",
-								sectionId: "4.2",
-								version: "v1",
-								quote: "DSCR must be at least 1.25x",
-							},
-						],
-						limitations: [],
-					},
-					usage: { inputTokens: 1, outputTokens: 2, costUsd: 0.001, model: "test" },
-				};
-			},
-			async answerCase(input) {
-				stats.answers += 1;
-				return {
-					output: {
-						status: "succeeded",
-						summary: "affordability",
-						items: [
-							{
-								ref: input.context.signals[0]!.ref,
-								explanationSegments: [
-									{
-										text: "SME term loans require a DSCR of at least 1.25x.",
-										citationIndexes: [0],
-									},
-								],
-								citations: [
-									{
-										policyKey: "POL-CR-001",
-										sectionId: "4.2",
-										version: "v1",
-										quote: "DSCR must be at least 1.25x",
-									},
-								],
-								confidence: "high",
-							},
-						],
-						limitations: [],
-					},
-					usage: { inputTokens: 1, outputTokens: 2, costUsd: 0.001, model: "test" },
-				};
-			},
-		},
-		env: {
-			assistEnabled: true,
-			citationSecret: "citation-secret",
-			auditHashSecret: "audit-secret",
-			jurisdiction: "SG",
-			retrievalTopK: 8,
-			agentTimeoutMs: 5_000,
-			caseTimeoutMs: 5_000,
-			agentMaxCostUsd: 0.1,
-			caseMaxCostUsd: 0.2,
-			navDailyBudgetUsd: 2,
-			caseDailyBudgetUsd: 2,
-			actorDailyBudgetUsd: 1,
-			policyExceptionDailyBudgetUsd: 2,
-			reservationTtlSeconds: 180,
-			caseTokenSecret: "case-token-secret",
-			embeddingModel: "voyageai/voyage-4-large",
-			embeddingDimensions: 1024,
-		},
-		logger: { info() {}, warn() {}, error() {} },
-	};
-	return { deps: { ...base, ...overrides }, stats };
-}
 
 function officerApp(d: PolicyDeps): Hono<{ Variables: ServiceVariables }> {
 	return appWithUser(d, officer);
@@ -214,7 +52,7 @@ function caseTokenFor(d: PolicyDeps, context: ReturnType<typeof baseContext>): s
 
 describe("policy routes", () => {
 	it("returns a validated navigator answer and logs the query", async () => {
-		const { deps: d, stats } = deps();
+		const { deps: d, stats } = baseDeps();
 		const res = await postJson(officerApp(d), "/api/policy/ask", {
 			question: "What DSCR must an SME term loan meet?",
 			product: "sme_term_loan",
@@ -228,7 +66,7 @@ describe("policy routes", () => {
 	});
 
 	it("short-circuits an out-of-scope question without embedding or answering", async () => {
-		const { deps: d, stats } = deps();
+		const { deps: d, stats } = baseDeps();
 		const res = await postJson(officerApp(d), "/api/policy/ask", {
 			question: "What is the AML training requirement for HR?",
 			product: "sme_term_loan",
@@ -241,7 +79,7 @@ describe("policy routes", () => {
 	});
 
 	it("blocks a direct identifier before embedding or answering", async () => {
-		const { deps: d, stats } = deps();
+		const { deps: d, stats } = baseDeps();
 		const res = await postJson(officerApp(d), "/api/policy/ask", {
 			question: "What is the TDSR for applicant S1234567D?",
 			product: "personal_loan",
@@ -253,7 +91,7 @@ describe("policy routes", () => {
 		expect(stats.answers).toBe(0);
 	});
 	it("serves a case explanation for the service principal with a bound token", async () => {
-		const { deps: d, stats } = deps();
+		const { deps: d, stats } = baseDeps();
 		const context = baseContext();
 		const token = caseTokenFor(d, context);
 		const res = await postJson(serviceApp(d), "/internal/policy/explain-case", {
@@ -269,7 +107,7 @@ describe("policy routes", () => {
 	});
 
 	it("rejects a case token bound to another run", async () => {
-		const { deps: d } = deps();
+		const { deps: d } = baseDeps();
 		const token = signCaseToken(
 			d.env.caseTokenSecret,
 			{
@@ -289,7 +127,7 @@ describe("policy routes", () => {
 	});
 
 	it("returns no_match when the ACL denies every chunk", async () => {
-		const { deps: inner, stats } = deps();
+		const { deps: inner, stats } = baseDeps();
 		const d: PolicyDeps = {
 			...inner,
 			store: {
@@ -310,7 +148,7 @@ describe("policy routes", () => {
 	});
 
 	it("returns budget_exceeded without embedding when the reserve fails", async () => {
-		const { deps: inner, stats } = deps();
+		const { deps: inner, stats } = baseDeps();
 		const d: PolicyDeps = {
 			...inner,
 			store: {
@@ -332,15 +170,14 @@ describe("policy routes", () => {
 	});
 
 	it("returns budget_exceeded for a case when the reserve fails", async () => {
-		const { deps: inner } = deps();
+		const { deps: inner } = baseDeps();
 		const d: PolicyDeps = {
 			...inner,
-			store: {
-				...inner.store,
+			store: fakePolicyStore({
 				async reserveBudget() {
 					return { error: "budget_exceeded" as const };
 				},
-			},
+			}),
 		};
 		const context = baseContext();
 		const res = await postJson(serviceApp(d), "/internal/policy/explain-case", {
@@ -352,15 +189,14 @@ describe("policy routes", () => {
 	});
 
 	it("rejects a replayed case token", async () => {
-		const { deps: inner } = deps();
+		const { deps: inner } = baseDeps();
 		const d: PolicyDeps = {
 			...inner,
-			store: {
-				...inner.store,
+			store: fakePolicyStore({
 				async consumeCaseToken() {
 					return false;
 				},
-			},
+			}),
 		};
 		const context = baseContext();
 		const res = await postJson(serviceApp(d), "/internal/policy/explain-case", {
@@ -374,7 +210,7 @@ describe("policy routes", () => {
 	});
 
 	it("serves a drawer section with a valid token and rejects a tampered one", async () => {
-		const { deps: inner } = deps();
+		const { deps: inner } = baseDeps();
 		const section = {
 			policyId,
 			policyKey: "POL-CR-001",
@@ -391,12 +227,11 @@ describe("policy routes", () => {
 		};
 		const d: PolicyDeps = {
 			...inner,
-			store: {
-				...inner.store,
+			store: fakePolicyStore({
 				async getSection() {
 					return section;
 				},
-			},
+			}),
 		};
 		const token = createDrawerToken(d.env.citationSecret, {
 			versionId,
@@ -417,7 +252,7 @@ describe("policy routes", () => {
 	});
 
 	it("rejects a drawer read when the ACL denies it", async () => {
-		const { deps: inner } = deps();
+		const { deps: inner } = baseDeps();
 		const section = {
 			policyId,
 			policyKey: "POL-CR-001",
@@ -434,15 +269,14 @@ describe("policy routes", () => {
 		};
 		const d: PolicyDeps = {
 			...inner,
-			store: {
-				...inner.store,
+			store: fakePolicyStore({
 				async getSection() {
 					return section;
 				},
 				async loadAcls() {
 					return [];
 				},
-			},
+			}),
 		};
 		const token = createDrawerToken(d.env.citationSecret, {
 			versionId,

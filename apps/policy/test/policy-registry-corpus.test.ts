@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
 	POLICY_ENGINE_STANDARD_HASH,
+	POLICY_ENGINE_STANDARD_SECTION_IDS,
 	POLICY_RULE_DEFINITIONS,
 	hashCanonical,
 	validateRegistryRefs,
@@ -50,7 +51,7 @@ describe("policy registry corpus", () => {
 		const std = parsed.find((p) => p.frontmatter.policy_key === "POL-CR-009");
 		expect(std).toBeDefined();
 		const bodies = std!.sections
-			.filter((s) => ["9.0", "9.1", "9.2", "9.3", "9.4"].includes(s.sectionId))
+			.filter((s) => POLICY_ENGINE_STANDARD_SECTION_IDS.includes(s.sectionId))
 			.map((s) => ({ sectionId: s.sectionId, body: s.body }))
 			.sort((a, b) => (a.sectionId < b.sectionId ? -1 : 1));
 		expect(bodies).toHaveLength(5);

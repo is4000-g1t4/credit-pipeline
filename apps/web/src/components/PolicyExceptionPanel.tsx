@@ -9,6 +9,7 @@ import { useState } from "react";
 import {
 	ApiError,
 	apiErrorMessage,
+	apiErrorWithCode,
 	approvePolicyExceptionMemo,
 	askPolicyException,
 	draftPolicyExceptionMemo,
@@ -28,12 +29,10 @@ import {
 	type PolicyExceptionSection,
 	type PolicyExceptionSectionRef,
 } from "../lib/api";
+import { asMemoContent } from "./MemoContent";
 import { PolicyCitationButton, PolicySectionDrawer } from "./PolicyCitations";
+import { TraceDetails } from "./TraceDetails";
 import { Card, EmptyState, ErrorBox, Skeleton, StatusBadge } from "./ui";
-
-function typedError(err: unknown): string {
-	return err instanceof ApiError ? `${err.code}: ${apiErrorMessage(err)}` : apiErrorMessage(err);
-}
 
 function approverLabel(approver: string | null): string {
 	switch (approver) {
@@ -194,119 +193,6 @@ function ExceptionSegments({
 	);
 }
 
-interface TraceFacts {
-	model?: string;
-	promptVersion?: string;
-	agentVersion?: string;
-	registryVersion?: string | null;
-	registryHash?: string | null;
-	validatorVersion?: string | null;
-	steps?: number;
-	toolCalls?: Array<{ step: number; name: string; resultCount: number; sourceTypes: string[] }>;
-	sourceRefs?: string[];
-	repairAttempted?: boolean;
-	repairSucceeded?: boolean | null;
-	inputTokens?: number;
-	outputTokens?: number;
-	latencyMs?: number;
-	costUsd?: number;
-}
-
-/** Agent trace as metadata only — never prompts or chain-of-thought. */
-function TraceDetails({ trace }: { trace: TraceFacts | null | undefined }) {
-	if (!trace) return null;
-	return (
-		<details className="mt-3 rounded border border-gray-200 p-3">
-			<summary className="cursor-pointer text-sm font-semibold">Trace (metadata)</summary>
-			<dl className="mt-2 grid gap-x-4 gap-y-1 text-xs text-gray-600 sm:grid-cols-2">
-				{trace.model !== undefined && (
-					<div>
-						<dt className="inline font-medium">Model: </dt>
-						<dd className="inline font-mono">{trace.model}</dd>
-					</div>
-				)}
-				{trace.promptVersion !== undefined && (
-					<div>
-						<dt className="inline font-medium">Prompt: </dt>
-						<dd className="inline font-mono">{trace.promptVersion}</dd>
-					</div>
-				)}
-				{trace.agentVersion !== undefined && (
-					<div>
-						<dt className="inline font-medium">Agent: </dt>
-						<dd className="inline font-mono">{trace.agentVersion}</dd>
-					</div>
-				)}
-				{trace.registryVersion !== undefined && (
-					<div>
-						<dt className="inline font-medium">Registry: </dt>
-						<dd className="inline font-mono">{trace.registryVersion}</dd>
-					</div>
-				)}
-				{trace.validatorVersion !== undefined && (
-					<div>
-						<dt className="inline font-medium">Validator: </dt>
-						<dd className="inline font-mono">{trace.validatorVersion}</dd>
-					</div>
-				)}
-				{trace.steps !== undefined && (
-					<div>
-						<dt className="inline font-medium">Steps: </dt>
-						<dd className="inline tabular-nums">
-							{trace.steps} · {(trace.toolCalls ?? []).length} tool calls ·{" "}
-							{(trace.sourceRefs ?? []).length} sources
-						</dd>
-					</div>
-				)}
-				{trace.repairAttempted !== undefined && (
-					<div>
-						<dt className="inline font-medium">Repair: </dt>
-						<dd className="inline">
-							{trace.repairAttempted
-								? trace.repairSucceeded === true
-									? "attempted, succeeded"
-									: "attempted, failed"
-								: "not needed"}
-						</dd>
-					</div>
-				)}
-				{(trace.inputTokens !== undefined || trace.latencyMs !== undefined) && (
-					<div>
-						<dt className="inline font-medium">Usage: </dt>
-						<dd className="inline tabular-nums">
-							{trace.inputTokens ?? "—"} in / {trace.outputTokens ?? "—"} out ·{" "}
-							{trace.latencyMs ?? "—"}ms
-							{trace.costUsd !== undefined ? ` · $${trace.costUsd.toFixed(4)}` : ""}
-						</dd>
-					</div>
-				)}
-			</dl>
-			{(trace.toolCalls?.length ?? 0) > 0 && (
-				<table className="mt-2 w-full text-xs">
-					<thead>
-						<tr className="text-left text-gray-500">
-							<th className="py-1 pr-2 font-medium">Step</th>
-							<th className="py-1 pr-2 font-medium">Tool</th>
-							<th className="py-1 pr-2 font-medium">Results</th>
-							<th className="py-1 font-medium">Source types</th>
-						</tr>
-					</thead>
-					<tbody>
-						{(trace.toolCalls ?? []).map((call, i) => (
-							<tr key={`${call.step}-${call.name}-${i}`} className="border-t border-gray-100">
-								<td className="py-1 pr-2 tabular-nums">{call.step}</td>
-								<td className="py-1 pr-2 font-mono">{call.name}</td>
-								<td className="py-1 pr-2 tabular-nums">{call.resultCount}</td>
-								<td className="py-1 text-gray-600">{call.sourceTypes.join(", ") || "—"}</td>
-							</tr>
-						))}
-					</tbody>
-				</table>
-			)}
-		</details>
-	);
-}
-
 function FailureCard({
 	failure,
 	sections,
@@ -427,7 +313,7 @@ function FollowUpSection({ applicationId }: { applicationId: string }) {
 			setHistory((h) => [...h, { question: q, answer, error: "" }]);
 			setQuestion("");
 		} catch (err) {
-			setHistory((h) => [...h, { question: q, answer: null, error: typedError(err) }]);
+			setHistory((h) => [...h, { question: q, answer: null, error: apiErrorWithCode(err) }]);
 		} finally {
 			setAsking(false);
 		}
@@ -504,13 +390,6 @@ function FollowUpSection({ applicationId }: { applicationId: string }) {
 	);
 }
 
-function asMemoContent(content: unknown): PolicyExceptionMemoContent | null {
-	if (typeof content !== "object" || content === null) return null;
-	const c = content as Record<string, unknown>;
-	if (typeof c.title !== "string" || !Array.isArray(c.sections)) return null;
-	return content as PolicyExceptionMemoContent;
-}
-
 function MemoSection({
 	applicationId,
 	caseStatus,
@@ -539,7 +418,7 @@ function MemoSection({
 	const canMutate = caseStatus === "pending_review";
 	const summary = latestArtifact;
 	const artifact = memo.data?.artifact ?? null;
-	const content = artifact ? asMemoContent(artifact.content) : null;
+	const content = artifact ? asMemoContent<PolicyExceptionMemoContent>(artifact.content) : null;
 	const shown = editing ?? content;
 
 	function invalidate() {
@@ -554,7 +433,7 @@ function MemoSection({
 			await draftPolicyExceptionMemo(applicationId);
 			invalidate();
 		} catch (err) {
-			setDraftError(typedError(err));
+			setDraftError(apiErrorWithCode(err));
 		} finally {
 			setDrafting(false);
 		}
@@ -569,7 +448,7 @@ function MemoSection({
 			setConfirming(false);
 			invalidate();
 		} catch (err) {
-			setActionError(typedError(err));
+			setActionError(apiErrorWithCode(err));
 		} finally {
 			setActing(false);
 		}
@@ -600,7 +479,7 @@ function MemoSection({
 			setEditing(null);
 			invalidate();
 		} catch (err) {
-			setActionError(typedError(err));
+			setActionError(apiErrorWithCode(err));
 		} finally {
 			setActing(false);
 		}
@@ -653,7 +532,7 @@ function MemoSection({
 				</div>
 			) : memo.isError ? (
 				<div className="mt-2">
-					<ErrorBox message={typedError(memo.error)} onRetry={() => void memo.refetch()} />
+					<ErrorBox message={apiErrorWithCode(memo.error)} onRetry={() => void memo.refetch()} />
 				</div>
 			) : !artifact || !content ? (
 				<p className="mt-2 text-sm text-gray-500">The memo is not available.</p>
@@ -882,7 +761,7 @@ function ExplainSection({
 			setExplanation(res);
 			onExplained();
 		} catch (err) {
-			setExplainError(typedError(err));
+			setExplainError(apiErrorWithCode(err));
 		} finally {
 			setExplaining(false);
 		}

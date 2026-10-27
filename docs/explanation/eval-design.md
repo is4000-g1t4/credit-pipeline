@@ -629,7 +629,7 @@ Return: {"evidence": "<one sentence>", "verdict": "supported|partial|unsupported
   [GenAI evaluations](https://grafana.com/docs/grafana-cloud/observe-and-act/monitor-applications/ai-observability/genai/evaluations):
   generations/conversations, agent versions, online evaluators, score
   export, experiments.
-- Repo: `apps/policy/README.md`, the T03/T04 spec (kept locally at
+- Repo: `apps/policy/README.md`, the T03/T04 spec (historical plan path, not in repo:
   `.scratch/specs/t03-t04-policy-corpus-and-navigator.md`) §7.4 for retrieval
   eval design and the held-out rule, `apps/policy/eval/RESULTS.md`, and
   `apps/research/eval/settings-eval.ts`.

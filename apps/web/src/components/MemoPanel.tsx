@@ -7,24 +7,18 @@ import { useState } from "react";
 import {
 	ApiError,
 	apiErrorMessage,
+	apiErrorWithCode,
 	approveMemo,
 	draftMemo,
 	formatDateTime,
 	listMemoArtifacts,
 	updateMemo,
-	type AssistArtifact,
 	type CreditMemoContent,
 	type MemoCitation,
 } from "../lib/api";
+import { asMemoContent } from "./MemoContent";
+import { TraceDetails } from "./TraceDetails";
 import { Card, EmptyState, ErrorBox, Skeleton, StatusBadge } from "./ui";
-
-/** Defensive read: old or unexpected rows render as "no content", never crash. */
-function asMemoContent(content: unknown): CreditMemoContent | null {
-	if (typeof content !== "object" || content === null) return null;
-	const c = content as Record<string, unknown>;
-	if (typeof c.title !== "string" || !Array.isArray(c.sections)) return null;
-	return content as CreditMemoContent;
-}
 
 /** `case_fact:…` → `case fact`; unknown refs render raw. */
 function sourceLabel(ref: string): string {
@@ -45,88 +39,6 @@ function CitationChip({ citation }: { citation: MemoCitation }) {
 				“{citation.quote}”
 			</blockquote>
 		</li>
-	);
-}
-
-function TraceSection({ artifact }: { artifact: AssistArtifact }) {
-	const trace = artifact.agentTrace;
-	if (!trace) return null;
-	return (
-		<section
-			aria-label="Agent trace (metadata)"
-			className="mt-4 rounded border border-gray-200 p-3"
-		>
-			<h4 className="text-sm font-semibold">Agent trace (metadata)</h4>
-			<dl className="mt-2 grid gap-x-4 gap-y-1 text-xs text-gray-600 sm:grid-cols-2">
-				<div>
-					<dt className="inline font-medium">Writer: </dt>
-					<dd className="inline font-mono">{trace.writer}</dd>
-				</div>
-				<div>
-					<dt className="inline font-medium">Model: </dt>
-					<dd className="inline font-mono">{trace.model}</dd>
-				</div>
-				<div>
-					<dt className="inline font-medium">Prompt: </dt>
-					<dd className="inline font-mono">{trace.promptVersion}</dd>
-				</div>
-				<div>
-					<dt className="inline font-medium">Agent: </dt>
-					<dd className="inline font-mono">{trace.agentVersion}</dd>
-				</div>
-				<div>
-					<dt className="inline font-medium">Evidence: </dt>
-					<dd className="inline font-mono" title={trace.evidenceHash}>
-						{trace.evidenceHash.slice(0, 12)}…
-					</dd>
-				</div>
-				<div>
-					<dt className="inline font-medium">Steps: </dt>
-					<dd className="inline">
-						{trace.steps} · {trace.toolCalls.length} tool calls · {trace.sourceRefs.length} sources
-					</dd>
-				</div>
-				<div>
-					<dt className="inline font-medium">Repair: </dt>
-					<dd className="inline">
-						{trace.repairAttempted
-							? trace.repairSucceeded === true
-								? "attempted, succeeded"
-								: "attempted, failed"
-							: "not needed"}
-						{trace.fallbackReason ? ` (${trace.fallbackReason})` : ""}
-					</dd>
-				</div>
-				<div>
-					<dt className="inline font-medium">Usage: </dt>
-					<dd className="inline">
-						{trace.inputTokens} in / {trace.outputTokens} out · {trace.latencyMs}ms
-					</dd>
-				</div>
-			</dl>
-			{trace.toolCalls.length > 0 && (
-				<table className="mt-2 w-full text-xs">
-					<thead>
-						<tr className="text-left text-gray-500">
-							<th className="py-1 pr-2 font-medium">Step</th>
-							<th className="py-1 pr-2 font-medium">Tool</th>
-							<th className="py-1 pr-2 font-medium">Results</th>
-							<th className="py-1 font-medium">Source types</th>
-						</tr>
-					</thead>
-					<tbody>
-						{trace.toolCalls.map((call, i) => (
-							<tr key={`${call.step}-${call.name}-${i}`} className="border-t border-gray-100">
-								<td className="py-1 pr-2 tabular-nums">{call.step}</td>
-								<td className="py-1 pr-2 font-mono">{call.name}</td>
-								<td className="py-1 pr-2 tabular-nums">{call.resultCount}</td>
-								<td className="py-1 text-gray-600">{call.sourceTypes.join(", ") || "—"}</td>
-							</tr>
-						))}
-					</tbody>
-				</table>
-			)}
-		</section>
 	);
 }
 
@@ -159,7 +71,7 @@ export function MemoPanel({
 	}
 
 	const artifact = memos.data?.items[0] ?? null;
-	const content = artifact ? asMemoContent(artifact.content) : null;
+	const content = artifact ? asMemoContent<CreditMemoContent>(artifact.content) : null;
 	const canDraft = caseStatus === "pending_review";
 	const isDraft = artifact?.status === "draft";
 	const shown = editing ?? content;
@@ -171,9 +83,7 @@ export function MemoPanel({
 			await draftMemo(applicationId);
 			await invalidate();
 		} catch (err) {
-			setDraftError(
-				err instanceof ApiError ? `${err.code}: ${apiErrorMessage(err)}` : apiErrorMessage(err),
-			);
+			setDraftError(apiErrorWithCode(err));
 		} finally {
 			setDrafting(false);
 		}
@@ -188,9 +98,7 @@ export function MemoPanel({
 			setConfirming(false);
 			await invalidate();
 		} catch (err) {
-			setActionError(
-				err instanceof ApiError ? `${err.code}: ${apiErrorMessage(err)}` : apiErrorMessage(err),
-			);
+			setActionError(apiErrorWithCode(err));
 		} finally {
 			setActing(false);
 		}
@@ -221,9 +129,7 @@ export function MemoPanel({
 			setEditing(null);
 			await invalidate();
 		} catch (err) {
-			setActionError(
-				err instanceof ApiError ? `${err.code}: ${apiErrorMessage(err)}` : apiErrorMessage(err),
-			);
+			setActionError(apiErrorWithCode(err));
 		} finally {
 			setActing(false);
 		}
@@ -325,7 +231,29 @@ export function MemoPanel({
 							</ul>
 						</div>
 					)}
-					<TraceSection artifact={artifact} />
+					<TraceDetails
+						title="Agent trace (metadata)"
+						trace={
+							artifact.agentTrace
+								? {
+										writer: artifact.agentTrace.writer,
+										model: artifact.agentTrace.model,
+										promptVersion: artifact.agentTrace.promptVersion,
+										agentVersion: artifact.agentTrace.agentVersion,
+										evidenceHash: artifact.agentTrace.evidenceHash,
+										steps: artifact.agentTrace.steps,
+										toolCalls: artifact.agentTrace.toolCalls,
+										sourceRefs: artifact.agentTrace.sourceRefs,
+										repairAttempted: artifact.agentTrace.repairAttempted,
+										repairSucceeded: artifact.agentTrace.repairSucceeded,
+										fallbackReason: artifact.agentTrace.fallbackReason,
+										inputTokens: artifact.agentTrace.inputTokens,
+										outputTokens: artifact.agentTrace.outputTokens,
+										latencyMs: artifact.agentTrace.latencyMs,
+									}
+								: null
+						}
+					/>
 					{artifact.status === "approved" ? (
 						<p className="mt-4 text-sm text-gray-600">
 							Approved{artifact.approvedBy ? ` by ${artifact.approvedBy}` : ""}

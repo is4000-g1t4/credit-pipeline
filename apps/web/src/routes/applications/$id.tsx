@@ -4,7 +4,7 @@ import { CaseView } from "../../components/CaseView";
 import { CustomerSnapshot, RequirementsPanel } from "../../components/RequirementsPanel";
 import { DocumentPanel } from "../../components/DocumentPanel";
 import { EmptyState, ErrorBox, Page, Skeleton } from "../../components/ui";
-import { ApiError, api, apiErrorMessage, type CaseDetail, isTerminal } from "../../lib/api";
+import { ApiError, apiErrorMessage, fetchCase, isTerminal, queryKeys } from "../../lib/api";
 import { RequireAuth } from "../../lib/auth";
 
 export const Route = createFileRoute("/applications/$id")({
@@ -18,8 +18,8 @@ export const Route = createFileRoute("/applications/$id")({
 function Detail() {
 	const { id } = Route.useParams();
 	const detail = useQuery({
-		queryKey: ["application", id],
-		queryFn: () => api<CaseDetail>(`/api/applications/${id}`),
+		queryKey: queryKeys.case(id),
+		queryFn: () => fetchCase(id),
 		retry: false,
 		// Poll every 2s while non-terminal; stop on terminal (SPEC FR-7.4).
 		refetchInterval: (query) => {

@@ -5,11 +5,7 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
 	test: {
 		include: ["test/integration/**/*.test.ts"],
-		pool: "forks",
-		forks: { singleFork: true },
-		// singleFork alone still schedules files in parallel workers: cap
-		// at one so files actually run serially (shared tables).
-		maxWorkers: 1,
+		fileParallelism: false,
 		testTimeout: 60_000,
 		hookTimeout: 60_000,
 	},

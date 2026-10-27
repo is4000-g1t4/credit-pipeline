@@ -10,7 +10,6 @@ dotenv.config({
 
 import { randomUUID } from "node:crypto";
 import {
-	applications,
 	auditLog,
 	createDb,
 	generatedArtifacts,
@@ -30,6 +29,7 @@ import {
 	tombstoneArtifact,
 	updateArtifact,
 } from "../../src/assist/artifacts.js";
+import { insertApplication } from "../helper.js";
 
 const TITLE = "SENTINEL-TITLE-AA101";
 const BODY = "SENTINEL-BODY-BB202";
@@ -47,26 +47,6 @@ const { db, sql } = createDb(
 	process.env["APPLICATIONS_DATABASE_URL"] ??
 		"postgres://credit:credit@localhost:5432/credit_applications",
 );
-
-async function insertApplication(database: Db): Promise<string> {
-	const [row] = await database
-		.insert(applications)
-		.values({
-			reference: `ART-${randomUUID()}`,
-			applicantUserId: randomUUID(),
-			type: "individual",
-			product: "personal_loan",
-			status: "submitted",
-			amountCents: 1200000,
-			termMonths: 48,
-			purpose: "artifact lifecycle test",
-			identity: { fullName: "Artifact Tester" },
-			consents: [true],
-			submittedAt: new Date(),
-		})
-		.returning();
-	return row.id;
-}
 
 async function draft(
 	database: Db,

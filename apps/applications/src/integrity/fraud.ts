@@ -12,10 +12,10 @@ import {
 	documentDuplicateExplanations,
 	documentFiles,
 	documentIntegrityRuns,
-	documentLegalHolds,
 	fraudReviews,
 	withTx,
 	type Db,
+	type Tx,
 } from "@credit/db/applications";
 import { and, desc, eq, gt, inArray, isNull, lte, sql } from "drizzle-orm";
 import { HttpError, writeAudit } from "@credit/service-kit";
@@ -534,7 +534,10 @@ export function activeReviewBlocksRetention(config: IntegrityConfig): boolean {
 	return config.fraudReviewEnabled;
 }
 
-export async function hasActiveReviewForCustomer(db: Db, customerId: string): Promise<boolean> {
+export async function hasActiveReviewForCustomer(
+	db: Db | Tx,
+	customerId: string,
+): Promise<boolean> {
 	const rows = await db
 		.select({ id: fraudReviews.id })
 		.from(fraudReviews)
@@ -546,7 +549,7 @@ export async function hasActiveReviewForCustomer(db: Db, customerId: string): Pr
 }
 
 export async function hasActiveReviewForApplication(
-	db: Db,
+	db: Db | Tx,
 	applicationId: string,
 ): Promise<boolean> {
 	const rows = await db
@@ -554,20 +557,6 @@ export async function hasActiveReviewForApplication(
 		.from(fraudReviews)
 		.where(
 			and(eq(fraudReviews.applicationId, applicationId), inArray(fraudReviews.status, [...ACTIVE])),
-		)
-		.limit(1);
-	return rows.length > 0;
-}
-
-export async function activeDocumentHolds(db: Db, applicationId: string): Promise<boolean> {
-	const rows = await db
-		.select({ id: documentLegalHolds.id })
-		.from(documentLegalHolds)
-		.where(
-			and(
-				eq(documentLegalHolds.applicationId, applicationId),
-				isNull(documentLegalHolds.releasedAt),
-			),
 		)
 		.limit(1);
 	return rows.length > 0;

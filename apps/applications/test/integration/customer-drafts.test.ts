@@ -37,6 +37,7 @@ import {
 	individualPayload,
 	multipart,
 	postApplication,
+	postSubmit,
 	setupApp,
 	signed,
 	type TestContext,
@@ -129,10 +130,6 @@ function confirmAll(): Array<{ field: string; valueHash: string }> {
 
 async function postDraft(user: TestUser, payload: unknown, key: string): Promise<Response> {
 	return postApplication(ctx, user, "/api/applications/drafts", payload, key);
-}
-
-async function postSubmit(user: TestUser, appId: string, key: string): Promise<Response> {
-	return postApplication(ctx, user, `/api/applications/${appId}/submit`, {}, key);
 }
 
 async function postDirect(user: TestUser, payload: unknown, key: string): Promise<Response> {
@@ -279,7 +276,7 @@ describe("profile → draft → stale blockers → reuse → submit", () => {
 		expect(checklist.blockers["document:bank_statement"]).toEqual(["missing"]);
 		expect(checklist.prefill.reused).toEqual(expect.arrayContaining(IDENTITY_FIELDS));
 
-		const blocked = await postSubmit(user, id, randomUUID());
+		const blocked = await postSubmit(ctx, user, id, randomUUID());
 		expect(blocked.status).toBe(409);
 		const blockedBody = (await blocked.json()) as {
 			error: { code: string; fields: Record<string, string[]> };
@@ -319,7 +316,7 @@ describe("profile → draft → stale blockers → reuse → submit", () => {
 		const fresh = await seedEvidence(profile.id, "bank_statement", {
 			periodEnd: daysAgo(10),
 		});
-		const stillBlocked = await postSubmit(user, id, randomUUID());
+		const stillBlocked = await postSubmit(ctx, user, id, randomUUID());
 		expect(stillBlocked.status).toBe(409);
 
 		const reuseBody = JSON.stringify({ customerDocumentIds: [idDoc.id, payslipDoc.id, fresh.id] });
@@ -366,7 +363,7 @@ describe("profile → draft → stale blockers → reuse → submit", () => {
 		expect(ready.readyToSubmit).toBe(true);
 
 		const key = randomUUID();
-		const submitted = await postSubmit(user, id, key);
+		const submitted = await postSubmit(ctx, user, id, key);
 		expect(submitted.status).toBe(200);
 		expect(((await submitted.json()) as { reference: string }).reference).toBe(reference);
 		expect(ctx.gateway.started).toContain(id);
@@ -375,7 +372,7 @@ describe("profile → draft → stale blockers → reuse → submit", () => {
 		expect(audits.map((a) => a.action)).toContain("application.submitted");
 
 		// Double submit with the same key replays 200 with the same reference.
-		const again = await postSubmit(user, id, key);
+		const again = await postSubmit(ctx, user, id, key);
 		expect(again.status).toBe(200);
 		expect(((await again.json()) as { reference: string }).reference).toBe(reference);
 		expect((await outboxFor(id)).length).toBe(1);
@@ -385,7 +382,7 @@ describe("profile → draft → stale blockers → reuse → submit", () => {
 		const { id: otherId } = (await (
 			await postDraft(other, individualPayload(other.email), randomUUID())
 		).json()) as { id: string };
-		const clash = await postSubmit(other, otherId, key);
+		const clash = await postSubmit(ctx, other, otherId, key);
 		expect(clash.status).toBe(409);
 	});
 });
@@ -994,7 +991,7 @@ describe("sme requirements", () => {
 		});
 		expect(reuse.status).toBe(201);
 
-		const submitted = await postSubmit(user, id, randomUUID());
+		const submitted = await postSubmit(ctx, user, id, randomUUID());
 		expect(submitted.status).toBe(200);
 		const [row] = await ctx.db.select().from(applications).where(eq(applications.id, id));
 		expect(row.status).toBe("submitted");

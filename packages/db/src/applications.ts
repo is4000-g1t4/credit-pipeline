@@ -21,22 +21,12 @@ import {
 	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
+import { createdAtColumn, updatedAtColumn, moneyColumn, moneyNullableColumn } from "./shared.js";
 
 export { auditLog, outboxEvents } from "./shared.js";
 // Client utilities re-exported so service code imports one subpath.
 export { createDb, withTx, type Db, type Tx } from "./client.js";
 
-const createdAt = () =>
-	timestamp("created_at", { withTimezone: true, mode: "date" }).defaultNow().notNull();
-
-const updatedAt = () =>
-	timestamp("updated_at", { withTimezone: true, mode: "date" })
-		.defaultNow()
-		.$onUpdate(() => new Date())
-		.notNull();
-
-const money = (name: string) => bigint(name, { mode: "number" }).notNull();
-const moneyNullable = (name: string) => bigint(name, { mode: "number" });
 
 export const applicationType = pgEnum("application_type", ["individual", "sme"]);
 export const applicationProduct = pgEnum("application_product", ["personal_loan", "sme_term_loan"]);
@@ -225,7 +215,7 @@ export const applications = pgTable(
 		type: applicationType("type").notNull(),
 		product: applicationProduct("product").notNull(),
 		status: applicationStatus("status").notNull().default("submitted"),
-		amountCents: money("amount_cents"),
+		amountCents: moneyColumn("amount_cents"),
 		termMonths: integer("term_months").notNull(),
 		purpose: text("purpose").notNull(),
 		identity: jsonb("identity").notNull(),
@@ -259,8 +249,8 @@ export const applications = pgTable(
 		}),
 		decidedAt: timestamp("decided_at", { withTimezone: true, mode: "date" }),
 		failedReason: text("failed_reason"),
-		createdAt: createdAt(),
-		updatedAt: updatedAt(),
+		createdAt: createdAtColumn(),
+		updatedAt: updatedAtColumn(),
 	},
 	(t) => [
 		index("applications_status_idx").on(t.status),
@@ -282,7 +272,7 @@ export const kycChecks = pgTable(
 		type: text("type").notNull(),
 		status: kycCheckStatus("status").notNull(),
 		details: jsonb("details"),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 	},
 	(t) => [uniqueIndex("kyc_checks_application_id_type_uniq").on(t.applicationId, t.type)],
 );
@@ -299,7 +289,7 @@ export const externalReports = pgTable(
 		version: text("version").notNull(),
 		payload: jsonb("payload").notNull(),
 		fetchedAt: timestamp("fetched_at", { withTimezone: true, mode: "date" }).defaultNow().notNull(),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 	},
 	(t) => [
 		uniqueIndex("external_reports_application_provider_kind_uniq").on(
@@ -320,8 +310,8 @@ export const documents = pgTable(
 		kind: text("kind").notNull(),
 		status: documentStatus("status").notNull().default("required"),
 		note: text("note"),
-		createdAt: createdAt(),
-		updatedAt: updatedAt(),
+		createdAt: createdAtColumn(),
+		updatedAt: updatedAtColumn(),
 	},
 	(t) => [uniqueIndex("documents_application_id_kind_uniq").on(t.applicationId, t.kind)],
 );
@@ -339,7 +329,7 @@ export const scores = pgTable(
 		components: jsonb("components"),
 		factors: jsonb("factors").notNull(),
 		affordability: jsonb("affordability").notNull(),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 	},
 	(t) => [
 		uniqueIndex("scores_application_id_model_version_uniq").on(t.applicationId, t.modelVersion),
@@ -356,13 +346,13 @@ export const policyEvaluations = pgTable(
 		policyVersion: text("policy_version").notNull(),
 		outcome: text("outcome").notNull(),
 		reasons: jsonb("reasons").notNull(),
-		maxAmountCents: money("max_amount_cents"),
+		maxAmountCents: moneyColumn("max_amount_cents"),
 		inputs: jsonb("inputs").notNull(),
 		inputHash: text("input_hash").notNull(),
 		/** Last engine run time; distinguishes a re-evaluation from the
 		 * original created_at. Null on legacy rows (fall back to created_at). */
 		evaluatedAt: timestamp("evaluated_at", { withTimezone: true, mode: "date" }),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 	},
 	(t) => [
 		uniqueIndex("policy_evaluations_application_id_policy_version_uniq").on(
@@ -386,14 +376,14 @@ export const decisions = pgTable("decisions", {
 	// treats NULLs as distinct, so the unique constraint only guards
 	// officer request ids — exactly the replay semantics FR-6.2 needs.
 	requestId: text("request_id").unique(),
-	approvedAmountCents: moneyNullable("approved_amount_cents"),
+	approvedAmountCents: moneyNullableColumn("approved_amount_cents"),
 	termMonths: integer("term_months"),
 	rateBps: integer("rate_bps"),
 	reasons: jsonb("reasons").notNull(),
 	notes: text("notes"),
 	snapshot: jsonb("snapshot").notNull(),
 	decidedAt: timestamp("decided_at", { withTimezone: true, mode: "date" }).defaultNow().notNull(),
-	createdAt: createdAt(),
+	createdAt: createdAtColumn(),
 });
 
 // EN-02 generic generated artifact record. One row per version; `revision`
@@ -426,8 +416,8 @@ export const generatedArtifacts = pgTable(
 		// Cross-DB reference to credit_auth.users — plain uuid, never an FK.
 		createdBy: uuid("created_by").notNull(),
 		approvedBy: uuid("approved_by"),
-		createdAt: createdAt(),
-		updatedAt: updatedAt(),
+		createdAt: createdAtColumn(),
+		updatedAt: updatedAtColumn(),
 		approvedAt: timestamp("approved_at", { withTimezone: true, mode: "date" }),
 		supersededAt: timestamp("superseded_at", { withTimezone: true, mode: "date" }),
 		deletedAt: timestamp("deleted_at", { withTimezone: true, mode: "date" }),
@@ -472,7 +462,7 @@ export const generatedArtifactHolds = pgTable(
 		reason: text("reason").notNull(),
 		// Cross-DB reference to credit_auth.users — plain uuid, never an FK.
 		createdBy: uuid("created_by").notNull(),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 		releasedAt: timestamp("released_at", { withTimezone: true, mode: "date" }),
 	},
 	(t) => [
@@ -494,7 +484,7 @@ export const idempotencyKeys = pgTable(
 			onDelete: "restrict",
 		}),
 		response: jsonb("response"),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 	},
 	(t) => [primaryKey({ columns: [t.userId, t.key] })],
 );
@@ -574,8 +564,8 @@ export const documentFiles = pgTable(
 		documentDate: date("document_date", { mode: "string" }),
 		periodEnd: date("period_end", { mode: "string" }),
 		documentDateSource: documentDateSource("document_date_source"),
-		createdAt: createdAt(),
-		updatedAt: updatedAt(),
+		createdAt: createdAtColumn(),
+		updatedAt: updatedAtColumn(),
 	},
 	(t) => [
 		index("document_files_application_id_idx").on(t.applicationId),
@@ -608,7 +598,7 @@ export const documentPages = pgTable(
 		textSource: documentTextSource("text_source").notNull(),
 		confidence: real("confidence").notNull(),
 		textSha256: text("text_sha256").notNull(),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 	},
 	(t) => [uniqueIndex("document_pages_file_page_uniq").on(t.documentFileId, t.pageNumber)],
 );
@@ -662,7 +652,7 @@ export const documentFindings = pgTable(
 		confidence: documentFindingConfidence("confidence").notNull(),
 		status: documentFindingStatus("status").notNull(),
 		reason: text("reason").notNull(),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 	},
 	(t) => [
 		index("document_findings_crosscheck_id_idx").on(t.crosscheckId),
@@ -689,7 +679,7 @@ export const chaseRequests = pgTable(
 		body: text("body"),
 		// Cross-DB reference to credit_auth.users — plain uuid, never an FK.
 		createdBy: uuid("created_by").notNull(),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 		sentAt: timestamp("sent_at", { withTimezone: true, mode: "date" }),
 		inspectedOriginalAt: timestamp("inspected_original_at", {
 			withTimezone: true,
@@ -730,7 +720,7 @@ export const documentLegalHolds = pgTable(
 		reason: text("reason").notNull(),
 		// Cross-DB reference to credit_auth.users — plain uuid, never an FK.
 		createdBy: uuid("created_by").notNull(),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 		releasedAt: timestamp("released_at", { withTimezone: true, mode: "date" }),
 	},
 	(t) => [
@@ -772,8 +762,8 @@ export const documentFingerprints = pgTable(
 			.notNull()
 			.default(sql`'[]'::jsonb`),
 		redactedAt: timestamp("redacted_at", { withTimezone: true, mode: "date" }),
-		createdAt: createdAt(),
-		updatedAt: updatedAt(),
+		createdAt: createdAtColumn(),
+		updatedAt: updatedAtColumn(),
 	},
 	(t) => [
 		uniqueIndex("document_fingerprints_file_uniq").on(t.documentFileId),
@@ -809,7 +799,7 @@ export const documentFieldCandidates = pgTable(
 		confirmedBy: uuid("confirmed_by"),
 		confirmedAt: timestamp("confirmed_at", { withTimezone: true, mode: "date" }),
 		redactedAt: timestamp("redacted_at", { withTimezone: true, mode: "date" }),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 	},
 	(t) => [
 		uniqueIndex("document_field_candidates_evidence_uniq").on(
@@ -875,7 +865,7 @@ export const documentConsistencyCandidates = pgTable(
 		confirmedBy: uuid("confirmed_by"),
 		confirmedAt: timestamp("confirmed_at", { withTimezone: true, mode: "date" }),
 		redactedAt: timestamp("redacted_at", { withTimezone: true, mode: "date" }),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 	},
 	(t) => [
 		index("document_consistency_candidates_application_id_idx").on(t.applicationId),
@@ -929,7 +919,7 @@ export const documentIntegrityRuns = pgTable(
 		}),
 		startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }),
 		finishedAt: timestamp("finished_at", { withTimezone: true, mode: "date" }),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 	},
 	(t) => [
 		uniqueIndex("document_integrity_runs_active_uniq")
@@ -981,8 +971,8 @@ export const fraudReviews = pgTable(
 		version: integer("version").notNull().default(1),
 		// Cross-DB reference to credit_auth.users — plain uuid, never an FK.
 		createdBy: uuid("created_by").notNull(),
-		createdAt: createdAt(),
-		updatedAt: updatedAt(),
+		createdAt: createdAtColumn(),
+		updatedAt: updatedAtColumn(),
 		resolvedBy: uuid("resolved_by"),
 		resolvedAt: timestamp("resolved_at", { withTimezone: true, mode: "date" }),
 		resolutionNote: text("resolution_note"),
@@ -1012,7 +1002,7 @@ export const documentDuplicateExplanations = pgTable(
 		explainedBy: uuid("explained_by").notNull(),
 		retentionUntil: timestamp("retention_until", { withTimezone: true, mode: "date" }).notNull(),
 		redactedAt: timestamp("redacted_at", { withTimezone: true, mode: "date" }),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 	},
 	(t) => [
 		uniqueIndex("document_duplicate_explanations_scope_uniq").on(t.sha256, t.applicationId),
@@ -1036,8 +1026,8 @@ export const customerProfiles = pgTable("customer_profiles", {
 	identity: jsonb("identity").notNull(),
 	business: jsonb("business"),
 	source: customerSource("source").notNull(),
-	createdAt: createdAt(),
-	updatedAt: updatedAt(),
+	createdAt: createdAtColumn(),
+	updatedAt: updatedAtColumn(),
 });
 
 export const customerAccounts = pgTable(
@@ -1055,8 +1045,8 @@ export const customerAccounts = pgTable(
 		openedAt: date("opened_at", { mode: "string" }),
 		status: customerAccountStatus("status").notNull(),
 		source: customerSource("source").notNull(),
-		createdAt: createdAt(),
-		updatedAt: updatedAt(),
+		createdAt: createdAtColumn(),
+		updatedAt: updatedAtColumn(),
 	},
 	(t) => [index("customer_accounts_customer_status_idx").on(t.customerId, t.status)],
 );
@@ -1079,8 +1069,8 @@ export const customerTransactions = pgTable(
 		returned: boolean("returned").notNull().default(false),
 		source: customerTransactionSource("source").notNull(),
 		sourceReference: text("source_reference"),
-		createdAt: createdAt(),
-		updatedAt: updatedAt(),
+		createdAt: createdAtColumn(),
+		updatedAt: updatedAtColumn(),
 	},
 	(t) => [
 		index("customer_transactions_account_posted_idx").on(t.accountId, t.postedAt),
@@ -1128,8 +1118,8 @@ export const customerDocuments = pgTable(
 		}).notNull(),
 		blobPurgedAt: timestamp("blob_purged_at", { withTimezone: true, mode: "date" }),
 		source: customerSource("source").notNull(),
-		createdAt: createdAt(),
-		updatedAt: updatedAt(),
+		createdAt: createdAtColumn(),
+		updatedAt: updatedAtColumn(),
 	},
 	(t) => [
 		index("customer_documents_customer_id_idx").on(t.customerId),
@@ -1152,7 +1142,7 @@ export const customerDocumentPages = pgTable(
 		textSource: documentTextSource("text_source").notNull(),
 		confidence: real("confidence").notNull(),
 		textSha256: text("text_sha256").notNull(),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 	},
 	(t) => [
 		uniqueIndex("customer_document_pages_file_page_uniq").on(t.customerDocumentId, t.pageNumber),
@@ -1174,7 +1164,7 @@ export const customerLegalHolds = pgTable(
 		reason: text("reason").notNull(),
 		// Cross-DB reference to credit_auth.users — plain uuid, never an FK.
 		createdBy: uuid("created_by").notNull(),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 		releasedAt: timestamp("released_at", { withTimezone: true, mode: "date" }),
 	},
 	(t) => [
@@ -1202,7 +1192,7 @@ export const applicationProfileConfirmations = pgTable(
 		confirmedAt: timestamp("confirmed_at", { withTimezone: true, mode: "date" })
 			.defaultNow()
 			.notNull(),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 	},
 	(t) => [
 		uniqueIndex("application_profile_confirmations_app_field_uniq").on(t.applicationId, t.field),

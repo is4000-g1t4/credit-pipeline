@@ -1,13 +1,7 @@
 import { signInternalHeaders } from "@credit/service-kit";
 import { z } from "zod";
 import type { CaseFacts } from "@credit/core";
-import { signCaseToken } from "../../policy/src/case-token.js";
-import {
-	policyCaseContextSchema,
-	signalRef,
-	type PolicyCaseContext,
-	type PolicyCaseSignal,
-} from "../../policy/src/case-context.js";
+import { policyCaseContextSchema, signalRef, type PolicyCaseContext, type PolicyCaseSignal, signCaseToken } from "@credit/core";
 
 export type PolicyStageStatus =
 	| "not_applicable"

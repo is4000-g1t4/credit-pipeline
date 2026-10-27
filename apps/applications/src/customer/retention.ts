@@ -22,6 +22,7 @@ import { and, eq, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { lockApplication } from "../documents/access.js";
 import { deleteBlob, purgeBlob } from "../documents/storage.js";
 import { tombstoneDraftBrief } from "../integrity/store.js";
+import { hasActiveReviewForCustomer } from "../integrity/fraud.js";
 
 export interface CustomerRetentionResult {
 	checked: number;
@@ -240,19 +241,7 @@ export async function runCustomerRetention(
 					continue;
 				}
 				if (deps.fraudReviewEnabled) {
-					const active = await tx
-						.select({ id: fraudReviews.id })
-						.from(fraudReviews)
-						.innerJoin(applications, eq(applications.id, fraudReviews.applicationId))
-						.innerJoin(customerProfiles, eq(customerProfiles.userId, applications.applicantUserId))
-						.where(
-							and(
-								eq(customerProfiles.id, fresh.customerId),
-								sql`${fraudReviews.status} IN ('open','needs_info')`,
-							),
-						)
-						.limit(1);
-					if (active.length > 0) {
+					if (await hasActiveReviewForCustomer(tx, fresh.customerId)) {
 						result.skippedHolds++;
 						continue;
 					}

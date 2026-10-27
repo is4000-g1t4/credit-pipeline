@@ -3,8 +3,9 @@
  *
  * Run from repo root: pnpm exec tsx apps/policy/eval/embedding-eval.ts
  *
- * - Parses apps/policy/policies/credit/*.md (frontmatter + {#anchor} sections),
- *   one chunk per section, embedded as `title > heading > text`.
+ * - Parses apps/policy/policies/credit/*.md through the production loader
+ *   (eval/corpus.ts + src/chunks.ts), one chunk per section, embedded with
+ *   the same `embeddingText` production ingestion uses.
  * - Verifies candidate models against OpenRouter /api/v1/models; skips and
  *   reports unavailable ones without guessing replacements.
  * - Sends `provider: { data_collection: "deny", zdr: true }` on the first
@@ -19,13 +20,14 @@
  * No dependencies beyond node builtins. Reads OPENROUTER_API_KEY from root
  * .env. Never prints the key.
  */
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { cosine, embeddingText, loadCorpus } from "./corpus.js";
+import { wilsonCI as wilson } from "./lib.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, "..", "..", "..");
-const POLICIES_DIR = path.join(ROOT, "apps", "policy", "policies", "credit");
 const QUERIES_PATH = path.join(HERE, "queries.json");
 const RESULTS_DIR = path.join(HERE, "results");
 
@@ -45,7 +47,6 @@ const CHUNK_BATCH = 16;
 const QUERY_BATCH = 8;
 const MAX_ATTEMPTS = 5;
 const BACKOFF_MS = [1000, 2000, 4000, 8000];
-const CHUNK_TRUNCATE_CHARS = 2000;
 
 interface Chunk {
 	id: string;
@@ -76,54 +77,6 @@ function loadDotEnv(): void {
 		const [, k, v] = m;
 		if (!(k in process.env)) process.env[k] = v.replace(/^["']|["']$/g, "");
 	}
-}
-
-function parseFrontmatter(raw: string): { data: Record<string, string>; body: string } {
-	const m = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
-	if (!m) throw new Error("missing frontmatter block");
-	const data: Record<string, string> = {};
-	for (const line of m[1].split("\n")) {
-		const kv = line.match(/^([A-Za-z_]+):\s*(.*)$/);
-		if (kv) data[kv[1]] = kv[2].trim();
-	}
-	return { data, body: m[2] };
-}
-
-function parsePolicyFile(file: string): Chunk[] {
-	const raw = readFileSync(path.join(POLICIES_DIR, file), "utf8");
-	const { data, body } = parseFrontmatter(raw);
-	const policyKey = data["policy_key"];
-	const title = data["title"];
-	if (!policyKey || !title) throw new Error(`${file}: frontmatter missing policy_key/title`);
-	const chunks: Chunk[] = [];
-	let heading = "";
-	let anchor = "";
-	let buf: string[] = [];
-	const flush = () => {
-		if (!anchor) {
-			buf = [];
-			return;
-		}
-		const text = buf.join("\n").replace(/\s+/g, " ").trim().slice(0, CHUNK_TRUNCATE_CHARS);
-		chunks.push({ id: `${policyKey}#${anchor}`, policyKey, title, heading, text });
-		buf = [];
-	};
-	for (const line of body.split("\n")) {
-		const h = line.match(/^#{1,6}\s+(.+?)\s*\{#([^}]+)\}\s*$/);
-		if (h) {
-			flush();
-			heading = h[1].trim();
-			anchor = h[2].trim();
-		} else {
-			buf.push(line);
-		}
-	}
-	flush();
-	return chunks;
-}
-
-function chunkEmbedText(c: Chunk): string {
-	return `${c.title} > ${c.heading} > ${c.text}`;
 }
 
 function semaphore(max: number): <T>(fn: () => Promise<T>) => Promise<T> {
@@ -178,27 +131,6 @@ async function fetchJson(
 		}
 	}
 	throw new Error(`HTTP ${lastStatus} after ${MAX_ATTEMPTS} attempts: ${lastBody.slice(0, 500)}`);
-}
-
-function cosine(a: number[], b: number[]): number {
-	let dot = 0;
-	let na = 0;
-	let nb = 0;
-	for (let i = 0; i < a.length; i++) {
-		dot += a[i] * b[i];
-		na += a[i] * a[i];
-		nb += b[i] * b[i];
-	}
-	if (na === 0 || nb === 0) return 0;
-	return dot / (Math.sqrt(na) * Math.sqrt(nb));
-}
-
-function wilson(p: number, n: number, z = 1.96): { lo: number; hi: number } {
-	if (n === 0) return { lo: 0, hi: 0 };
-	const d = 1 + (z * z) / n;
-	const c = p + (z * z) / (2 * n);
-	const m = z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n));
-	return { lo: Math.max(0, (c - m) / d), hi: Math.min(1, (c + m) / d) };
 }
 
 interface SplitMetrics {
@@ -274,10 +206,15 @@ async function main(): Promise<void> {
 		process.exit(1);
 	}
 
-	const files = readdirSync(POLICIES_DIR)
-		.filter((f) => f.endsWith(".md"))
-		.sort();
-	const chunks = files.flatMap(parsePolicyFile);
+	const corpusSections = loadCorpus();
+	const docs = new Set(corpusSections.map((s) => s.policyKey)).size;
+	const chunks: Chunk[] = corpusSections.map((s) => ({
+		id: `${s.policyKey}#${s.sectionId}`,
+		policyKey: s.policyKey,
+		title: s.title,
+		heading: s.heading,
+		text: s.body,
+	}));
 	const chunkIds = new Set(chunks.map((c) => c.id));
 	const queries = JSON.parse(readFileSync(QUERIES_PATH, "utf8")) as EvalQuery[];
 	const unknown = [...new Set(queries.flatMap((q) => q.expected))].filter(
@@ -290,7 +227,7 @@ async function main(): Promise<void> {
 	const dev = queries.filter((q) => q.split === "dev");
 	const heldOut = queries.filter((q) => q.split === "held-out");
 	console.log(
-		`corpus: ${files.length} docs, ${chunks.length} chunks; queries: ${dev.length} dev, ${heldOut.length} held-out`,
+		`corpus: ${docs} docs, ${chunks.length} chunks; queries: ${dev.length} dev, ${heldOut.length} held-out`,
 	);
 
 	// Verify candidate models against OpenRouter.
@@ -413,7 +350,9 @@ async function main(): Promise<void> {
 			const chunkVecs: number[][] = [];
 			let promptTokens = 0;
 			let estimated = false;
-			const chunkTexts = chunks.map(chunkEmbedText);
+			const chunkTexts = chunks.map((c) =>
+				embeddingText({ title: c.title, heading: c.heading, body: c.text }),
+			);
 			for (let i = 0; i < chunkTexts.length; i += CHUNK_BATCH) {
 				const r = await embedBatch(model, chunkTexts.slice(i, i + CHUNK_BATCH));
 				chunkVecs.push(...r.embeddings);
@@ -519,7 +458,7 @@ async function main(): Promise<void> {
 		JSON.stringify(
 			{
 				timestamp: new Date().toISOString(),
-				corpus: { docs: files.length, chunks: chunks.length },
+				corpus: { docs, chunks: chunks.length },
 				queryCounts: { dev: dev.length, heldOut: heldOut.length },
 				providerParamsAccepted: providerParamsAccepted !== false,
 				models: results,

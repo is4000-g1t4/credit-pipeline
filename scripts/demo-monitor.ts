@@ -1,20 +1,28 @@
 // pnpm demo:monitor — officer login + POST /api/demo/monitoring/run,
 // printing the result counts. Starts nothing; needs compose + api + worker.
-const API_BASE = process.env.API_BASE ?? "http://127.0.0.1:3001";
+import { apiBase, loginCookie, LoginError } from "./lib/env.js";
 
-const login = await fetch(`${API_BASE}/api/auth/login`, {
-	method: "POST",
-	headers: { "content-type": "application/json" },
-	body: JSON.stringify({ email: "officer@example.com", password: "demo1234" }),
-});
-if (!login.ok) {
-	console.error(
-		`demo:monitor: officer login failed (HTTP ${login.status}). ` +
-			"Is the api running? `pnpm dev` (compose must be up).",
-	);
-	process.exit(1);
+const API_BASE = apiBase();
+
+let session: string;
+try {
+	session = await loginCookie("officer@example.com", "demo1234", API_BASE);
+} catch (err) {
+	if (err instanceof LoginError && err.status !== undefined) {
+		console.error(
+			`demo:monitor: officer login failed (HTTP ${err.status}). ` +
+				"Is the api running? `pnpm dev` (compose must be up).",
+		);
+		process.exit(1);
+	}
+	// No session cookie on a 200 (or a transport failure): historically the
+	// script carried on with an empty cookie and let the run call fail.
+	if (err instanceof LoginError) {
+		session = "";
+	} else {
+		throw err;
+	}
 }
-const session = (login.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
 const run = await fetch(`${API_BASE}/api/demo/monitoring/run`, {
 	method: "POST",
 	headers: { cookie: session, "content-type": "application/json" },

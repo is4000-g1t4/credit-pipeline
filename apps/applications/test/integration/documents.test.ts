@@ -6,7 +6,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { auditLog, caseAccessGrants, documentFiles } from "@credit/db/applications";
+import { auditLog, documentFiles } from "@credit/db/applications";
 import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -18,6 +18,7 @@ import {
 import type { ScannerAdapter } from "../../src/documents/scanner.js";
 import {
 	createUser,
+	grantOfficer,
 	individualPayload,
 	multipart,
 	pdfBytes,
@@ -157,14 +158,6 @@ async function postApplicationId(user: TestUser, consent: boolean): Promise<stri
 	return ((await res.json()) as { id: string }).id;
 }
 
-async function grantOfficer(applicationId: string, officer: TestUser): Promise<void> {
-	await ctx.db.insert(caseAccessGrants).values({
-		applicationId,
-		userId: officer.id,
-		accessRole: "assigned_officer",
-	});
-}
-
 /** Fresh case: consenting owner + assigned officer. */
 async function newCase(
 	consent = true,
@@ -172,7 +165,7 @@ async function newCase(
 	const owner = await createUser(ctx);
 	const officer = await createUser(ctx, "officer");
 	const appId = await postApplicationId(owner, consent);
-	await grantOfficer(appId, officer);
+	await grantOfficer(ctx.db, appId, officer);
 	return { appId, owner, officer };
 }
 

@@ -13,6 +13,7 @@ export const OFFICER_DECISION_UPDATE = "officerDecision";
 
 export const MONITORING_SCHEDULE_ID = "monitoring";
 export const monitoringWorkflowName = "monitoringWorkflow";
+export const APPLICATION_WORKFLOW_NAME = "applicationWorkflow";
 
 // Single home for the officer-decision update contract (SPEC FR-6.2): the
 // gateway's WorkflowGateway, the worker's update handler/activities, and

@@ -46,7 +46,7 @@ import { loadManifest } from "../../../../scripts/lib/manifest.js";
 import { refreshDemoEvidence } from "../../../../scripts/lib/refresh.js";
 import { seedDemo } from "../../../../scripts/lib/seed.js";
 import { verifyDemo } from "../../../../scripts/lib/verify.js";
-import { setupApp, postApplication, type TestContext, type TestUser } from "../helper.js";
+import { setupApp, postApplication, postSubmit, type TestContext, type TestUser } from "../helper.js";
 
 process.env.LOG_LEVEL ??= "silent";
 
@@ -168,10 +168,6 @@ async function expectVerify(
 	return checks;
 }
 
-async function postSubmit(user: TestUser, appId: string, key: string): Promise<Response> {
-	return postApplication(ctx, user, `/api/applications/${appId}/submit`, {}, key);
-}
-
 async function postReuse(
 	user: TestUser,
 	appId: string,
@@ -224,7 +220,7 @@ async function ensureSubmittedBreadtalk(): Promise<string> {
 		]);
 		const reuse = await postReuse(user, outcome.draftId, freshIds);
 		expect([200, 201]).toContain(reuse.status);
-		const submitted = await postSubmit(user, outcome.draftId, randomUUID());
+		const submitted = await postSubmit(ctx, user, outcome.draftId, randomUUID());
 		expect(submitted.status).toBe(200);
 	}
 	return outcome.draftId;
@@ -619,7 +615,7 @@ describe("breadtalk draft lifecycle", () => {
 		await expectVerify("breadtalk", "pre-refresh");
 
 		const user = applicant("breadtalk@example.com");
-		const blocked = await postSubmit(user, outcome.draftId, randomUUID());
+		const blocked = await postSubmit(ctx, user, outcome.draftId, randomUUID());
 		expect(blocked.status).toBe(409);
 		const body = (await blocked.json()) as {
 			error: { code: string; fields: Record<string, string[]> };
@@ -652,7 +648,7 @@ describe("breadtalk draft lifecycle", () => {
 		await expectVerify("breadtalk", "post-refresh");
 
 		const user = applicant("breadtalk@example.com");
-		const stillBlocked = await postSubmit(user, outcome.draftId, randomUUID());
+		const stillBlocked = await postSubmit(ctx, user, outcome.draftId, randomUUID());
 		expect(stillBlocked.status).toBe(409);
 	});
 
@@ -675,13 +671,13 @@ describe("breadtalk draft lifecycle", () => {
 		await expectVerify("breadtalk", "post-attach");
 
 		const key = randomUUID();
-		const submitted = await postSubmit(user, outcome.draftId, key);
+		const submitted = await postSubmit(ctx, user, outcome.draftId, key);
 		expect(submitted.status).toBe(200);
 		const { reference } = (await submitted.json()) as { reference: string };
 		expect(reference).toBe(outcome.reference);
 		expect(ctx.gateway.started).toContain(outcome.draftId);
 
-		const replay = await postSubmit(user, outcome.draftId, key);
+		const replay = await postSubmit(ctx, user, outcome.draftId, key);
 		expect(replay.status).toBe(200);
 		expect(((await replay.json()) as { reference: string }).reference).toBe(reference);
 

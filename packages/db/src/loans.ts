@@ -17,21 +17,12 @@ import {
 	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
+import { createdAtColumn, updatedAtColumn, moneyColumn } from "./shared.js";
 
 export { auditLog, outboxEvents } from "./shared.js";
 // Client utilities re-exported so service code imports one subpath.
 export { createDb, withTx, type Db, type Tx } from "./client.js";
 
-const createdAt = () =>
-	timestamp("created_at", { withTimezone: true, mode: "date" }).defaultNow().notNull();
-
-const updatedAt = () =>
-	timestamp("updated_at", { withTimezone: true, mode: "date" })
-		.defaultNow()
-		.$onUpdate(() => new Date())
-		.notNull();
-
-const money = (name: string) => bigint(name, { mode: "number" }).notNull();
 
 export const loanStatus = pgEnum("loan_status", ["active", "overdue", "closed"]);
 export const installmentStatus = pgEnum("installment_status", ["scheduled", "paid", "overdue"]);
@@ -50,10 +41,10 @@ export const loans = pgTable(
 		applicationReference: text("application_reference").notNull(),
 		applicantUserId: uuid("applicant_user_id").notNull(),
 		product: text("product").notNull(),
-		principalCents: money("principal_cents"),
+		principalCents: moneyColumn("principal_cents"),
 		termMonths: integer("term_months").notNull(),
 		rateBps: integer("rate_bps").notNull(),
-		monthlyPaymentCents: money("monthly_payment_cents"),
+		monthlyPaymentCents: moneyColumn("monthly_payment_cents"),
 		status: loanStatus("status").notNull().default("active"),
 		disbursedAt: timestamp("disbursed_at", {
 			withTimezone: true,
@@ -61,10 +52,10 @@ export const loans = pgTable(
 		})
 			.defaultNow()
 			.notNull(),
-		outstandingCents: money("outstanding_cents"),
+		outstandingCents: moneyColumn("outstanding_cents"),
 		nextDueDate: date("next_due_date"),
-		createdAt: createdAt(),
-		updatedAt: updatedAt(),
+		createdAt: createdAtColumn(),
+		updatedAt: updatedAtColumn(),
 	},
 	(t) => [index("loans_status_idx").on(t.status)],
 );
@@ -78,14 +69,14 @@ export const installments = pgTable(
 			.references(() => loans.id, { onDelete: "restrict" }),
 		number: integer("number").notNull(),
 		dueDate: date("due_date").notNull(),
-		principalCents: money("principal_cents"),
-		interestCents: money("interest_cents"),
-		totalCents: money("total_cents"),
-		paidCents: money("paid_cents").default(0),
+		principalCents: moneyColumn("principal_cents"),
+		interestCents: moneyColumn("interest_cents"),
+		totalCents: moneyColumn("total_cents"),
+		paidCents: moneyColumn("paid_cents").default(0),
 		status: installmentStatus("status").notNull().default("scheduled"),
 		paidAt: timestamp("paid_at", { withTimezone: true, mode: "date" }),
-		createdAt: createdAt(),
-		updatedAt: updatedAt(),
+		createdAt: createdAtColumn(),
+		updatedAt: updatedAtColumn(),
 	},
 	(t) => [
 		uniqueIndex("installments_loan_id_number_uniq").on(t.loanId, t.number),
@@ -99,10 +90,10 @@ export const payments = pgTable("payments", {
 		.notNull()
 		.unique()
 		.references(() => installments.id, { onDelete: "restrict" }),
-	amountCents: money("amount_cents"),
+	amountCents: moneyColumn("amount_cents"),
 	paidAt: timestamp("paid_at", { withTimezone: true, mode: "date" }).defaultNow().notNull(),
 	source: paymentSource("source").notNull(),
-	createdAt: createdAt(),
+	createdAt: createdAtColumn(),
 });
 
 export const ewsAlerts = pgTable(
@@ -121,8 +112,8 @@ export const ewsAlerts = pgTable(
 		details: jsonb("details"),
 		// Cross-DB reference to credit_auth.users — plain uuid, never an FK.
 		acknowledgedBy: uuid("acknowledged_by"),
-		createdAt: createdAt(),
-		updatedAt: updatedAt(),
+		createdAt: createdAtColumn(),
+		updatedAt: updatedAtColumn(),
 	},
 	(t) => [
 		// Loan-level alerts (installment_id NULL) are exempt: NULLs never

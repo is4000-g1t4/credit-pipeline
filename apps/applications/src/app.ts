@@ -5,7 +5,6 @@ import {
 	checkOutbox,
 	checkTemporal,
 	createService,
-	writeAudit,
 	type Logger,
 	type ServiceApp,
 	type WorkflowGateway,
@@ -15,12 +14,15 @@ import { assistRoutes, type AssistConfig, type MemoAgentRunner } from "./assist/
 import {
 	buildDocumentService,
 	configFromEnv,
-	documentRoutes,
 	type DocumentAdapters,
 } from "./documents/index.js";
-import { evaluateIntegrity, requeueActiveReviewForEvidenceChange } from "./integrity/evaluate.js";
-import { integrityRoutes } from "./integrity/routes.js";
-import type { IntegrityAgentRunner, IntegrityConfig } from "./integrity/types.js";
+import { documentRoutes } from "./documents/routes.js";
+import {
+	createDocumentMutationHandler,
+	integrityRoutes,
+	type IntegrityAgentRunner,
+	type IntegrityConfig,
+} from "./integrity/index.js";
 import { resolveContextConfig, type ContextConfig } from "./context/index.js";
 import { type CustomerConfig } from "./customer/index.js";
 import { applicationsRoutes } from "./routes/applications.js";
@@ -173,40 +175,7 @@ export function createApp(deps: ApplicationsDeps): ServiceApp {
 			customer: customerConfig,
 			t17,
 			appRetentionDays: documentConfig.retentionDays,
-			onDocumentMutation: async ({ applicationId, actor, action }) => {
-				try {
-					if (actor.role === "applicant") {
-						await requeueActiveReviewForEvidenceChange(integrityDeps, {
-							applicationId,
-							requestedBy: actor.id,
-						});
-						return;
-					}
-					if (actor.role !== "officer" && actor.role !== "service") return;
-					await evaluateIntegrity(integrityDeps, {
-						applicationId,
-						actor: { id: actor.id, role: actor.role },
-						actorRole: actor.role,
-					});
-				} catch (err) {
-					const errorCode =
-						err !== null && typeof err === "object" && "code" in err
-							? String((err as { code: unknown }).code)
-							: "unknown";
-					deps.logger.warn({ applicationId, action, errorCode }, "integrity evaluation failed");
-					await deps.db
-						.transaction(async (tx) => {
-							await writeAudit(tx, {
-								applicationId,
-								actor: "system:integrity-evaluate",
-								action: "integrity.evaluate_failed",
-								entity: "document_integrity_run",
-								payload: { feature: "document_integrity", action, errorCode },
-							});
-						})
-						.catch(() => {});
-				}
-			},
+			onDocumentMutation: createDocumentMutationHandler(integrityDeps),
 		}),
 	);
 	return createService({

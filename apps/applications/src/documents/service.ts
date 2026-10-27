@@ -9,17 +9,11 @@
 // which re-reads document-processing consent. No row exists on storage or
 // DB finalization failure; OCR failure is `ready` + `ocr_status=failed`.
 import { randomUUID } from "node:crypto";
-import { promises as fs } from "node:fs";
-import * as path from "node:path";
 import {
 	applications,
-	chaseRequestFindings,
-	chaseRequests,
 	documentConsistencyCandidates,
-	documentCrosschecks,
 	documentFieldCandidates,
 	documentFiles,
-	documentFindings,
 	documentPages,
 	fraudReviews,
 	withTx,
@@ -53,6 +47,7 @@ import {
 import { createOcrAdapter, OcrFailed, type OcrAdapter, type PdfProvenance } from "./ocr.js";
 import { resolveScanner, ScannerUnavailable, type ScannerAdapter } from "./scanner.js";
 import { lockApplication } from "./access.js";
+import { redactFileFindings } from "./retention.js";
 import { buildFingerprint, type FingerprintValues } from "../integrity/fingerprint.js";
 import { updateFingerprint, writeFingerprint } from "../integrity/store.js";
 import {
@@ -226,6 +221,45 @@ export class DocumentService {
 			minConfidence: c.minConfidence,
 			timeoutMs: c.ocrTimeoutMs,
 		};
+	}
+
+	/** OCR extract with the upload deadline + page normalization shared by
+	 * upload and retry-ocr. Scanner, semaphore, and failure mapping stay
+	 * with the callers (upload rescans and treats a timeout as an upload
+	 * error; retry-ocr records it as a failed extraction). */
+	private async extractWithDeadline(
+		bytes: Buffer,
+		detected: DetectedType,
+		limits: ReturnType<DocumentService["ocrLimits"]>,
+	): Promise<PendingExtraction> {
+		const work = (async () => {
+			const raw =
+				detected === "pdf"
+					? await this.deps.ocr.extractPdf(bytes, limits)
+					: await this.deps.ocr.extractImage(bytes, detected, limits);
+			return {
+				status: raw.status,
+				pages: raw.pages.map((p) => ({
+					...p,
+					source: p.source as "pdf_text" | "ocr",
+				})),
+				textLayerRisk: raw.textLayerRisk,
+				pageCount: raw.pageCount,
+				provenance: raw.provenance,
+			};
+		})();
+		let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+		const deadline = new Promise<never>((_, reject) => {
+			deadlineTimer = setTimeout(
+				() => reject(new UploadTimeout()),
+				this.deps.config.uploadDeadlineMs,
+			);
+		});
+		try {
+			return await Promise.race([work, deadline]);
+		} finally {
+			if (deadlineTimer) clearTimeout(deadlineTimer);
+		}
 	}
 
 	private async findDuplicate(
@@ -443,37 +477,8 @@ export class DocumentService {
 					throw new HttpError(429, "OCR_BUSY", "text extraction is saturated; retry shortly");
 				}
 				try {
-					const limits = this.ocrLimits();
-					if (detected === "pdf") {
-						const r = await this.deps.ocr.extractPdf(bytes, limits);
-						return {
-							verdict,
-							extraction: {
-								status: r.status,
-								pages: r.pages.map((p) => ({
-									...p,
-									source: p.source as "pdf_text" | "ocr",
-								})),
-								textLayerRisk: r.textLayerRisk,
-								pageCount: r.pageCount,
-								provenance: r.provenance,
-							},
-						};
-					}
-					const r = await this.deps.ocr.extractImage(bytes, detected, limits);
-					return {
-						verdict,
-						extraction: {
-							status: r.status,
-							pages: r.pages.map((p) => ({
-								...p,
-								source: p.source as "pdf_text" | "ocr",
-							})),
-							textLayerRisk: r.textLayerRisk,
-							pageCount: r.pageCount,
-							provenance: r.provenance,
-						},
-					};
+					const extracted = await this.extractWithDeadline(bytes, detected, this.ocrLimits());
+					return { verdict, extraction: extracted };
 				} catch (err) {
 					if (err instanceof HttpError) throw err;
 					if (err instanceof OcrFailed) {
@@ -722,7 +727,7 @@ export class DocumentService {
 	async retryOcr(input: { applicationId: string; fileId: string; userId: string }): Promise<{
 		file: DocumentFileRow;
 	}> {
-		const { db, config } = this.deps;
+		const { db } = this.deps;
 		const file = await this.getFile(input.applicationId, input.fileId);
 		if (!file) throw new HttpError(404, "NOT_FOUND", "not found");
 		if (
@@ -748,31 +753,7 @@ export class DocumentService {
 			}
 			let extraction: PendingExtraction;
 			try {
-				const limits = this.ocrLimits();
-				const work =
-					detected === "pdf"
-						? this.deps.ocr.extractPdf(plaintext, limits)
-						: this.deps.ocr.extractImage(plaintext, detected, limits);
-				let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
-				const deadline = new Promise<never>((_, reject) => {
-					deadlineTimer = setTimeout(() => reject(new UploadTimeout()), config.uploadDeadlineMs);
-				});
-				let r: Awaited<typeof work>;
-				try {
-					r = await Promise.race([work, deadline]);
-				} finally {
-					if (deadlineTimer) clearTimeout(deadlineTimer);
-				}
-				extraction = {
-					status: r.status,
-					pages: r.pages.map((p) => ({
-						...p,
-						source: p.source as "pdf_text" | "ocr",
-					})),
-					textLayerRisk: r.textLayerRisk,
-					pageCount: r.pageCount,
-					provenance: r.provenance,
-				};
+				extraction = await this.extractWithDeadline(plaintext, detected, this.ocrLimits());
 			} catch (err) {
 				if (err instanceof HttpError) throw err;
 				if (err instanceof OcrFailed || err instanceof UploadTimeout) {
@@ -888,32 +869,7 @@ export class DocumentService {
 					),
 				);
 				// A retry can change page text; old citations must not survive.
-				const stale = await tx
-					.select({ id: documentFindings.id, crosscheckId: documentFindings.crosscheckId })
-					.from(documentFindings)
-					.where(eq(documentFindings.documentFileId, file.id));
-				if (stale.length > 0) {
-					const staleIds = stale.map((s) => s.id);
-					const links = await tx
-						.select({ chaseRequestId: chaseRequestFindings.chaseRequestId })
-						.from(chaseRequestFindings)
-						.where(inArray(chaseRequestFindings.findingId, staleIds));
-					const chaseIds = [...new Set(links.map((l) => l.chaseRequestId))];
-					await tx
-						.delete(chaseRequestFindings)
-						.where(inArray(chaseRequestFindings.findingId, staleIds));
-					if (chaseIds.length > 0) {
-						await tx
-							.update(chaseRequests)
-							.set({ body: null, redactedAt: new Date() })
-							.where(inArray(chaseRequests.id, chaseIds));
-					}
-					await tx.delete(documentFindings).where(eq(documentFindings.documentFileId, file.id));
-					await tx
-						.update(documentCrosschecks)
-						.set({ status: "redacted", findingCount: 0 })
-						.where(inArray(documentCrosschecks.id, [...new Set(stale.map((s) => s.crosscheckId))]));
-				}
+				await redactFileFindings(tx, file.id, new Date());
 				await writeAudit(tx, {
 					applicationId: input.applicationId,
 					actor: input.userId,
@@ -937,94 +893,9 @@ export class DocumentService {
 	}
 }
 
-// --- Orphan sweep (D1b seam): `.enc` files with no DB row older than
-// deadline+10min, plus temp files older than 1h. Row rechecked under the
-// per-application lock before unlinking. ---
-
-export interface SweepResult {
-	checked: number;
-	removedBlobs: number;
-	removedTemps: number;
-}
-
-export async function sweepDocumentOrphans(
-	db: Db,
-	root: string,
-	opts: { deadlineMs: number; now?: number },
-): Promise<SweepResult> {
-	const now = opts.now ?? Date.now();
-	const blobMinAge = opts.deadlineMs + 10 * 60_000;
-	const tmpMinAge = 60 * 60_000;
-	const result: SweepResult = { checked: 0, removedBlobs: 0, removedTemps: 0 };
-	let entries: Array<{ name: string; mtime: number; isDir: boolean }>;
-	try {
-		const names = await fs.readdir(root);
-		entries = [];
-		for (const name of names) {
-			const st = await fs.stat(path.join(root, name)).catch(() => null);
-			if (!st) continue;
-			entries.push({ name, mtime: st.mtimeMs, isDir: st.isDirectory() });
-		}
-	} catch {
-		return result;
-	}
-	for (const entry of entries) {
-		if (entry.isDir) {
-			// `<applicationId>/` shard: scan one level deep.
-			const shard = path.join(root, entry.name);
-			let inner: string[];
-			try {
-				inner = await fs.readdir(shard);
-			} catch {
-				continue;
-			}
-			for (const name of inner) {
-				result.checked++;
-				const full = path.join(shard, name);
-				const st = await fs.stat(full).catch(() => null);
-				if (!st || st.isDirectory()) continue;
-				if (name.includes(".tmp-")) {
-					if (now - st.mtimeMs > tmpMinAge) {
-						await fs.unlink(full).catch(() => {});
-						result.removedTemps++;
-					}
-					continue;
-				}
-				if (!name.endsWith(".enc")) continue;
-				if (now - st.mtimeMs <= blobMinAge) continue;
-				const fileId = name.slice(0, -".enc".length);
-				const rows = await db
-					.select({ id: documentFiles.id })
-					.from(documentFiles)
-					.where(and(eq(documentFiles.applicationId, entry.name), eq(documentFiles.id, fileId)))
-					.limit(1)
-					.catch(() => []);
-				if (rows.length === 0) {
-					// Recheck under the application lock before unlinking.
-					const stillOrphan = await withTx(db, async (tx) => {
-						await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${entry.name}))`);
-						const again = await tx
-							.select({ id: documentFiles.id })
-							.from(documentFiles)
-							.where(and(eq(documentFiles.applicationId, entry.name), eq(documentFiles.id, fileId)))
-							.limit(1);
-						if (again.length > 0) return false;
-						await fs.unlink(full).catch(() => {});
-						return true;
-					}).catch(() => false);
-					if (stillOrphan) result.removedBlobs++;
-				}
-			}
-			continue;
-		}
-		// Legacy flat temp files at the root.
-		if (entry.name.includes(".tmp-") && now - entry.mtime > tmpMinAge) {
-			await fs.unlink(path.join(root, entry.name)).catch(() => {});
-			result.removedTemps++;
-		}
-	}
-	return result;
-}
+// Orphan sweep lives in ./orphan-sweep.js; re-exported here so existing
+// importers (`documents/service.js`) keep working.
+export { sweepDocumentOrphans, type SweepResult } from "./orphan-sweep.js";
 
 /** Production factory: real ClamAV scanner + real OCR adapters. Scanner
  * misconfiguration never throws here (service boots; uploads fail closed). */

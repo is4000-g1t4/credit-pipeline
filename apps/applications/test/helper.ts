@@ -12,6 +12,7 @@ process.env.OTEL_SDK_DISABLED = "true";
 
 import { randomBytes, randomUUID } from "node:crypto";
 import { createDb } from "@credit/db";
+import { applications, caseAccessGrants, type Db } from "@credit/db/applications";
 import { createLogger, signInternalHeaders } from "@credit/service-kit";
 import { stubGateway, type FakeGateway } from "@credit/service-kit/test";
 import { createApp } from "../src/app.js";
@@ -221,4 +222,53 @@ export async function postApplication(
 		},
 		body,
 	});
+}
+
+/** Direct-DB application insert for artifact/token tests (no HTTP submit).
+ * Defaults match the artifact-lifecycle suite; pass overrides for the
+ * trace suite. Nothing here is asserted — references stay unique. */
+export async function insertApplication(
+	database: Db,
+	opts: { referencePrefix?: string; purpose?: string; applicantName?: string } = {},
+): Promise<string> {
+	const [row] = await database
+		.insert(applications)
+		.values({
+			reference: `${opts.referencePrefix ?? "ART"}-${randomUUID()}`,
+			applicantUserId: randomUUID(),
+			type: "individual",
+			product: "personal_loan",
+			status: "submitted",
+			amountCents: 1200000,
+			termMonths: 48,
+			purpose: opts.purpose ?? "artifact lifecycle test",
+			identity: { fullName: opts.applicantName ?? "Artifact Tester" },
+			consents: [true],
+			submittedAt: new Date(),
+		})
+		.returning();
+	return row.id;
+}
+
+/** Assigned-officer grant for document tests (both suites insert the same row). */
+export async function grantOfficer(
+	database: Db,
+	applicationId: string,
+	officer: TestUser,
+): Promise<void> {
+	await database.insert(caseAccessGrants).values({
+		applicationId,
+		userId: officer.id,
+		accessRole: "assigned_officer",
+	});
+}
+
+/** Submit an existing draft/application via the real endpoint. */
+export function postSubmit(
+	ctx: TestContext,
+	user: TestUser,
+	appId: string,
+	key: string,
+): Promise<Response> {
+	return postApplication(ctx, user, `/api/applications/${appId}/submit`, {}, key);
 }

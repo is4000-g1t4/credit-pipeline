@@ -4,6 +4,11 @@
 // whitespace-normalized match and return the canonical substring (with its
 // original offsets) so stored citations remain exact.
 
+/** Escape a literal string for interpolation into a RegExp source. */
+export function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export interface LocatedQuote {
 	quote: string;
 	quoteStart: number;

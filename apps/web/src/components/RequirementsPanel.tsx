@@ -10,6 +10,10 @@ import {
 	apiErrorMessage,
 	fetchCustomerProfile,
 	fetchRequirements,
+	formatDate,
+	formatDateOnly,
+	isTerminal,
+	queryKeys,
 	reuseCustomerDocuments,
 	submitDraft,
 	toast,
@@ -196,11 +200,11 @@ export function RequirementsPanel({
 		retry: false,
 		// Drafts change only on explicit attach/submit; poll submitted ones
 		// alongside the case view, stop on terminal.
-		refetchInterval: status === "draft" ? false : 2000,
+		refetchInterval: status === "draft" || isTerminal(status) ? false : 2000,
 	});
 	const refresh = (): void => {
 		void queryClient.invalidateQueries({ queryKey: ["requirements", applicationId] });
-		void queryClient.invalidateQueries({ queryKey: ["application", applicationId] });
+		void queryClient.invalidateQueries({ queryKey: queryKeys.case(applicationId) });
 	};
 
 	return (
@@ -223,7 +227,7 @@ export function RequirementsPanel({
 							)}{" "}
 							<span className="text-xs text-gray-500">
 								Policy {requirements.data.policyVersion} · as of{" "}
-								{new Date(requirements.data.asOf).toLocaleDateString()}
+								{formatDate(requirements.data.asOf)}
 							</span>
 						</p>
 						<div>
@@ -257,7 +261,7 @@ export function RequirementsPanel({
 							<p className="text-gray-600">
 								{requirements.data.kyc.status ?? "no profile"} ·{" "}
 								{requirements.data.kyc.expiresAt
-									? `expires ${new Date(requirements.data.kyc.expiresAt).toLocaleDateString()}`
+									? `expires ${formatDateOnly(requirements.data.kyc.expiresAt)}`
 									: "no expiry on file"}
 							</p>
 							{requirements.data.prefill.reused.length > 0 && (
@@ -304,7 +308,7 @@ export function CustomerSnapshot() {
 						{p.kycStatus}
 						{p.kycFresh ? "" : " (not fresh)"} ·{" "}
 						{p.kycExpiresAt
-							? `expires ${new Date(p.kycExpiresAt).toLocaleDateString()}`
+							? `expires ${formatDateOnly(p.kycExpiresAt)}`
 							: "no expiry on file"}
 					</dd>
 				</div>

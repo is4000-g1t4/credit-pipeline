@@ -4,6 +4,7 @@
 // a factory seam so tests inject a fake.
 import { randomUUID } from "node:crypto";
 import {
+	APPLICATION_WORKFLOW_NAME,
 	applicationWorkflowId,
 	monitoringWorkflowName,
 	OFFICER_DECISION_UPDATE,
@@ -106,7 +107,7 @@ export function createTemporalGateway(opts: { address: string }): WorkflowGatewa
 		async startApplication(applicationId: string): Promise<void> {
 			const client = await getClient();
 			try {
-				await client.workflow.start("applicationWorkflow", {
+				await client.workflow.start(APPLICATION_WORKFLOW_NAME, {
 					args: [{ applicationId }],
 					taskQueue: TASK_QUEUE,
 					workflowId: applicationWorkflowId(applicationId),

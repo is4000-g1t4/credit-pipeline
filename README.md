@@ -225,8 +225,8 @@ reports those seams instead of failing on them.
 | `pnpm typecheck`                                   | `tsc --noEmit` in every package + `scripts/` + `e2e/`                                                                                     |
 | `pnpm lint` / `pnpm format` / `pnpm format:check`  | `oxlint` / `oxfmt .` / `oxfmt --check .`                                                                                                  |
 | `pnpm test`                                        | all workspace unit suites, compose-free                                                                                                   |
-| `pnpm test:integration`                            | gateway (15) + applications (11) + loans (5) + portfolio (5) + review (19) + worker (10) + research (38) integration = 103, needs compose |
-| `pnpm test:e2e`                                    | Playwright (9 specs), boots worker/gateway/services/web itself, needs compose                                                             |
+| `pnpm test:integration`                            | all workspace integration suites (gateway, applications, loans, portfolio, review, worker, research, policy), needs compose |
+| `pnpm test:e2e`                                    | Playwright (11 specs), boots worker/gateway/services/web itself, needs compose                                                              |
 | `pnpm demo:check`                                  | scripted HTTP smoke (Maria/Sam/Tomás + monitoring/pay), needs the stack                                                                   |
 | `pnpm demo:monitor`                                | officer login + `POST /demo/monitoring/run`, prints counts                                                                                |
 | `pnpm demo:seed`                                   | idempotent T17 fixture load (users/customers/evidence, `DEMO_MODE` + manifest hash gate), needs DB                                        |
@@ -430,7 +430,7 @@ Docker: `postgres:18-alpine` · `apache/kafka:3.9.0` ·
 ## Notes
 
 - **Worker runs on Node 26; Temporal officially supports 20/22/24.**
-  26 passes our full unit + integration suite and the 9 Playwright specs but is outside
+  26 passes our full unit + integration suite and the 11 Playwright specs but is outside
   the support matrix — if the worker ever acts up, Node 24 LTS is the first
   thing to try (`.nvmrc` pins the 26 we test on).
 - **TS 7 kept (7.0.2).** It needed two small fixes, both correct anyway:

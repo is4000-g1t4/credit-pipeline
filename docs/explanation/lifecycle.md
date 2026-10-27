@@ -15,7 +15,7 @@ Allowed transitions, from `packages/core/src/status.ts`:
 
 `isTerminal` is true for `booked`, `declined`, `expired`, and `failed`. Every status write in the worker and reconciler is conditional, so terminal states are never overwritten.
 
-Each applicant can hold at most 3 non-terminal applications (`submitted`, `processing`, `pending_review`). A fourth submit returns 409 `TOO_MANY_APPLICATIONS`. Source: `apps/applications/src/routes/applications.ts:145-156`.
+Each applicant can hold at most 3 non-terminal applications (`submitted`, `processing`, `pending_review`). A fourth submit returns 409 `TOO_MANY_APPLICATIONS`. Source: `apps/applications/src/routes/applications.ts:170-171`.
 
 ## Decision paths
 
@@ -33,7 +33,7 @@ Source: `apps/review/src/routes/review.ts:70-95`, `packages/service-kit/src/gate
 
 ## Review expiry
 
-A referred case waits at most 72 hours (`REFER_DEADLINE_MS` in `apps/worker/src/workflows/application.ts`). At the deadline the workflow calls `expireReview`, which flips `pending_review` to `expired` only when no decision and no loan exist. A decision in flight at the deadline runs first: if it succeeds it books; if it fails, the next loop calls `expireReview` and the case becomes `expired` unless a decision or loan exists. The reconciler also expires stale pending cases whose workflow ended. Source: `apps/worker/src/activities/decisions.ts:353-399`.
+A referred case waits at most 72 hours (`REFER_DEADLINE_MS` in `apps/worker/src/workflows/application.ts`). At the deadline the workflow calls `expireReview`, which flips `pending_review` to `expired` only when no decision and no loan exist. A decision in flight at the deadline runs first: if it succeeds it books; if it fails, the next loop calls `expireReview` and the case becomes `expired` unless a decision or loan exists. The reconciler also expires stale pending cases whose workflow ended. Source: `apps/worker/src/activities/decisions.ts:308-352`.
 
 ## Booking saga
 

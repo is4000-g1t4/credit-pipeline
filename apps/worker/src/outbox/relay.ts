@@ -11,7 +11,8 @@
 
 import { Kafka, type Producer } from "kafkajs";
 import { workerEnv } from "../env.js";
-import { reserveApplications, type ReservedDb } from "../db.js";
+import { type ReservedDb } from "../db.js";
+import { logger } from "../logger.js";
 
 export const RELAY_LOCK_KEY = 4242;
 export const LOANS_RELAY_LOCK_KEY = 4243;
@@ -98,12 +99,12 @@ export async function relayOnce(opts: {
 	now: Date;
 	producer: RelayProducer;
 	batchSize?: number;
-	store?: RelayStore;
+	store: RelayStore;
 	/** Called on connection-level send failures so the owner can reset its
 	 * producer; the row is left untouched (no attempt burned). */
 	onConnectionError?: (err: unknown) => void;
 }): Promise<RelayResult> {
-	const store = opts.store ?? drizzleRelayStore(reserveApplications, RELAY_LOCK_KEY);
+	const store = opts.store;
 	const batchSize = opts.batchSize ?? 50;
 	if (!(await store.tryLock())) return { skipped: true, published: 0, deadLettered: 0 };
 	try {
@@ -136,7 +137,7 @@ export async function relayOnce(opts: {
 			try {
 				await store.markPublished(row.id, opts.now);
 			} catch (err) {
-				console.error("worker relay: markPublished failed:", err);
+				logger.error({ err }, "worker relay: markPublished failed");
 				break;
 			}
 			published++;
@@ -223,19 +224,18 @@ export interface RelayLoopHandle {
 /** 1s relay loop. Owns a Kafka producer; while Kafka is down the tick is
  * skipped (logged) without touching rows — no attempt-burning during an
  * outage. Never throws out of the tick. */
-export function startRelayLoop(
-	opts: {
-		intervalMs?: number;
-		producer?: RelayProducer;
-		store?: RelayStore;
-	} = {},
-): RelayLoopHandle {
+export function startRelayLoop(opts: {
+	intervalMs?: number;
+	producer?: RelayProducer;
+	store: RelayStore;
+}): RelayLoopHandle {
 	const intervalMs = opts.intervalMs ?? 1000;
 	const brokers = workerEnv.kafkaBrokers
 		.split(",")
 		.map((s) => s.trim())
 		.filter(Boolean);
 	let stopped = false;
+	let inFlight: Promise<void> | null = null;
 	let kafkaProducer: Producer | null = null;
 	let connected = false;
 
@@ -245,7 +245,7 @@ export function startRelayLoop(
 		connected = false;
 		if (kafkaProducer) {
 			kafkaProducer.disconnect().catch((err) => {
-				console.error("worker relay: producer disconnect failed:", err);
+				logger.error({ err }, "worker relay: producer disconnect failed");
 			});
 			kafkaProducer = null;
 		}
@@ -264,7 +264,7 @@ export function startRelayLoop(
 				await kafkaProducer.connect();
 				connected = true;
 			} catch (err) {
-				console.error("worker relay: kafka unavailable, retrying:", err);
+				logger.error({ err }, "worker relay: kafka unavailable, retrying");
 				return null;
 			}
 		}
@@ -283,31 +283,34 @@ export function startRelayLoop(
 	};
 
 	const timer = setInterval(() => {
-		if (stopped) return;
-		void (async () => {
-			const producer = await getProducer();
-			if (!producer) return; // kafka down: skip, don't burn attempts
+		if (stopped || inFlight) return;
+		inFlight = (async () => {
 			try {
+				const producer = await getProducer();
+				if (!producer) return; // kafka down: skip, don't burn attempts
 				await relayOnce({
 					now: new Date(),
 					producer,
-					...(opts.store !== undefined ? { store: opts.store } : {}),
+					store: opts.store,
 					onConnectionError: () => resetProducer(),
 				});
 			} catch (err) {
-				console.error("worker relay: tick failed:", err);
+				logger.error({ err }, "worker relay: tick failed");
 			}
-		})();
+		})().finally(() => {
+			inFlight = null;
+		});
 	}, intervalMs);
 	timer.unref?.();
 
 	return {
-		stop() {
+		async stop() {
 			stopped = true;
 			clearInterval(timer);
+			await inFlight?.catch(() => {});
 			if (kafkaProducer) {
 				kafkaProducer.disconnect().catch((err) => {
-					console.error("worker relay: producer disconnect failed:", err);
+					logger.error({ err }, "worker relay: producer disconnect failed");
 				});
 				kafkaProducer = null;
 				connected = false;

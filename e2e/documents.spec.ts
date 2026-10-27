@@ -20,7 +20,7 @@ import { expect, test } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Api, ApiError, gotoHydrated, smeApplication, uiLogin, uiLogout } from "./helpers.js";
+import { Api, ApiError, type CaseDetail, gotoHydrated, smeApplication, uiLogin, uiLogout, waitStatus } from "./helpers.js";
 
 const FIXTURE = resolve(dirname(fileURLToPath(import.meta.url)), "fixtures/mismatch.pdf");
 
@@ -31,6 +31,47 @@ const SKIP_ENV =
 const SKIP_UNAVAILABLE =
 	"document service unavailable (no encryption key or scanner): set DOCUMENT_ENCRYPTION_KEY and run ClamAV, " +
 	"then restart the applications service";
+
+/** Case this spec touched. Declined in afterEach when still pending_review,
+ * so repeat runs never hit the 3-active-application cap. `created` lets a
+ * skipped run clean up its own case without mutating a reused one. */
+let trackedCase: { id: string; created: boolean } | null = null;
+
+test.afterEach(async ({ page: _page }, testInfo) => {
+	if (trackedCase === null) return;
+	const tracked = trackedCase;
+	trackedCase = null;
+	// A runtime test.skip() still runs afterEach. Leave a reused case alone;
+	// a case this run created (and never exercised) must still be retired.
+	if (testInfo.status === "skipped" && !tracked.created) return;
+	const id = tracked.id;
+	try {
+		const applicant = new Api();
+		await applicant.login("tomas@cafe-aurora.example");
+		// The submit response lands before the workflow reaches pending_review.
+		// A created case must be given time to become decidable; a reused one
+		// is already active and needs no wait.
+		if (tracked.created) {
+			try {
+				await waitStatus(applicant, id, "pending_review", 20_000);
+			} catch {
+				// Terminal/expired already: the status read below decides.
+			}
+		}
+		const detail = await applicant.get<CaseDetail>(`/api/applications/${id}`);
+		if (detail.application.status !== "pending_review") return;
+		const officer = new Api();
+		await officer.login("officer@example.com");
+		await officer.post(`/api/review/${id}/decision`, {
+			requestId: crypto.randomUUID(),
+			outcome: "decline",
+			reasonCode: "OFFICER_JUDGEMENT",
+			notes: "e2e cleanup: decline leftover documents case",
+		});
+	} catch {
+		// Best-effort: must not fail the spec.
+	}
+});
 
 interface Detail {
 	application: {
@@ -79,6 +120,7 @@ test("documents: consent → upload → claim → crosscheck → draft chase (no
 	const applicant = new Api();
 	await applicant.login("tomas@cafe-aurora.example");
 	let submitted: { id: string; reference: string };
+	let created = true;
 	try {
 		submitted = await applicant.post<{ id: string; reference: string }>(
 			"/api/applications",
@@ -96,8 +138,10 @@ test("documents: consent → upload → claim → crosscheck → draft chase (no
 		);
 		if (!existing) throw err;
 		submitted = { id: existing.id, reference: existing.reference };
+		created = false;
 	}
 	const appId = submitted.id;
+	trackedCase = { id: appId, created };
 
 	// Feature-gate probe: skip (don't fail) when the flag is off.
 	const detail = await applicant.get<Detail>(`/api/applications/${appId}`);

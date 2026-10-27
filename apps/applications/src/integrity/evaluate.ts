@@ -275,3 +275,50 @@ export async function reevaluateIntegrity(
 ): Promise<EvaluateIntegrityResult> {
 	return evaluateIntegrity(deps, input);
 }
+
+/** Document-mutation hook for the document routes (wired in app.ts):
+ * applicant evidence changes re-queue an open review; officer/service
+ * mutations re-evaluate. Best-effort: evaluation failures audit
+ * `integrity.evaluate_failed` and never fail the document write. */
+export function createDocumentMutationHandler(
+	deps: IntegrityRunDeps,
+): (input: {
+	applicationId: string;
+	actor: { id: string; role: string };
+	action: "upload" | "reuse" | "crosscheck" | "retry_ocr";
+}) => Promise<void> {
+	return async ({ applicationId, actor, action }) => {
+		try {
+			if (actor.role === "applicant") {
+				await requeueActiveReviewForEvidenceChange(deps, {
+					applicationId,
+					requestedBy: actor.id,
+				});
+				return;
+			}
+			if (actor.role !== "officer" && actor.role !== "service") return;
+			await evaluateIntegrity(deps, {
+				applicationId,
+				actor: { id: actor.id, role: actor.role },
+				actorRole: actor.role,
+			});
+		} catch (err) {
+			const errorCode =
+				err !== null && typeof err === "object" && "code" in err
+					? String((err as { code: unknown }).code)
+					: "unknown";
+			deps.logger.warn({ applicationId, action, errorCode }, "integrity evaluation failed");
+			await deps.db
+				.transaction(async (tx) => {
+					await writeAudit(tx, {
+						applicationId,
+						actor: "system:integrity-evaluate",
+						action: "integrity.evaluate_failed",
+						entity: "document_integrity_run",
+						payload: { feature: "document_integrity", action, errorCode },
+					});
+				})
+				.catch(() => {});
+		}
+	};
+}

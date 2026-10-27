@@ -4,8 +4,6 @@ import {
 	PERSONAL_MIN_CENTS,
 	SME_MAX_CENTS,
 	SME_MIN_CENTS,
-	TERM_MAX_MONTHS,
-	TERM_MIN_MONTHS,
 } from "@credit/core/browser";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
@@ -17,9 +15,17 @@ import {
 	apiErrorMessage,
 	createDraft,
 	fetchCustomerProfile,
+	formatDateOnly,
 	toast,
 	type CustomerProfileResponse,
 } from "../lib/api";
+import {
+	buildApplyPayload,
+	dollars,
+	prefillFromProfile,
+	validateApplyStep,
+	type Errors,
+} from "../lib/apply";
 import { RequireAuth, useMe } from "../lib/auth";
 
 export const Route = createFileRoute("/apply")({
@@ -29,18 +35,6 @@ export const Route = createFileRoute("/apply")({
 		</RequireAuth>
 	),
 });
-
-type Errors = Record<string, string>;
-const dollars = (s: string): number | null => {
-	const n = Number(s);
-	return s.trim() !== "" && Number.isFinite(n) ? Math.round(n * 100) : null;
-};
-
-// T17 prefill coercions (module scope): profile values are strings for
-// identity, numbers for business cents/counts; empty stays empty.
-const profStr = (v: unknown): string => (typeof v === "string" ? v : "");
-const profCents = (v: unknown): string => (typeof v === "number" ? String(v / 100) : "");
-const profNum = (v: unknown): string => (typeof v === "number" ? String(v) : "");
 
 function Wizard() {
 	const me = useMe();
@@ -101,43 +95,13 @@ function Wizard() {
 	// Prefill once the profile lands (same render-guard idiom as the email
 	// sync below): values stay editable; edits are recorded as edited.
 	if (!profileApplied && profile) {
-		const profIdentity = (profile.profile.identity ?? {}) as Record<string, unknown>;
-		const business = (profile.profile.business ?? null) as Record<string, unknown> | null;
-		const marked: string[] = [];
-		const take = (field: string, value: string): string => {
-			if (value !== "") marked.push(field);
-			return value;
-		};
-		const nextIdentity = {
-			fullName: take("identity.fullName", profStr(profIdentity.fullName)),
-			dob: take("identity.dob", profStr(profIdentity.dob)),
-			nationalId: take("identity.nationalId", profStr(profIdentity.nationalId)),
-			email: take("identity.email", profStr(profIdentity.email)) || (me.data?.user.email ?? ""),
-			phone: take("identity.phone", profStr(profIdentity.phone)),
-			address: take("identity.address", profStr(profIdentity.address)),
-			city: take("identity.city", profStr(profIdentity.city)),
-		};
-		const nextSme = business
-			? {
-					companyName: take("sme.companyName", profStr(business.companyName)),
-					registrationNumber: take("sme.registrationNumber", profStr(business.registrationNumber)),
-					industry: take("sme.industry", profStr(business.industry) || "retail"),
-					yearsTrading: take("sme.yearsTrading", profNum(business.yearsTrading)),
-					employees: take("sme.employees", profNum(business.employees)),
-					annualRevenue: take("sme.annualRevenueCents", profCents(business.annualRevenueCents)),
-					monthlyFcf: take("sme.monthlyFcfCents", profCents(business.monthlyFcfCents)),
-					existingDebtService: take(
-						"sme.existingDebtServiceCents",
-						profCents(business.existingDebtServiceCents),
-					),
-				}
-			: null;
+		const p = prefillFromProfile(profile, me.data?.user.email ?? "");
 		setProfileApplied(true);
-		setPrefilled(marked);
-		setIdentity(nextIdentity);
-		if (nextSme) {
-			setBorrowerType(profile.profile.segment === "sme" ? "sme" : "individual");
-			setSme(nextSme);
+		setPrefilled(p.prefilled);
+		setIdentity(p.identity);
+		if (p.sme) {
+			setBorrowerType(p.borrowerType);
+			setSme(p.sme);
 		}
 	}
 	// ONE key per submission intent — retries reuse it (SPEC FR-1.7/1.9).
@@ -156,88 +120,39 @@ function Wizard() {
 	const setS = (k: string, v: string) => setSme((p) => ({ ...p, [k]: v }));
 
 	function checkStep(target: number): boolean {
-		const next: Errors = {};
-		if (target >= 1) {
-			const cents = dollars(amount);
-			if (cents === null) next.amount = "enter an amount in dollars";
-			else if (cents < minCents || cents > maxCents)
-				next.amount = `must be $${minCents / 100}–$${maxCents / 100} for ${product}`;
-			const t = Number(term);
-			if (!Number.isInteger(t) || t < TERM_MIN_MONTHS || t > TERM_MAX_MONTHS)
-				next.term = `term must be ${TERM_MIN_MONTHS}–${TERM_MAX_MONTHS} months`;
-			if (purpose.trim().length === 0) next.purpose = "purpose is required";
-		}
-		// Step 2's fields belong to the 2→3 transition; validating them on
-		// 1→2 would block with empty identity fields (caught by E2E).
-		if (target >= 3) {
-			if (!identity.fullName.trim()) next["identity.fullName"] = "full name is required";
-			if (!/^\d{4}-\d{2}-\d{2}$/.test(identity.dob)) next["identity.dob"] = "use YYYY-MM-DD";
-			if (!/^[A-Za-z0-9]{8,20}$/.test(identity.nationalId))
-				next["identity.nationalId"] = "8–20 alphanumeric characters";
-			if (!identity.email.includes("@")) next["identity.email"] = "valid email required";
-			if (!identity.phone.trim()) next["identity.phone"] = "phone is required";
-			if (!identity.address.trim()) next["identity.address"] = "address is required";
-			if (identity.city.trim().length < 2 || identity.city.trim().length > 80)
-				next["identity.city"] = "city must be 2–80 characters";
-			if (borrowerType === "individual") {
-				if (
-					(ind.employmentStatus === "employed" || ind.employmentStatus === "self_employed") &&
-					!ind.employerName.trim()
-				)
-					next["individual.employerName"] = "employer name is required";
-				const income = dollars(ind.monthlyIncome);
-				if (income === null || income < 100000)
-					next["individual.monthlyIncome"] = "must be ≥ $1,000/mo";
-				if (dollars(ind.existingDebt) === null) next["individual.existingDebt"] = "enter 0 or more";
-			} else {
-				if (!sme.companyName.trim()) next["sme.companyName"] = "company name is required";
-				if (!/^[A-Za-z0-9]{6,20}$/.test(sme.registrationNumber))
-					next["sme.registrationNumber"] = "6–20 alphanumeric characters";
-				if (dollars(sme.monthlyFcf) === null) next["sme.monthlyFcf"] = "enter 0 or more";
-			}
-		}
+		const next = validateApplyStep(target, {
+			amount,
+			term,
+			purpose,
+			identity,
+			ind,
+			sme,
+			borrowerType,
+			product,
+			minCents,
+			maxCents,
+		});
 		setErrors(next);
 		return Object.keys(next).length === 0;
 	}
 
 	function payload() {
-		const base = {
-			type: borrowerType,
+		return buildApplyPayload({
+			amount,
+			term,
+			purpose,
+			identity,
+			ind,
+			sme,
+			borrowerType,
 			product,
-			amountCents: dollars(amount) as number,
-			termMonths: Number(term),
-			purpose: purpose.trim(),
+			minCents,
+			maxCents,
 			consents,
 			aiResearchConsent,
 			documentProcessingConsent,
 			contextAnalysisConsent,
-			identity: { ...identity, fullName: identity.fullName.trim() },
-		};
-		return borrowerType === "individual"
-			? {
-					...base,
-					individual: {
-						employmentStatus: ind.employmentStatus,
-						employerName: ind.employerName.trim() || undefined,
-						employmentYears: Number(ind.employmentYears),
-						monthlyIncomeCents: dollars(ind.monthlyIncome) as number,
-						existingDebtCents: dollars(ind.existingDebt) as number,
-						bankRelationshipYears: Number(ind.bankRelationshipYears),
-					},
-				}
-			: {
-					...base,
-					sme: {
-						companyName: sme.companyName.trim(),
-						registrationNumber: sme.registrationNumber,
-						industry: sme.industry,
-						yearsTrading: Number(sme.yearsTrading),
-						employees: Number(sme.employees),
-						annualRevenueCents: dollars(sme.annualRevenue) as number,
-						monthlyFcfCents: dollars(sme.monthlyFcf) as number,
-						existingDebtServiceCents: dollars(sme.existingDebtService) as number,
-					},
-				};
+		});
 	}
 
 	async function submit() {
@@ -349,7 +264,7 @@ function Wizard() {
 						KYC {profile.profile.kycStatus}
 						{profile.profile.kycFresh ? "" : " (not fresh)"}
 						{profile.profile.kycExpiresAt
-							? ` · expires ${new Date(profile.profile.kycExpiresAt).toLocaleDateString()}`
+							? ` · expires ${formatDateOnly(profile.profile.kycExpiresAt)}`
 							: ""}
 						{profile.accounts.length > 0
 							? ` · accounts on file: ${profile.accounts.map((a) => `${a.bankName} ${a.maskedNumber}`).join("; ")}`

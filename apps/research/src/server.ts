@@ -165,7 +165,16 @@ const shutdown = (): void => {
 		})();
 	}
 	server.close(() => void sql.end());
-	setTimeout(() => process.exit(0), 2500).unref();
+	// Grafana flush is best-effort and bounded by its own export timeout
+	// (2s client + 2s SDK); give it room before the hard exit.
+	void (async () => {
+		try {
+			await observability.shutdown?.();
+		} catch (err: unknown) {
+			logger.error({ err }, "observability shutdown failed");
+		}
+	})();
+	setTimeout(() => process.exit(0), 6500).unref();
 };
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);

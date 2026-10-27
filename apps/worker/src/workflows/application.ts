@@ -179,6 +179,9 @@ async function runApplication(applicationId: string): Promise<ApplicationWorkflo
 					...(update.reasonCode !== undefined ? { reasonCode: update.reasonCode } : {}),
 					...(update.notes !== undefined ? { notes: update.notes } : {}),
 					...(update.research !== undefined ? { research: update.research } : {}),
+					...(update.officerUserId !== undefined
+						? { officerUserId: update.officerUserId }
+						: {}),
 				});
 				if (!parsed.success) {
 					throw rejected(

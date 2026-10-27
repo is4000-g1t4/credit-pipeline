@@ -17,7 +17,6 @@ import {
 	errorBody,
 	HttpError,
 	installErrorHandlers,
-	internalFetch,
 	JSON_BODY_LIMIT,
 	MAX_UPLOAD_BYTES,
 	requestLogger,
@@ -27,16 +26,14 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { createMiddleware } from "hono/factory";
 import { authRoutes, requireOfficer, requireUser } from "./auth.js";
+import { composeApplicationDetail } from "./composition.js";
 import type { GatewayDeps, GatewayVariables } from "./deps.js";
 import { healthRoutes } from "./health.js";
 import {
 	ASSIST_UPSTREAM_TIMEOUT_MS,
 	DOCUMENT_UPSTREAM_TIMEOUT_MS,
-	fetchUpstream,
-	forwardResponse,
 	LONG_UPSTREAM_TIMEOUT_MS,
 	proxyTo,
-	UPSTREAM_TIMEOUT_MS,
 } from "./proxy.js";
 
 /** T01 document upload: 10 MB file + multipart overhead (SPEC-t01-t02 §3).
@@ -128,7 +125,7 @@ export function createApp(deps: GatewayDeps): Hono<{ Variables: Variables }> {
 	});
 
 	app.post("/api/applications/:id/submit", user, submit, async (c) => {
-		const path = new URL(c.req.url).pathname;
+		const path = c.req.path;
 		return proxyTo(
 			c,
 			deps,
@@ -139,17 +136,17 @@ export function createApp(deps: GatewayDeps): Hono<{ Variables: Variables }> {
 	});
 
 	app.get("/api/applications/:id/requirements", user, async (c) => {
-		const path = new URL(c.req.url).pathname;
+		const path = c.req.path;
 		return proxyTo(c, deps, c.var.user, { baseUrl: deps.env.applicationsUrl, path });
 	});
 
 	app.patch("/api/applications/:id/context-consent", user, async (c) => {
-		const path = new URL(c.req.url).pathname;
+		const path = c.req.path;
 		return proxyTo(c, deps, c.var.user, { baseUrl: deps.env.applicationsUrl, path });
 	});
 
 	app.all("/api/customer/*", user, async (c) => {
-		const path = new URL(c.req.url).pathname;
+		const path = c.req.path;
 		return proxyTo(c, deps, c.var.user, { baseUrl: deps.env.applicationsUrl, path });
 	});
 
@@ -164,56 +161,11 @@ export function createApp(deps: GatewayDeps): Hono<{ Variables: Variables }> {
 	// loans service (same signed user). 404 on the lookup → `loan: null`
 	// (no loan booked yet); any other lookup failure → 502.
 	app.get("/api/applications/:id", user, async (c) => {
-		const me = c.var.user;
-		const id = c.req.param("id");
-		const query = new URL(c.req.url).search;
-		const requestId = c.var.requestId;
-		const upstream = await fetchUpstream(
-			deps,
-			me,
-			"GET",
-			{ baseUrl: deps.env.applicationsUrl, path: `/api/applications/${id}` },
-			query,
-			requestId,
-			c,
-		);
-		if (!upstream.ok) return forwardResponse(c, upstream);
-		let data: Record<string, unknown>;
-		try {
-			data = (await upstream.json()) as Record<string, unknown>;
-		} catch {
-			throw new HttpError(502, "BAD_GATEWAY", "upstream service unavailable");
-		}
-		try {
-			// Same signed identity the proxy path uses, with the 5s bound —
-			// internalFetch maps transport failures to the 502 path below.
-			const loanPath = `/internal/loans/by-application/${id}`;
-			const loanRes = await internalFetch(deps.env.loansUrl, loanPath, me, {
-				secret: deps.env.internalSecret,
-				fetchImpl: deps.fetchImpl,
-				requestId,
-				timeoutMs: UPSTREAM_TIMEOUT_MS,
-			});
-			if (loanRes.ok) {
-				const loanBody = (await loanRes.json()) as {
-					loan: Record<string, unknown>;
-					installments: unknown;
-				};
-				data.loan = { ...loanBody.loan, installments: loanBody.installments };
-			} else if (loanRes.status === 404) {
-				data.loan = null;
-			} else {
-				throw new HttpError(502, "BAD_GATEWAY", "upstream service unavailable");
-			}
-		} catch (err) {
-			if (err instanceof HttpError) throw err;
-			throw new HttpError(502, "BAD_GATEWAY", "upstream service unavailable");
-		}
-		return c.json(data);
+		return composeApplicationDetail(c, deps, c.var.user, c.req.param("id"));
 	});
 
 	app.patch("/api/applications/:id/document-consent", user, async (c) => {
-		const path = new URL(c.req.url).pathname;
+		const path = c.req.path;
 		return proxyTo(c, deps, c.var.user, { baseUrl: deps.env.applicationsUrl, path });
 	});
 
@@ -222,7 +174,7 @@ export function createApp(deps: GatewayDeps): Hono<{ Variables: Variables }> {
 	// synchronously downstream, so these ride the 50s document timeout.
 	for (const pattern of ["/api/applications/:id/documents", "/api/applications/:id/documents/*"]) {
 		app.all(pattern, user, async (c) => {
-			const path = new URL(c.req.url).pathname;
+			const path = c.req.path;
 			return proxyTo(
 				c,
 				deps,
@@ -234,7 +186,7 @@ export function createApp(deps: GatewayDeps): Hono<{ Variables: Variables }> {
 	}
 
 	app.all("/api/review/*", officer, async (c) => {
-		const path = new URL(c.req.url).pathname;
+		const path = c.req.path;
 		// Officer decisions ride a Temporal update + booking that can exceed
 		// the normal 5s proxy bound.
 		return proxyTo(
@@ -250,7 +202,7 @@ export function createApp(deps: GatewayDeps): Hono<{ Variables: Variables }> {
 	// flag and the assigned-case check; this proxy only binds identity/path.
 	for (const pattern of ["/api/applications/:id/integrity", "/api/applications/:id/integrity/*"]) {
 		app.all(pattern, officer, async (c) => {
-			const path = new URL(c.req.url).pathname;
+			const path = c.req.path;
 			return proxyTo(
 				c,
 				deps,
@@ -265,7 +217,7 @@ export function createApp(deps: GatewayDeps): Hono<{ Variables: Variables }> {
 	// applications service; applicants are denied before the upstream call.
 	for (const pattern of ["/api/fraud-review", "/api/fraud-review/*"]) {
 		app.all(pattern, officer, async (c) => {
-			const path = new URL(c.req.url).pathname;
+			const path = c.req.path;
 			return proxyTo(
 				c,
 				deps,
@@ -277,12 +229,12 @@ export function createApp(deps: GatewayDeps): Hono<{ Variables: Variables }> {
 	}
 
 	app.all("/api/loans/*", user, async (c) => {
-		const path = new URL(c.req.url).pathname;
+		const path = c.req.path;
 		return proxyTo(c, deps, c.var.user, { baseUrl: deps.env.loansUrl, path });
 	});
 
 	app.all("/api/demo/*", demo, async (c) => {
-		const path = new URL(c.req.url).pathname;
+		const path = c.req.path;
 		// Demo age/monitoring waits up to 30s server-side for the sweep.
 		return proxyTo(
 			c,
@@ -294,7 +246,7 @@ export function createApp(deps: GatewayDeps): Hono<{ Variables: Variables }> {
 	});
 
 	app.all("/api/dashboard/*", officer, async (c) => {
-		const path = new URL(c.req.url).pathname;
+		const path = c.req.path;
 		return proxyTo(c, deps, c.var.user, { baseUrl: deps.env.portfolioUrl, path });
 	});
 
@@ -306,7 +258,7 @@ export function createApp(deps: GatewayDeps): Hono<{ Variables: Variables }> {
 		if (!deps.policyLimiter.check(me.id)) {
 			throw new HttpError(429, "RATE_LIMITED", "too many policy requests");
 		}
-		const path = new URL(c.req.url).pathname;
+		const path = c.req.path;
 		return proxyTo(
 			c,
 			deps,
@@ -320,7 +272,7 @@ export function createApp(deps: GatewayDeps): Hono<{ Variables: Variables }> {
 	// artifacts, validation. The applications service owns the flag: with
 	// ASSIST_ENABLED=false every assist route 404s downstream.
 	app.all("/api/assist/*", officer, async (c) => {
-		const path = new URL(c.req.url).pathname;
+		const path = c.req.path;
 		return proxyTo(
 			c,
 			deps,

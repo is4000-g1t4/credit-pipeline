@@ -121,13 +121,17 @@ function hasIngestConfig(): boolean {
 	return Boolean(process.env.AGENTO11Y_ENDPOINT && process.env.AGENTO11Y_AUTH_TOKEN);
 }
 
+function hasOtelConfig(): boolean {
+	return Boolean(process.env.OTEL_EXPORTER_OTLP_ENDPOINT);
+}
+
 /**
  * Once per process. `serviceName` is used for OTel `service.name` only when
  * `OTEL_SERVICE_NAME`/`OTEL_RESOURCE_ATTRIBUTES` are not already set.
  */
 export function getObservability(serviceName = "credit-app"): Observability {
 	if (cached) return cached;
-	if (process.env.OTEL_SDK_DISABLED === "true" || !hasIngestConfig()) {
+	if (process.env.OTEL_SDK_DISABLED === "true" || (!hasIngestConfig() && !hasOtelConfig())) {
 		cached = NOOP;
 		return cached;
 	}
@@ -135,7 +139,7 @@ export function getObservability(serviceName = "credit-app"): Observability {
 		process.env.OTEL_SERVICE_NAME ??= serviceName;
 		let sdk: NodeSDK | undefined;
 		let degraded = false;
-		if (process.env.OTEL_EXPORTER_OTLP_ENDPOINT) {
+		if (hasOtelConfig()) {
 			sdk = new NodeSDK({
 				traceExporter: new OTLPTraceExporter({ timeoutMillis: EXPORT_TIMEOUT_MS }),
 				metricReader: new PeriodicExportingMetricReader({
@@ -150,11 +154,15 @@ export function getObservability(serviceName = "credit-app"): Observability {
 			degraded = true;
 		}
 		// Providers must exist before the client creates its tracer/meter.
-		const client = new Agento11yClient({
-			contentCapture: "metadata_only",
-			generationExport: { timeoutMs: EXPORT_TIMEOUT_MS },
-			generationSanitizer: createSecretRedactionSanitizer({ redactEmailAddresses: true }),
-		});
+		const client = hasIngestConfig()
+			? new Agento11yClient({
+					contentCapture: "metadata_only",
+					generationExport: { timeoutMs: EXPORT_TIMEOUT_MS },
+					generationSanitizer: createSecretRedactionSanitizer({
+						redactEmailAddresses: true,
+					}),
+				})
+			: null;
 
 		const end = (recorder: { getError(): Error | undefined }) => {
 			if (recorder.getError()) degraded = true;
@@ -165,6 +173,7 @@ export function getObservability(serviceName = "credit-app"): Observability {
 				return degraded ? "degraded" : "ok";
 			},
 			hooksFor: (runner, opts) => {
+				if (!client) return { detach: () => {} };
 				try {
 					const hooks = withAgento11yOpenAIAgentsHooks(runner, client, {
 						agentName: opts.agentName,
@@ -212,7 +221,7 @@ export function getObservability(serviceName = "credit-app"): Observability {
 						metadata: opts.metadata,
 						contentCapture: "metadata_only",
 					};
-					recorder = client.startGeneration(start);
+					recorder = client?.startGeneration(start);
 				} catch {
 					degraded = true;
 					recorder = undefined;
@@ -232,8 +241,12 @@ export function getObservability(serviceName = "credit-app"): Observability {
 					} catch {
 						degraded = true;
 					}
-					recorder.end();
-					end(recorder);
+					try {
+						recorder.end();
+						end(recorder);
+					} catch {
+						degraded = true;
+					}
 					return value;
 				} catch (err) {
 					try {
@@ -249,7 +262,7 @@ export function getObservability(serviceName = "credit-app"): Observability {
 			trackEmbedding: async (opts, fn) => {
 				let recorder: EmbeddingRecorder | undefined;
 				try {
-					recorder = client.startEmbedding({
+					recorder = client?.startEmbedding({
 						agentName: opts.agentName,
 						agentVersion: opts.agentVersion,
 						model: { provider: opts.provider ?? "openrouter", name: opts.model },
@@ -264,15 +277,23 @@ export function getObservability(serviceName = "credit-app"): Observability {
 				if (!recorder) return fn();
 				try {
 					const value = await fn();
-					const outcome = opts.onSuccess?.(value) ?? { inputCount: 0 };
-					recorder.setResult({
-						inputCount: outcome.inputCount,
-						inputTokens: outcome.inputTokens,
-						responseModel: outcome.responseModel,
-						dimensions: outcome.dimensions,
-					});
-					recorder.end();
-					end(recorder);
+					try {
+						const outcome = opts.onSuccess?.(value) ?? { inputCount: 0 };
+						recorder.setResult({
+							inputCount: outcome.inputCount,
+							inputTokens: outcome.inputTokens,
+							responseModel: outcome.responseModel,
+							dimensions: outcome.dimensions,
+						});
+					} catch {
+						degraded = true;
+					}
+					try {
+						recorder.end();
+						end(recorder);
+					} catch {
+						degraded = true;
+					}
 					return value;
 				} catch (err) {
 					try {
@@ -288,7 +309,7 @@ export function getObservability(serviceName = "credit-app"): Observability {
 			trackToolExecution: async (opts, fn) => {
 				let recorder: ToolExecutionRecorder | undefined;
 				try {
-					recorder = client.startToolExecution({
+					recorder = client?.startToolExecution({
 						toolName: opts.toolName,
 						conversationId: opts.conversationId,
 						conversationTitle: opts.conversationTitle,
@@ -305,9 +326,17 @@ export function getObservability(serviceName = "credit-app"): Observability {
 				if (!recorder) return fn();
 				try {
 					const value = await fn();
-					recorder.setResult({ completedAt: new Date() });
-					recorder.end();
-					end(recorder);
+					try {
+						recorder.setResult({ completedAt: new Date() });
+					} catch {
+						degraded = true;
+					}
+					try {
+						recorder.end();
+						end(recorder);
+					} catch {
+						degraded = true;
+					}
 					return value;
 				} catch (err) {
 					try {
@@ -321,6 +350,7 @@ export function getObservability(serviceName = "credit-app"): Observability {
 				}
 			},
 			flush: async () => {
+				if (!client) return;
 				try {
 					await Promise.race([client.flush(), sleep(EXPORT_TIMEOUT_MS)]);
 				} catch {
@@ -329,7 +359,7 @@ export function getObservability(serviceName = "credit-app"): Observability {
 			},
 			shutdown: async () => {
 				try {
-					await Promise.race([client.shutdown(), sleep(EXPORT_TIMEOUT_MS)]);
+					if (client) await Promise.race([client.shutdown(), sleep(EXPORT_TIMEOUT_MS)]);
 					if (sdk) await Promise.race([sdk.shutdown(), sleep(EXPORT_TIMEOUT_MS)]);
 				} catch {
 					degraded = true;

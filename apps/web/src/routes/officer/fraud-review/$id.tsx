@@ -16,7 +16,6 @@ import {
 } from "../../../components/ui";
 import {
 	ApiError,
-	apiErrorMessage,
 	fetchFraudReview,
 	fetchResolutionDraft,
 	formatDateTime,
@@ -28,6 +27,7 @@ import {
 	type FraudReview,
 } from "../../../lib/api";
 import { RequireAuth } from "../../../lib/auth";
+import { clean, friendlyMessage } from "../../../lib/format";
 
 export const Route = createFileRoute("/officer/fraud-review/$id")({
 	component: () => (
@@ -36,25 +36,6 @@ export const Route = createFileRoute("/officer/fraud-review/$id")({
 		</RequireAuth>
 	),
 });
-
-function clean(value: string): string {
-	return value.replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/g, "");
-}
-
-function friendlyMessage(err: unknown): string {
-	if (err instanceof ApiError) {
-		switch (err.code) {
-			case "CANDIDATE_STALE":
-			case "CANDIDATE_NOT_ACTIVE":
-			case "NOT_CONFIRMED_MISMATCH":
-				return apiErrorMessage(err);
-			default:
-				break;
-		}
-		if (err.status === 409) return "That review changed — refresh and retry.";
-	}
-	return apiErrorMessage(err);
-}
 
 /** Defensive read: unexpected brief shapes render as unavailable, never crash. */
 function asBriefContent(content: unknown): FraudBriefContent | null {

@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import { Agent, OpenAIChatCompletionsModel, Runner, tool } from "@openai/agents";
 import OpenAI from "openai";
 import { z } from "zod";
-import { readRunUsage, type AgentsOpenAIClient } from "./openai-agents.js";
+import { readRunUsage, type AgentsOpenAIClient } from "@credit/agent-observability/openai-agents";
 import { createContextTools, ContextToolError, type CandidateSnapshot } from "./context-tools.js";
 import { contextModelOutputSchema, CONTEXT_PROMPT_VERSION } from "./context-validator.js";
 import type { ResearchEnv } from "./env.js";

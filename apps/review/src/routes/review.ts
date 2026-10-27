@@ -13,20 +13,18 @@ import {
 	type ResearchBundle,
 } from "@credit/core";
 import {
-	GatewayError,
 	HttpError,
 	internalFetch,
 	readJson,
 	requireOfficer,
 	type ServiceApp,
 	type ServiceVariables,
+	UUID_RE,
 	type WorkflowGateway,
 	zodFields,
 } from "@credit/service-kit";
 import { Hono } from "hono";
 import { z } from "zod";
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const viewSchema = z.object({ runId: z.uuid() }).strict();
 
@@ -161,26 +159,19 @@ export function reviewRoutes(deps: ReviewRouteDeps): ServiceApp {
 				acceptedFindingIds: input.acceptedFindingIds ?? [],
 			});
 		}
-		try {
-			const result = await gateway.sendOfficerDecision(id, {
-				requestId: input.requestId,
-				outcome: input.outcome,
-				...(input.approvedAmountCents !== undefined
-					? { approvedAmountCents: input.approvedAmountCents }
-					: {}),
-				...(input.termMonths !== undefined ? { termMonths: input.termMonths } : {}),
-				...(input.reasonCode !== undefined ? { reasonCode: input.reasonCode } : {}),
-				...(input.notes !== undefined ? { notes: input.notes } : {}),
-				...(research !== undefined ? { research } : {}),
-				officerUserId: me.id,
-			});
-			return c.json(result);
-		} catch (err) {
-			if (err instanceof GatewayError) {
-				throw new HttpError(err.status, err.code, err.message);
-			}
-			throw err;
-		}
+		const result = await gateway.sendOfficerDecision(id, {
+			requestId: input.requestId,
+			outcome: input.outcome,
+			...(input.approvedAmountCents !== undefined
+				? { approvedAmountCents: input.approvedAmountCents }
+				: {}),
+			...(input.termMonths !== undefined ? { termMonths: input.termMonths } : {}),
+			...(input.reasonCode !== undefined ? { reasonCode: input.reasonCode } : {}),
+			...(input.notes !== undefined ? { notes: input.notes } : {}),
+			...(research !== undefined ? { research } : {}),
+			officerUserId: me.id,
+		});
+		return c.json(result);
 	});
 
 	async function resolveResearchBundle(
@@ -409,6 +400,24 @@ export function reviewRoutes(deps: ReviewRouteDeps): ServiceApp {
 	return app;
 }
 
+/** Upstream failure policy: 5xx → 502 BAD_GATEWAY (never leak the upstream
+ * status), 4xx passes status/code through. 503 stays reserved for the
+ * feature-level RESEARCH_UNAVAILABLE below. */
+export function mapUpstreamError(
+	status: number,
+	code?: string,
+	message?: string,
+): { status: number; code: string; message: string } {
+	if (status >= 500) {
+		return { status: 502, code: "BAD_GATEWAY", message: "upstream service unavailable" };
+	}
+	return {
+		status,
+		code: code ?? "BAD_GATEWAY",
+		message: message ?? "upstream service unavailable",
+	};
+}
+
 /** Parse an upstream JSON body; non-2xx rethrows with its status/code. */
 async function readUpstream(res: Response): Promise<unknown> {
 	let data: unknown = null;
@@ -417,15 +426,10 @@ async function readUpstream(res: Response): Promise<unknown> {
 	} catch {
 		throw new HttpError(502, "BAD_GATEWAY", "upstream service unavailable");
 	}
-	if (!res.ok) {
-		const err = (data as { error?: { code?: string; message?: string } })?.error;
-		throw new HttpError(
-			res.status,
-			err?.code ?? "BAD_GATEWAY",
-			err?.message ?? "upstream service unavailable",
-		);
-	}
-	return data;
+	if (res.ok) return data;
+	const err = (data as { error?: { code?: string; message?: string } })?.error;
+	const mapped = mapUpstreamError(res.status, err?.code, err?.message);
+	throw new HttpError(mapped.status, mapped.code, mapped.message);
 }
 
 function researchUnavailable(): HttpError {

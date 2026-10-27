@@ -2,7 +2,6 @@
 import { describe, expect, it } from "vitest";
 import {
 	ageInYears,
-	apiErrorSchema,
 	applicationCreateSchema,
 	dscrGte,
 	dtiLte,
@@ -233,19 +232,6 @@ describe("schemas", () => {
 				notes: "  ",
 			}).success,
 		).toBe(false);
-	});
-
-	it("API error envelope validates", () => {
-		expect(
-			apiErrorSchema.safeParse({
-				error: {
-					code: "VALIDATION",
-					message: "bad",
-					fields: { amountCents: ["too low"] },
-				},
-			}).success,
-		).toBe(true);
-		expect(apiErrorSchema.safeParse({ error: { code: "X" } }).success).toBe(false);
 	});
 });
 

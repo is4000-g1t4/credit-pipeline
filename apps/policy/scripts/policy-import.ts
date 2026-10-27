@@ -5,9 +5,10 @@
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 import { createDb } from "@credit/db";
-import { POLICY_ENGINE_STANDARD_HASH, hashCanonical, validateRegistryRefs } from "@credit/core";
+import { POLICY_ENGINE_STANDARD_SECTION_IDS } from "@credit/core";
 import { loadEnv } from "../src/env.js";
 import { parsePolicyMarkdown } from "../src/markdown.js";
+import { assertCorpusIntegrity } from "../src/corpus-integrity.js";
 
 function arg(name: string): string | undefined {
 	const hit = process.argv.find((value) => value.startsWith(`--${name}=`));
@@ -68,19 +69,6 @@ try {
 			(s) => !approved.some((r) => r.policy_key === s.policyKey && r.section_id === s.sectionId),
 		),
 	];
-	const refs = new Set(union.map((s) => `${s.policyKey}#${s.sectionId}`));
-	for (const kind of ["individual", "sme"] as const) {
-		const v = validateRegistryRefs(refs, union, kind, true);
-		if (
-			v.missingRefs.length > 0 ||
-			v.scopeMismatches.length > 0 ||
-			v.missingExceptionRuleIds.length > 0
-		) {
-			throw new Error(
-				`policy import registry validation failed for ${kind}: missing=${v.missingRefs.join(",")} scope=${v.scopeMismatches.join(",")}`,
-			);
-		}
-	}
 	// Standard hash over the union's POL-CR-009 9.0-9.4 bodies.
 	const byKey = new Map<string, string>();
 	for (const row of approved) {
@@ -89,14 +77,12 @@ try {
 	if (fm.policy_key === "POL-CR-009") {
 		for (const section of parsed.sections) byKey.set(section.sectionId, section.body);
 	}
-	const standardBodies = ["9.0", "9.1", "9.2", "9.3", "9.4"].map((sectionId) => {
+	const standardBodies = POLICY_ENGINE_STANDARD_SECTION_IDS.map((sectionId) => {
 		const body = byKey.get(sectionId);
 		if (!body) throw new Error(`policy import: standard section missing: ${sectionId}`);
 		return { sectionId, body };
 	});
-	if (hashCanonical(standardBodies) !== POLICY_ENGINE_STANDARD_HASH) {
-		throw new Error("policy import: POL-CR-009 9.0-9.4 standard hash drift (STANDARD_CHANGED)");
-	}
+	assertCorpusIntegrity(union, standardBodies);
 
 	await sql.begin(async (tx) => {
 		const doc = (

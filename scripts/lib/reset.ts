@@ -11,7 +11,7 @@ import {
 	assertStorageRootsDisjoint,
 	DEMO_RESET_VOLUMES,
 	isDemoHostRoot,
-} from "@credit/core";
+} from "@credit/service-kit";
 import {
 	assertManifest,
 	EXPECTED_MANIFEST_SHA256,

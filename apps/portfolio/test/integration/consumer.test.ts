@@ -67,6 +67,9 @@ beforeAll(async () => {
 
 afterAll(async () => {
 	try {
+		// Stop consuming before deleting so no late insert races the cleanup.
+		await producer?.disconnect();
+		await consumer?.stop();
 		for (const eventId of feedIds) {
 			await db.delete(activityFeed).where(eq(activityFeed.eventId, eventId));
 			await db.delete(processedEvents).where(eq(processedEvents.eventId, eventId));
@@ -74,8 +77,6 @@ afterAll(async () => {
 		if (poisonMarker) {
 			await sql`DELETE FROM dead_letter_events WHERE payload->>'raw' LIKE ${`%${poisonMarker}%`}`;
 		}
-		await producer?.disconnect();
-		await consumer?.stop();
 	} finally {
 		await closeDb();
 		await sql.end();

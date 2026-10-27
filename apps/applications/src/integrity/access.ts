@@ -6,13 +6,11 @@ import { and, eq, isNull } from "drizzle-orm";
 import { applications, caseAccessGrants, type Db } from "@credit/db/applications";
 import { HttpError, type ServiceVariables } from "@credit/service-kit";
 
+export { isUuid } from "../ids.js";
+
 export interface IntegrityActor {
 	id: string;
 	role: "applicant" | "officer" | "service";
-}
-
-export function isUuid(value: string): boolean {
-	return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 export async function requireIntegrityCaseAccess(

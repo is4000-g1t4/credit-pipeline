@@ -9,7 +9,7 @@
 // application (live runs are never touched). Guarded by DEMO_MODE and
 // non-production, like seed/case. Reads still require the review-service
 // research flags — when those are off, E2E keeps its explicit skip.
-import { assertDemoMutable } from "@credit/core";
+import { assertDemoMutable } from "@credit/service-kit";
 import {
 	applications,
 	createDb,
@@ -20,7 +20,7 @@ import {
 import { agentRuns, contextSignals, createDb as createResearchDb } from "@credit/db/research";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import { assertFixtureClock, assertManifest, loadManifest, personaOf } from "./lib/manifest.js";
+import { loadVerifiedManifest, personaOf } from "./lib/manifest.js";
 import { cliFlags, requireEnv } from "./lib/env.js";
 
 export const STUB_MARKER = "demo-context-stub-v1";
@@ -42,9 +42,7 @@ const appIdArg = process.argv.find((a) => a.startsWith("--app-id="))?.slice("--a
 
 const flags = cliFlags();
 assertDemoMutable(flags);
-const manifest = loadManifest();
-assertFixtureClock(manifest.demoAsOf, process.env.DEMO_AS_OF);
-assertManifest(manifest);
+const manifest = loadVerifiedManifest();
 const persona = personaOf(manifest, personaKey);
 
 const { db: appDb, sql: appSql } = createDb(requireEnv("APPLICATIONS_DATABASE_URL"));

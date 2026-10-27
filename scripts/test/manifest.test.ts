@@ -4,9 +4,9 @@
 // 90d/18mo policy), the balance-chain integrity, PDF determinism, and the
 // version/hash gate.
 import { describe, expect, it } from "vitest";
-import { statementFreshness } from "../../src/customer/requirements.js";
-import { sha256Hex } from "../../src/customer/crypto.js";
-import { demoEvidenceBytes, demoPdfForLines } from "../../../../scripts/lib/demo-pdf.js";
+import { statementFreshness } from "../../apps/applications/src/customer/requirements.js";
+import { sha256Hex } from "../../apps/applications/src/customer/crypto.js";
+import { demoEvidenceBytes, demoPdfForLines } from "../lib/demo-pdf.js";
 import {
 	assertFixtureClock,
 	assertManifest,
@@ -15,7 +15,7 @@ import {
 	manifestHash,
 	EXPECTED_MANIFEST_SHA256,
 	EXPECTED_MANIFEST_VERSION,
-} from "../../../../scripts/lib/manifest.js";
+} from "../lib/manifest.js";
 
 const manifest = loadManifest();
 const asOf = demoAsOfDate(manifest);

@@ -6,11 +6,13 @@ import { fileURLToPath } from "node:url";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { createDb } from "@credit/db";
-import { POLICY_ENGINE_STANDARD_HASH, hashCanonical, validateRegistryRefs } from "@credit/core";
+import { POLICY_ENGINE_STANDARD_SECTION_IDS } from "@credit/core";
 import postgres from "postgres";
 import { loadEnv } from "../src/env.js";
 import { parsePolicyMarkdown } from "../src/markdown.js";
-import { createOpenRouterEmbedder } from "../src/openrouter.js";
+import { createOpenRouterEmbedder, openRouterConfigFromEnv } from "../src/openrouter.js";
+import { embeddingText, writeChunks } from "../src/chunks.js";
+import { assertCorpusIntegrity } from "../src/corpus-integrity.js";
 
 const HERE = fileURLToPath(new URL("..", import.meta.url));
 const POLICY_DIR = join(HERE, "policies", "credit");
@@ -69,44 +71,18 @@ const parsedAll = files.map((file) => ({
 			productScope: parsed.frontmatter.product_scope,
 		})),
 	);
-	const refs = new Set(corpus.map((s) => `${s.policyKey}#${s.sectionId}`));
-	for (const kind of ["individual", "sme"] as const) {
-		const v = validateRegistryRefs(refs, corpus, kind, true);
-		if (
-			v.missingRefs.length > 0 ||
-			v.scopeMismatches.length > 0 ||
-			v.missingExceptionRuleIds.length > 0
-		) {
-			throw new Error(
-				`policy seed registry validation failed for ${kind}: missing=${v.missingRefs.join(",")} scope=${v.scopeMismatches.join(",")}`,
-			);
-		}
-	}
 	const std = parsedAll.find((p) => p.parsed.frontmatter.policy_key === "POL-CR-009");
 	if (!std) throw new Error("policy seed: POL-CR-009 is missing from the corpus");
 	const bodies = std.parsed.sections
-		.filter((s) => ["9.0", "9.1", "9.2", "9.3", "9.4"].includes(s.sectionId))
-		.map((s) => ({ sectionId: s.sectionId, body: s.body }))
-		.sort((a, b) => (a.sectionId < b.sectionId ? -1 : 1));
+		.filter((s) => POLICY_ENGINE_STANDARD_SECTION_IDS.includes(s.sectionId))
+		.map((s) => ({ sectionId: s.sectionId, body: s.body }));
 	if (bodies.length !== 5) throw new Error("policy seed: POL-CR-009 must have sections 9.0-9.4");
-	if (hashCanonical(bodies) !== POLICY_ENGINE_STANDARD_HASH) {
-		throw new Error("policy seed: POL-CR-009 9.0-9.4 standard hash drift (STANDARD_CHANGED)");
-	}
+	assertCorpusIntegrity(corpus, bodies);
 }
 
 const { owner, approver } = await demoUserIds();
 const { sql } = createDb(env.databaseUrl);
-const embedder = createOpenRouterEmbedder({
-	apiKey: env.openrouterApiKey,
-	baseUrl: env.openrouterBaseUrl,
-	model: env.agentModel,
-	dimensions: env.embeddingDimensions,
-	embeddingModel: env.embeddingModel,
-	temperature: env.agentTemperature,
-	maxOutputTokens: env.agentMaxOutputTokens,
-	embeddingProviders: env.embeddingProviders ? env.embeddingProviders.split(",") : [],
-	answererProviderOrder: [],
-});
+const embedder = createOpenRouterEmbedder(openRouterConfigFromEnv(env));
 
 try {
 	await sql.begin(async (tx) => {
@@ -168,28 +144,18 @@ try {
 				// Unchanged policy but the active generation is missing chunks
 				// (e.g. a previous seed was interrupted): re-embed this version
 				// only, never the whole corpus.
-				await tx`DELETE FROM policy_chunks WHERE version_id = ${hit.id} AND index_version = ${INDEX_VERSION}`;
 				const vectors = await embedder.embed(
-					parsed.sections.map((section) => `${fm.title} > ${section.heading} > ${section.body}`),
+					parsed.sections.map((section) => embeddingText({ title: fm.title, ...section })),
 				);
-				for (const [index, section] of parsed.sections.entries()) {
-					const vector = vectors[index];
-					if (!vector)
-						throw new Error(`missing embedding for ${fm.policy_key}#${section.sectionId}`);
-					await tx`
-						INSERT INTO policy_chunks (
-							index_version, version_id, section_id, chunk_index, heading, text,
-							char_start, char_end, token_count, content_hash, chunking_version,
-							embedding, embedding_model, embedding_dimensions, embedding_version
-						) VALUES (
-							${INDEX_VERSION}, ${hit.id}, ${section.sectionId}, 0,
-							${section.heading}, ${section.body}, ${section.charStart}, ${section.charEnd},
-							${Math.max(1, Math.ceil(section.body.length / 4))}, ${section.contentHash},
-							${CHUNKING_VERSION}, ${JSON.stringify(vector)}::vector, ${env.embeddingModel},
-							${env.embeddingDimensions}, ${`${env.embeddingModel}:${env.embeddingDimensions}:${CHUNKING_VERSION}`}
-						)
-					`;
-				}
+				await writeChunks(tx, {
+					indexVersion: INDEX_VERSION,
+					versionId: hit.id,
+					sections: parsed.sections,
+					vectors,
+					embeddingModel: env.embeddingModel,
+					embeddingDimensions: env.embeddingDimensions,
+					chunkingVersion: CHUNKING_VERSION,
+				});
 				console.log(`seed: ${fm.policy_key} ${fm.version} chunks re-embedded`);
 				continue;
 			}
@@ -218,12 +184,9 @@ try {
 				  AND (effective_to IS NULL OR effective_to >= ${fm.effective_from}::date)
 			`;
 			const vectors = await embedder.embed(
-				parsed.sections.map((section) => `${fm.title} > ${section.heading} > ${section.body}`),
+				parsed.sections.map((section) => embeddingText({ title: fm.title, ...section })),
 			);
-			await tx`DELETE FROM policy_chunks WHERE version_id = ${version.id} AND index_version = ${INDEX_VERSION}`;
-			for (const [index, section] of parsed.sections.entries()) {
-				const vector = vectors[index];
-				if (!vector) throw new Error(`missing embedding for ${fm.policy_key}#${section.sectionId}`);
+			for (const section of parsed.sections) {
 				await tx`
 					INSERT INTO policy_sections (
 						version_id, section_id, heading, body, order_index,
@@ -233,20 +196,16 @@ try {
 						${section.orderIndex}, ${section.charStart}, ${section.charEnd}, ${section.contentHash}
 					)
 				`;
-				await tx`
-					INSERT INTO policy_chunks (
-						index_version, version_id, section_id, chunk_index, heading, text,
-						char_start, char_end, token_count, content_hash, chunking_version,
-						embedding, embedding_model, embedding_dimensions, embedding_version
-					) VALUES (
-						${INDEX_VERSION}, ${version.id}, ${section.sectionId}, 0,
-						${section.heading}, ${section.body}, ${section.charStart}, ${section.charEnd},
-						${Math.max(1, Math.ceil(section.body.length / 4))}, ${section.contentHash},
-						${CHUNKING_VERSION}, ${JSON.stringify(vector)}::vector, ${env.embeddingModel},
-						${env.embeddingDimensions}, ${`${env.embeddingModel}:${env.embeddingDimensions}:${CHUNKING_VERSION}`}
-					)
-				`;
 			}
+			await writeChunks(tx, {
+				indexVersion: INDEX_VERSION,
+				versionId: version.id,
+				sections: parsed.sections,
+				vectors,
+				embeddingModel: env.embeddingModel,
+				embeddingDimensions: env.embeddingDimensions,
+				chunkingVersion: CHUNKING_VERSION,
+			});
 			await tx`
 				INSERT INTO policy_acl (policy_id, principal_type, principal, permission, granted_by)
 				VALUES

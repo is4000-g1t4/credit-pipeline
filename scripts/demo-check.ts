@@ -3,7 +3,9 @@
 // global setup); fails fast with a clear message if /api/health is not ok.
 // Drives the three demo scenarios plus monitoring/pay, prints a PASS/FAIL
 // summary with references, exits non-zero on any failure.
-const API_BASE = process.env.API_BASE ?? "http://127.0.0.1:3001";
+import { apiBase, loginCookie, LoginError } from "./lib/env.js";
+
+const API_BASE = apiBase();
 
 class CheckError extends Error {}
 
@@ -11,15 +13,11 @@ class Client {
 	private cookie = "";
 
 	async login(email: string): Promise<void> {
-		const res = await fetch(`${API_BASE}/api/auth/login`, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ email, password: "demo1234" }),
-		});
-		if (!res.ok) throw new CheckError(`login ${email} failed: HTTP ${res.status}`);
-		const session = (res.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
-		if (!session.startsWith("session=")) throw new CheckError(`login ${email}: no session cookie`);
-		this.cookie = session;
+		try {
+			this.cookie = await loginCookie(email, "demo1234", API_BASE);
+		} catch (err) {
+			throw new CheckError(err instanceof LoginError ? err.message : String(err));
+		}
 	}
 
 	async get<T>(path: string): Promise<T> {

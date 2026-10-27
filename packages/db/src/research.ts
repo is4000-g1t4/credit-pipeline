@@ -15,11 +15,9 @@ import {
 	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
+import { createdAtColumn } from "./shared.js";
 
 export { createDb, withTx, type Db, type Tx } from "./client.js";
-
-const createdAt = () =>
-	timestamp("created_at", { withTimezone: true, mode: "date" }).defaultNow().notNull();
 
 const ts = (name: string) => timestamp(name, { withTimezone: true, mode: "date" });
 
@@ -128,7 +126,7 @@ export const agentRuns = pgTable(
 		finishedAt: ts("finished_at"),
 		timeoutAt: ts("timeout_at").notNull(),
 		heartbeatAt: ts("heartbeat_at"),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 		// T18 context stage (same run row, separate stage fields): validated
 		// brief/usage detail, error code, lease/heartbeat for the reaper,
 		// prompt/model provenance, and the stage token/version. Retry inserts
@@ -228,7 +226,7 @@ export const agentFindings = pgTable(
 		confidence: findingConfidence("confidence").notNull().default("low"),
 		confidenceBasis: jsonb("confidence_basis").notNull(),
 		entityMatch: jsonb("entity_match").notNull(),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 	},
 	(t) => [index("agent_findings_run_idx").on(t.runId)],
 );
@@ -259,7 +257,7 @@ export const agentFindingReviews = pgTable(
 		officerId: uuid("officer_id").notNull(),
 		action: findingReviewAction("action").notNull(),
 		note: text("note"),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 	},
 	(t) => [index("agent_finding_reviews_finding_idx").on(t.findingId, t.createdAt)],
 );
@@ -299,7 +297,7 @@ export const researchAutoEvents = pgTable(
 		outcome: text("outcome").notNull(),
 		runId: uuid("run_id"),
 		reason: text("reason"),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 	},
 	(t) => [
 		uniqueIndex("research_auto_events_application_event_uniq").on(
@@ -347,7 +345,7 @@ export const researchAuditLog = pgTable(
 		actorRole: text("actor_role").notNull(),
 		action: text("action").notNull(),
 		metadata: jsonb("metadata"),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 	},
 	(t) => [
 		index("research_audit_log_application_time_idx").on(t.applicationId, t.createdAt),
@@ -383,7 +381,7 @@ export const contextSignals = pgTable(
 		explanation: text("explanation"),
 		evidence: jsonb("evidence").notNull(),
 		supersededAt: ts("superseded_at"),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 	},
 	(t) => [
 		uniqueIndex("context_signals_run_stage_scope_type_period_metric_uniq").on(
@@ -418,7 +416,7 @@ export const contextSignalReviews = pgTable(
 		officerId: uuid("officer_id").notNull(),
 		action: findingReviewAction("action").notNull(),
 		note: text("note"),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 	},
 	(t) => [index("context_signal_reviews_signal_idx").on(t.signalId, t.createdAt)],
 );

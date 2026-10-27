@@ -11,7 +11,7 @@ For ports, base URLs, and secrets, see `../reference/configuration.md`. For requ
 - JSON only. Send `content-type: application/json` on bodies.
 - Error envelope for every 4xx/5xx: `{ "error": { "code", "message", "fields?" } }`. `fields` maps a field path to messages. No stack traces.
 - Session: cookie `session`, HMAC-signed, 7-day expiry, `HttpOnly`, `SameSite=Lax`, `Path=/`. The `Secure` flag applies in production only. There is no signup route.
-- Body limit: 100,000 bytes on `/api/*`. Larger bodies return 413 `BODY_TOO_LARGE`.
+- Body limit: 100,000 bytes (`JSON_BODY_LIMIT` in `packages/service-kit/src/service.ts`) on `/api/*`. Larger bodies return 413 `BODY_TOO_LARGE`. The only exception is the `POST /api/applications/:id/documents` upload route, which allows `MAX_UPLOAD_BYTES` / `DOCUMENT_UPLOAD_MAX_BYTES` (11,000,000 bytes multipart envelope for the 10 MB `DOCUMENT_MAX_BYTES` file cap).
 - Rate limits are in-memory per gateway process: login 10/min per email plus 30/min per IP (the web proxy shares one peer IP, so the per-email cap is the real guard); application submit 5/min per user. Excess returns 429 `RATE_LIMITED`.
 - In production (`NODE_ENV=production`), non-GET/HEAD/OPTIONS requests need `Origin` exactly equal to `WEB_ORIGIN`. Other origins return 403 `ORIGIN_FORBIDDEN`.
 - Responses carry `x-request-id`. Send one to correlate logs; the gateway generates one when missing.
@@ -777,7 +777,7 @@ Response `200`:
 | `INVALID_JSON`                | 400      | Body is not JSON                                                                                                                                                                             |
 | `MISSING_IDEMPOTENCY_KEY`     | 400      | Submit without `Idempotency-Key`                                                                                                                                                             |
 | `INVALID_CURSOR`              | 400      | Cursor is not `<ISO-8601>,<uuid>`                                                                                                                                                            |
-| `BODY_TOO_LARGE`              | 413      | Body over 100,000 bytes                                                                                                                                                                      |
+| `BODY_TOO_LARGE`              | 413      | Body over 100,000 bytes (11,000,000 on the document-upload route)                                                                                                                            |
 | `RATE_LIMITED`                | 429      | Login or submit limit hit                                                                                                                                                                    |
 | `IDEMPOTENCY_CONFLICT`        | 409      | Key reused with a different payload                                                                                                                                                          |
 | `TOO_MANY_APPLICATIONS`       | 409      | 3 non-terminal applications already                                                                                                                                                          |

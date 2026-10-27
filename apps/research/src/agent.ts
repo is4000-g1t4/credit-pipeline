@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { Agent, OpenAIChatCompletionsModel, Runner, tool } from "@openai/agents";
 import OpenAI from "openai";
 import { z } from "zod";
-import { readRunUsage, type AgentsOpenAIClient } from "./openai-agents.js";
+import { readRunUsage, type AgentsOpenAIClient } from "@credit/agent-observability/openai-agents";
 import type { ResearchEnv } from "./env.js";
 import { getObservability, type Observability } from "./observability.js";
 import { buildUserPrompt, AGENT_VERSION, SYSTEM_TEMPLATE, type PromptCaseFacts } from "./prompt.js";

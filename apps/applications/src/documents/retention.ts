@@ -27,14 +27,16 @@ import {
 	generatedArtifacts,
 	withTx,
 	type Db,
+	type Tx,
 } from "@credit/db/applications";
 import { writeAudit, HttpError, type Logger } from "@credit/service-kit";
 import { and, eq, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { lockApplication } from "./access.js";
-import { sweepDocumentOrphans, type SweepResult } from "./service.js";
+import { sweepDocumentOrphans, type SweepResult } from "./orphan-sweep.js";
 import { deleteBlob, purgeBlob } from "./storage.js";
 import { runCustomerRetention, type CustomerRetentionResult } from "../customer/retention.js";
 import { tombstoneDraftBrief } from "../integrity/store.js";
+import { hasActiveReviewForApplication } from "../integrity/fraud.js";
 
 export interface RetentionResult {
 	checked: number;
@@ -70,15 +72,14 @@ export function retentionBlockedBy(
 	return holds.some((h) => h.documentFileId === null || h.documentFileId === fileId);
 }
 
-async function tombstoneFile(
-	tx: Parameters<Parameters<Db["transaction"]>[0]>[0],
-	file: FileRow,
-	now: Date,
-): Promise<string | null> {
+/** Shared finding→chase→crosscheck redaction (also used by retry-ocr):
+ * deletes finding rows + chase links, nulls chase bodies (redacted_at),
+ * deletes findings, and marks affected crosschecks `redacted`. */
+export async function redactFileFindings(tx: Tx, fileId: string, now: Date): Promise<void> {
 	const findings = await tx
 		.select({ id: documentFindings.id, crosscheckId: documentFindings.crosscheckId })
 		.from(documentFindings)
-		.where(eq(documentFindings.documentFileId, file.id));
+		.where(eq(documentFindings.documentFileId, fileId));
 	const findingIds = findings.map((f) => f.id);
 	let chaseIds: string[] = [];
 	if (findingIds.length > 0) {
@@ -98,7 +99,7 @@ async function tombstoneFile(
 			.where(inArray(chaseRequests.id, chaseIds));
 	}
 	if (findingIds.length > 0) {
-		await tx.delete(documentFindings).where(eq(documentFindings.documentFileId, file.id));
+		await tx.delete(documentFindings).where(eq(documentFindings.documentFileId, fileId));
 	}
 	const crosscheckIds = [...new Set(findings.map((f) => f.crosscheckId))];
 	if (crosscheckIds.length > 0) {
@@ -107,6 +108,14 @@ async function tombstoneFile(
 			.set({ status: "redacted", findingCount: 0 })
 			.where(inArray(documentCrosschecks.id, crosscheckIds));
 	}
+}
+
+async function tombstoneFile(
+	tx: Parameters<Parameters<Db["transaction"]>[0]>[0],
+	file: FileRow,
+	now: Date,
+): Promise<string | null> {
+	await redactFileFindings(tx as Tx, file.id, now);
 	await tx.delete(documentPages).where(eq(documentPages.documentFileId, file.id));
 	// US-INT retention: AI candidate quotes, deterministic duplicate metadata,
 	// and any draft brief that cited this file must not outlive the evidence.
@@ -271,17 +280,7 @@ export async function runDocumentRetention(deps: RetentionDeps): Promise<Retenti
 				const fresh = rows[0];
 				if (!fresh || fresh.status === "deleted" || fresh.retentionUntil > now) continue;
 				if (deps.fraudReviewEnabled) {
-					const [activeReview] = await tx
-						.select({ id: fraudReviews.id })
-						.from(fraudReviews)
-						.where(
-							and(
-								eq(fraudReviews.applicationId, applicationId),
-								inArray(fraudReviews.status, ["open", "needs_info"]),
-							),
-						)
-						.limit(1);
-					if (activeReview) {
+					if (await hasActiveReviewForApplication(tx as Tx, applicationId)) {
 						result.skippedHolds++;
 						continue;
 					}

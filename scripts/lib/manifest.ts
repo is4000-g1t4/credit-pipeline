@@ -142,6 +142,23 @@ export function assertManifest(manifest: DemoManifest): { version: number; hash:
 	return { version: manifest.version, hash };
 }
 
+/** Load + clock + hash gate in one step (replaces the `loadManifest` →
+ * `assertFixtureClock` → `assertManifest` preamble every `demo:*` CLI
+ * repeats). When `expectedVersion` is set (demo:seed's
+ * `DEMO_SEED_VERSION`), the version check runs first, preserving the
+ * original error precedence. */
+export function loadVerifiedManifest(expectedVersion?: string): DemoManifest {
+	const manifest = loadManifest();
+	if (expectedVersion !== undefined && expectedVersion !== String(manifest.version)) {
+		throw new Error(
+			`DEMO_SEED_VERSION ${expectedVersion} != manifest version ${manifest.version}`,
+		);
+	}
+	assertFixtureClock(manifest.demoAsOf, process.env.DEMO_AS_OF);
+	assertManifest(manifest);
+	return manifest;
+}
+
 export function personaOf(manifest: DemoManifest, key: string): ManifestPersona {
 	const persona = manifest.personas[key];
 	if (!persona) throw new Error(`unknown demo persona: ${key}`);

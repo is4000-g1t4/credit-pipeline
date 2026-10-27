@@ -14,14 +14,18 @@ import {
 	documentPages,
 	fraudReviews,
 	generatedArtifacts,
-	withTx,
 	type Db,
 	type Tx,
 } from "@credit/db/applications";
 import { and, desc, eq, gt, inArray, isNull, ne } from "drizzle-orm";
-import { codePointSlice, hashCanonical, type DocumentIntegrityBriefContent } from "@credit/core";
+import {
+	codePointSlice,
+	type CitationRecord,
+	type DocumentIntegrityBriefContent,
+} from "@credit/core";
 import { HttpError, writeAudit } from "@credit/service-kit";
 import { memoAgentTraceSchema, type MemoAgentTrace } from "../assist/memo-trace.js";
+import { createArtifactInTx } from "../assist/artifacts.js";
 import { lockApplication } from "../documents/access.js";
 import { countDuplicateDocuments } from "./duplicates.js";
 import { buildIntegritySignals } from "./signals.js";
@@ -613,9 +617,9 @@ export interface InsertBriefArtifactInput {
 	now?: Date;
 }
 
-/** Tx-aware brief writer. Does not reuse assist/createArtifact: that opens its
- * own transaction and audits feature "assist". Supersedes a prior draft brief
- * for the same case so the active draft stays unique. */
+/** Tx-aware brief writer. Reuses the assist artifact writer under the
+ * caller's application lock (lock-before-supersede, same as before);
+ * audits stay on feature "document_integrity". */
 export async function insertBriefArtifact(
 	tx: Tx,
 	input: InsertBriefArtifactInput,
@@ -626,88 +630,30 @@ export async function insertBriefArtifact(
 	}
 	const now = input.now ?? new Date();
 	await lockApplication(tx, input.applicationId, 5_000);
-	const [versionRow] = await tx
-		.select({ version: generatedArtifacts.version })
-		.from(generatedArtifacts)
-		.where(
-			and(
-				eq(generatedArtifacts.applicationId, input.applicationId),
-				eq(generatedArtifacts.type, "document_integrity_brief"),
-			),
-		)
-		.orderBy(desc(generatedArtifacts.version))
-		.limit(1);
-	const version = (versionRow?.version ?? 0) + 1;
-	const priorDrafts = await tx
-		.select({ id: generatedArtifacts.id })
-		.from(generatedArtifacts)
-		.where(
-			and(
-				eq(generatedArtifacts.applicationId, input.applicationId),
-				eq(generatedArtifacts.type, "document_integrity_brief"),
-				eq(generatedArtifacts.status, "draft"),
-			),
-		)
-		.for("update");
-	for (const draft of priorDrafts) {
-		await tx
-			.update(generatedArtifacts)
-			.set({ status: "superseded", supersededAt: now })
-			.where(eq(generatedArtifacts.id, draft.id));
-		await writeAudit(tx, {
-			applicationId: input.applicationId,
-			actor: input.auditActor,
-			action: "artifact.superseded",
-			entity: "generated_artifact",
-			payload: {
-				feature: "document_integrity",
-				artifactId: draft.id,
-				applicationId: input.applicationId,
-				type: "document_integrity_brief",
-				supersededByVersion: version,
-			},
-		});
-	}
-	const [row] = await tx
-		.insert(generatedArtifacts)
-		.values({
-			applicationId: input.applicationId,
-			type: "document_integrity_brief",
-			version,
-			revision: 1,
-			status: "draft",
-			documentDerived: true,
-			content: input.content,
-			citations: input.citations,
-			contentHash: hashCanonical(input.content),
-			agentTrace: parsedTrace.data,
-			evidenceHash: input.evidenceHash,
-			model: input.model,
-			promptVersion: input.promptVersion,
-			createdBy: input.createdBy,
-			retentionUntil: new Date(now.getTime() + input.retentionDays * 86_400_000),
-		})
-		.returning({ id: generatedArtifacts.id });
-	if (!row) throw new HttpError(500, "ARTIFACT_CREATE_FAILED", "artifact insert returned no row");
-	await writeAudit(tx, {
+	const artifact = await createArtifactInTx(tx, {
 		applicationId: input.applicationId,
-		actor: input.auditActor,
-		action: "artifact.created",
-		entity: "generated_artifact",
-		payload: {
-			feature: "document_integrity",
-			artifactId: row.id,
-			applicationId: input.applicationId,
-			type: "document_integrity_brief",
-			version,
-			model: input.model,
-			promptVersion: input.promptVersion,
+		type: "document_integrity_brief",
+		content: input.content,
+		citations: input.citations as CitationRecord[],
+		documentDerived: true,
+		createdBy: input.createdBy,
+		actorRole: "system",
+		auditActor: input.auditActor,
+		model: input.model,
+		promptVersion: input.promptVersion,
+		retentionDays: input.retentionDays,
+		supersedeDraft: true,
+		agentTrace: parsedTrace.data,
+		evidenceHash: input.evidenceHash,
+		auditFeature: "document_integrity",
+		auditMetadata: {
 			agentVersion: parsedTrace.data.agentVersion,
 			toolCallCount: parsedTrace.data.toolCalls.length,
 			citationCount: input.citations.length,
 		},
+		now,
 	});
-	return row.id;
+	return artifact.id;
 }
 
 export async function getBriefArtifact(
@@ -772,11 +718,6 @@ export async function tombstoneDraftBrief(
 		entity: "generated_artifact",
 		payload: { feature: "document_integrity", artifactId, applicationId },
 	});
-}
-
-/** Compatibility helper for callers that already have a Db. */
-export async function withIntegrityTx<T>(db: Db, fn: (tx: Tx) => Promise<T>): Promise<T> {
-	return withTx(db, fn);
 }
 
 export type { RunRow };

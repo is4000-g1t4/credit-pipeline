@@ -5,6 +5,7 @@
 // plain uuids — never cross-database foreign keys.
 import { sql } from "drizzle-orm";
 import {
+	bigint,
 	bigserial,
 	index,
 	integer,
@@ -17,14 +18,18 @@ import {
 // Client utilities re-exported so service code imports one subpath.
 export { createDb, withTx, type Db, type Tx } from "./client.js";
 
-const createdAt = () =>
+export const createdAtColumn = () =>
 	timestamp("created_at", { withTimezone: true, mode: "date" }).defaultNow().notNull();
 
-const updatedAt = () =>
+export const updatedAtColumn = () =>
 	timestamp("updated_at", { withTimezone: true, mode: "date" })
 		.defaultNow()
 		.$onUpdate(() => new Date())
 		.notNull();
+
+/** Integer cents — every money column in the repo uses this scale. */
+export const moneyColumn = (name: string) => bigint(name, { mode: "number" }).notNull();
+export const moneyNullableColumn = (name: string) => bigint(name, { mode: "number" });
 
 export const auditLog = pgTable("audit_log", {
 	id: uuid("id").defaultRandom().primaryKey(),
@@ -34,7 +39,7 @@ export const auditLog = pgTable("audit_log", {
 	action: text("action").notNull(),
 	entity: text("entity").notNull(),
 	payload: jsonb("payload").notNull(),
-	createdAt: createdAt(),
+	createdAt: createdAtColumn(),
 });
 
 export const outboxEvents = pgTable(
@@ -56,8 +61,8 @@ export const outboxEvents = pgTable(
 			withTimezone: true,
 			mode: "date",
 		}),
-		createdAt: createdAt(),
-		updatedAt: updatedAt(),
+		createdAt: createdAtColumn(),
+		updatedAt: updatedAtColumn(),
 	},
 	(t) => [
 		index("outbox_events_unpublished_idx")

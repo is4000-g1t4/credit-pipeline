@@ -3,9 +3,9 @@
 // (locks, caps, confirmations, audits) with no workflow/outbox, attaches
 // initial fresh evidence via the real reuse path, and seeds stale app
 // copies for BreadTalk so the checklist blocks. Never touches a touched draft.
-import { assertDemoMutable } from "@credit/core";
+import { assertDemoMutable } from "@credit/service-kit";
 import { createDb } from "@credit/db/applications";
-import { assertFixtureClock, assertManifest, loadManifest } from "./lib/manifest.js";
+import { loadVerifiedManifest } from "./lib/manifest.js";
 import {
 	cliAppDocConfig,
 	cliCustomerConfig,
@@ -20,9 +20,7 @@ if (!persona) throw new Error("usage: bun scripts/demo-case.ts --persona=<key>")
 
 const flags = cliFlags();
 assertDemoMutable(flags);
-const manifest = loadManifest();
-assertFixtureClock(manifest.demoAsOf, process.env.DEMO_AS_OF);
-assertManifest(manifest);
+const manifest = loadVerifiedManifest();
 
 const auth = createDb(requireEnv("AUTH_DATABASE_URL"));
 const { db: appDb, sql } = createDb(requireEnv("APPLICATIONS_DATABASE_URL"));

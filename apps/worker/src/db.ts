@@ -19,11 +19,11 @@ export function getLoansDb(): ReturnType<typeof createDb> {
 
 export async function closeDb(): Promise<void> {
 	if (applicationsCached) {
-		await applicationsCached.sql.end();
+		await applicationsCached.sql.end({ timeout: 5 });
 		applicationsCached = null;
 	}
 	if (loansCached) {
-		await loansCached.sql.end();
+		await loansCached.sql.end({ timeout: 5 });
 		loansCached = null;
 	}
 }

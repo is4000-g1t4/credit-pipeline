@@ -21,6 +21,7 @@ import {
 	type AdverseActionLetterContent,
 	type AdverseJurisdictionProfile,
 	type ArtifactType,
+	type CitationRecord,
 	type ValidationIssue,
 } from "@credit/core";
 import {
@@ -504,6 +505,156 @@ export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
 		);
 	};
 
+	/** Shared policy-memo final gate (PATCH + approve): rebuilds the
+	 * deterministic evidence, 503s when the source is unavailable, and
+	 * revalidates the caller-supplied prose against the recomposed block.
+	 * Rule-mismatch throws; content-validation failures return the exact
+	 * 422 body the caller responds with. */
+	const rebuildPolicyContext = async (
+		kase: Awaited<ReturnType<typeof loadCase>>,
+		actor: AssistActor,
+		artifact: Awaited<ReturnType<typeof loadArtifact>>,
+	) => {
+		const rebuilt = await rebuildPolicyExceptionEvidence(kase, actor, artifact);
+		if (rebuilt.sourceStatus === "unavailable") {
+			throw new HttpError(
+				503,
+				"POLICY_SOURCE_UNAVAILABLE",
+				"the policy source is unavailable for revalidation",
+			);
+		}
+		return rebuilt;
+	};
+
+	const revalidatePolicyMemo = (
+		rebuilt: Awaited<ReturnType<typeof rebuildPolicyContext>>,
+		prose: Parameters<typeof composePolicyMemoContent>[0],
+		rules: unknown,
+		regularisationPlanMonths: unknown,
+	):
+		| {
+				ok: true;
+				recomposed: ReturnType<typeof composePolicyMemoContent>;
+				citations: CitationRecord[];
+				content: unknown;
+		  }
+		| { ok: false; body: unknown } => {
+		const recomposed = composePolicyMemoContent(prose, rebuilt.context, rebuilt.bundle);
+		if (
+			hashCanonical(rules) !== hashCanonical(recomposed.rules) ||
+			hashCanonical(regularisationPlanMonths) !== hashCanonical(recomposed.regularisationPlanMonths)
+		) {
+			throw new HttpError(
+				422,
+				"POLICY_EXCEPTION_INVALID",
+				"policy memo rules must match the deterministic block",
+			);
+		}
+		const coreValidation = validateGeneratedText({
+			artifactType: "policy_exception_memo",
+			content: recomposed,
+			evidence: rebuilt.bundle,
+		});
+		if (!coreValidation.ok) return { ok: false, body: validationFailure(coreValidation.issues) };
+		const memoValidation = validatePolicyMemoDraft(
+			recomposed,
+			rebuilt.context,
+			rebuilt.catalog,
+			rebuilt.bundle,
+		);
+		if (!memoValidation.ok) {
+			return {
+				ok: false,
+				body: {
+					error: {
+						code: "POLICY_EXCEPTION_INVALID",
+						message: "policy memo failed policy validation",
+						issues: memoValidation.issues.slice(0, 100),
+					},
+				},
+			};
+		}
+		return {
+			ok: true,
+			recomposed,
+			citations: coreValidation.citations,
+			content: memoValidation.content ?? recomposed,
+		};
+	};
+
+	/** Shared adverse-letter final gate (PATCH + approve): validates stored
+	 * or submitted content against the jurisdiction profile and the
+	 * decision binding, auditing every block. Returns the exact 422 body
+	 * the caller responds with, or the validated content. */
+	const validateAdverseArtifact = async (input: {
+		artifact: Awaited<ReturnType<typeof loadArtifact>>;
+		actor: AssistActor;
+		action: "edit" | "approve";
+		profile: AdverseJurisdictionProfile;
+		decision: NonNullable<Awaited<ReturnType<typeof loadDecisionRow>>>;
+		score: Awaited<ReturnType<typeof loadScoreRow>>;
+		application: Awaited<ReturnType<typeof loadCase>>["application"];
+		evidence: Awaited<ReturnType<typeof assembleFor>>;
+		content: unknown;
+	}): Promise<
+		| {
+				ok: true;
+				content: AdverseActionLetterContent;
+				validation: Extract<ReturnType<typeof validateGeneratedText>, { ok: true }>;
+		  }
+		| { ok: false; body: unknown }
+	> => {
+		const validation = validateGeneratedText({
+			artifactType: input.artifact.type,
+			content: input.content,
+			evidence: input.evidence,
+		});
+		if (!validation.ok) {
+			await auditAdverseBlocked(
+				input.artifact,
+				input.actor,
+				input.action,
+				validation.issues.map((issue) => issue.code),
+			);
+			return { ok: false, body: validationFailure(validation.issues) };
+		}
+		const content = validation.content as AdverseActionLetterContent;
+		const profileValidation = validateAdverseLetterContent(content, input.profile);
+		if (!profileValidation.ok) {
+			await auditAdverseBlocked(
+				input.artifact,
+				input.actor,
+				input.action,
+				profileValidation.issues.map((issue) => issue.code),
+			);
+			return { ok: false, body: adverseProfileFailure(profileValidation.issues) };
+		}
+		const binding = validateAdverseLetterDecisionBinding({
+			content,
+			applicationId: input.application.id,
+			decisionId: input.decision.id,
+			decisionReasonCodes: decisionReasonCodes(input.decision),
+			profile: input.profile,
+			contactPath: config.adverseContactPath,
+			facts: buildAdverseReasonFacts(
+				input.application,
+				input.decision,
+				input.score,
+				input.evidence,
+			),
+		});
+		if (!binding.ok) {
+			await auditAdverseBlocked(
+				input.artifact,
+				input.actor,
+				input.action,
+				binding.issues.map((issue) => issue.code),
+			);
+			return { ok: false, body: adverseDecisionFailure(binding.issues) };
+		}
+		return { ok: true, content, validation };
+	};
+
 	app.get("/api/assist/cases/:id/evidence", requireOfficer, async (c) => {
 		const applicationId = caseIdParam(c.req.param("id"));
 		const actor = actorOf(c.var.user);
@@ -948,14 +1099,7 @@ export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
 		if (!parsed.success) throw invalidBody(parsed.error);
 		if (artifact.type === "policy_exception_memo") {
 			requireMemoableCase(kase);
-			const rebuilt = await rebuildPolicyExceptionEvidence(kase, actor, artifact);
-			if (rebuilt.sourceStatus === "unavailable") {
-				throw new HttpError(
-					503,
-					"POLICY_SOURCE_UNAVAILABLE",
-					"the policy source is unavailable for revalidation",
-				);
-			}
+			const rebuilt = await rebuildPolicyContext(kase, actor, artifact);
 			const candidate = policyExceptionMemoContentSchema.safeParse(parsed.data.content);
 			if (!candidate.success) {
 				throw new HttpError(
@@ -965,54 +1109,24 @@ export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
 					{ issues: candidate.error.issues.map((issue) => issue.code) },
 				);
 			}
-			const prose = {
-				title: candidate.data.title,
-				sections: candidate.data.sections,
-				openItems: candidate.data.openItems,
-			};
-			const recomposed = composePolicyMemoContent(prose, rebuilt.context, rebuilt.bundle);
-			if (
-				hashCanonical(candidate.data.rules) !== hashCanonical(recomposed.rules) ||
-				hashCanonical(candidate.data.regularisationPlanMonths) !==
-					hashCanonical(recomposed.regularisationPlanMonths)
-			) {
-				throw new HttpError(
-					422,
-					"POLICY_EXCEPTION_INVALID",
-					"policy memo rules must match the deterministic block",
-				);
-			}
-			const coreValidation = validateGeneratedText({
-				artifactType: "policy_exception_memo",
-				content: recomposed,
-				evidence: rebuilt.bundle,
-			});
-			if (!coreValidation.ok) return c.json(validationFailure(coreValidation.issues), 422);
-			const memoValidation = validatePolicyMemoDraft(
-				recomposed,
-				rebuilt.context,
-				rebuilt.catalog,
-				rebuilt.bundle,
+			const revalidated = revalidatePolicyMemo(
+				rebuilt,
+				{
+					title: candidate.data.title,
+					sections: candidate.data.sections,
+					openItems: candidate.data.openItems,
+				},
+				candidate.data.rules,
+				candidate.data.regularisationPlanMonths,
 			);
-			if (!memoValidation.ok) {
-				return c.json(
-					{
-						error: {
-							code: "POLICY_EXCEPTION_INVALID",
-							message: "policy memo failed policy validation",
-							issues: memoValidation.issues.slice(0, 100),
-						},
-					},
-					422,
-				);
-			}
+			if (!revalidated.ok) return c.json(revalidated.body, 422);
 			const result = await updateArtifact(db, {
 				id: artifact.id,
 				actor: actor.id,
 				actorRole: actor.role,
 				expectedRevision: parsed.data.expectedRevision,
-				content: memoValidation.content ?? recomposed,
-				citations: coreValidation.citations,
+				content: revalidated.content,
+				citations: revalidated.citations,
 				documentDerived: rebuilt.bundle.items.some((item) => item.sourceType === "document"),
 				model: artifact.model,
 				promptVersion: artifact.promptVersion,
@@ -1047,59 +1161,31 @@ export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
 		}
 		const adverseDecision = adverseContext?.decision ?? null;
 		const evidence = await assembleFor(kase, actor);
-		const validation = validateGeneratedText({
-			artifactType: artifact.type,
-			content: parsed.data.content,
-			evidence,
-		});
-		if (!validation.ok) {
-			if (adverseContext !== null) {
-				await auditAdverseBlocked(
-					artifact,
-					actor,
-					"edit",
-					validation.issues.map((issue) => issue.code),
-				);
-			}
-			return c.json(validationFailure(validation.issues), 422);
-		}
 		let adverseContent: AdverseActionLetterContent | null = null;
+		let validation: Extract<ReturnType<typeof validateGeneratedText>, { ok: true }>;
 		if (adverseContext !== null && adverseDecision !== null) {
-			const content = validation.content as AdverseActionLetterContent;
-			const profileValidation = validateAdverseLetterContent(content, adverseContext.profile);
-			if (!profileValidation.ok) {
-				await auditAdverseBlocked(
-					artifact,
-					actor,
-					"edit",
-					profileValidation.issues.map((issue) => issue.code),
-				);
-				return c.json(adverseProfileFailure(profileValidation.issues), 422);
-			}
-			const binding = validateAdverseLetterDecisionBinding({
-				content,
-				applicationId: kase.application.id,
-				decisionId: adverseDecision.id,
-				decisionReasonCodes: decisionReasonCodes(adverseDecision),
+			const checked = await validateAdverseArtifact({
+				artifact,
+				actor,
+				action: "edit",
 				profile: adverseContext.profile,
-				contactPath: config.adverseContactPath,
-				facts: buildAdverseReasonFacts(
-					kase.application,
-					adverseDecision,
-					adverseContext.score,
-					evidence,
-				),
+				decision: adverseDecision,
+				score: adverseContext.score,
+				application: kase.application,
+				evidence,
+				content: parsed.data.content,
 			});
-			if (!binding.ok) {
-				await auditAdverseBlocked(
-					artifact,
-					actor,
-					"edit",
-					binding.issues.map((issue) => issue.code),
-				);
-				return c.json(adverseDecisionFailure(binding.issues), 422);
-			}
-			adverseContent = content;
+			if (!checked.ok) return c.json(checked.body, 422);
+			adverseContent = checked.content;
+			validation = checked.validation;
+		} else {
+			const generic = validateGeneratedText({
+				artifactType: artifact.type,
+				content: parsed.data.content,
+				evidence,
+			});
+			if (!generic.ok) return c.json(validationFailure(generic.issues), 422);
+			validation = generic;
 		}
 		const result = await updateArtifact(db, {
 			id: artifact.id,
@@ -1160,60 +1246,19 @@ export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
 			if (artifact.revision !== parsed.data.expectedRevision) {
 				throw new HttpError(409, "VERSION_CONFLICT", "the draft changed since it was read");
 			}
-			const rebuilt = await rebuildPolicyExceptionEvidence(kase, actor, artifact);
-			if (rebuilt.sourceStatus === "unavailable") {
-				throw new HttpError(
-					503,
-					"POLICY_SOURCE_UNAVAILABLE",
-					"the policy source is unavailable for revalidation",
-				);
-			}
+			const rebuilt = await rebuildPolicyContext(kase, actor, artifact);
 			const stored = artifact.content as Record<string, unknown>;
-			const prose = {
-				title: stored["title"],
-				sections: stored["sections"],
-				openItems: stored["openItems"],
-			};
-			const recomposed = composePolicyMemoContent(
-				prose as unknown as Parameters<typeof composePolicyMemoContent>[0],
-				rebuilt.context,
-				rebuilt.bundle,
+			const revalidated = revalidatePolicyMemo(
+				rebuilt,
+				{
+					title: stored["title"],
+					sections: stored["sections"],
+					openItems: stored["openItems"],
+				} as unknown as Parameters<typeof composePolicyMemoContent>[0],
+				(stored["rules"] ?? []) as unknown,
+				(stored["regularisationPlanMonths"] ?? null) as unknown,
 			);
-			if (
-				hashCanonical(stored["rules"] ?? []) !== hashCanonical(recomposed.rules) ||
-				hashCanonical(stored["regularisationPlanMonths"] ?? null) !==
-					hashCanonical(recomposed.regularisationPlanMonths)
-			) {
-				throw new HttpError(
-					422,
-					"POLICY_EXCEPTION_INVALID",
-					"policy memo rules must match the deterministic block",
-				);
-			}
-			const coreValidation = validateGeneratedText({
-				artifactType: "policy_exception_memo",
-				content: recomposed,
-				evidence: rebuilt.bundle,
-			});
-			if (!coreValidation.ok) return c.json(validationFailure(coreValidation.issues), 422);
-			const memoValidation = validatePolicyMemoDraft(
-				recomposed,
-				rebuilt.context,
-				rebuilt.catalog,
-				rebuilt.bundle,
-			);
-			if (!memoValidation.ok) {
-				return c.json(
-					{
-						error: {
-							code: "POLICY_EXCEPTION_INVALID",
-							message: "policy memo failed policy validation",
-							issues: memoValidation.issues.slice(0, 100),
-						},
-					},
-					422,
-				);
-			}
+			if (!revalidated.ok) return c.json(revalidated.body, 422);
 			const approved = await approveArtifact(db, {
 				id: artifact.id,
 				actor: actor.id,
@@ -1251,59 +1296,29 @@ export function assistRoutes(deps: AssistRouteDeps): ServiceApp {
 		}
 		const adverseDecision = adverseContext?.decision ?? null;
 		const evidence = await assembleFor(kase, actor);
-		const validation = validateGeneratedText({
-			artifactType: artifact.type,
-			content: artifact.content,
-			evidence,
-		});
-		if (!validation.ok) {
-			if (adverseContext !== null) {
-				await auditAdverseBlocked(
-					artifact,
-					actor,
-					"approve",
-					validation.issues.map((issue) => issue.code),
-				);
-			}
-			return c.json(validationFailure(validation.issues), 422);
-		}
 		let adverseContent: AdverseActionLetterContent | null = null;
 		if (adverseContext !== null && adverseDecision !== null) {
-			const content = validation.content as AdverseActionLetterContent;
-			const profileValidation = validateAdverseLetterContent(content, adverseContext.profile);
-			if (!profileValidation.ok) {
-				await auditAdverseBlocked(
-					artifact,
-					actor,
-					"approve",
-					profileValidation.issues.map((issue) => issue.code),
-				);
-				return c.json(adverseProfileFailure(profileValidation.issues), 422);
-			}
-			const binding = validateAdverseLetterDecisionBinding({
-				content,
-				applicationId: kase.application.id,
-				decisionId: adverseDecision.id,
-				decisionReasonCodes: decisionReasonCodes(adverseDecision),
+			const checked = await validateAdverseArtifact({
+				artifact,
+				actor,
+				action: "approve",
 				profile: adverseContext.profile,
-				contactPath: config.adverseContactPath,
-				facts: buildAdverseReasonFacts(
-					kase.application,
-					adverseDecision,
-					adverseContext.score,
-					evidence,
-				),
+				decision: adverseDecision,
+				score: adverseContext.score,
+				application: kase.application,
+				evidence,
+				content: artifact.content,
 			});
-			if (!binding.ok) {
-				await auditAdverseBlocked(
-					artifact,
-					actor,
-					"approve",
-					binding.issues.map((issue) => issue.code),
-				);
-				return c.json(adverseDecisionFailure(binding.issues), 422);
-			}
-			adverseContent = content;
+			if (!checked.ok) return c.json(checked.body, 422);
+			adverseContent = checked.content;
+		}
+		if (adverseContext === null) {
+			const generic = validateGeneratedText({
+				artifactType: artifact.type,
+				content: artifact.content,
+				evidence,
+			});
+			if (!generic.ok) return c.json(validationFailure(generic.issues), 422);
 		}
 		const approved = await approveArtifact(db, {
 			id: artifact.id,

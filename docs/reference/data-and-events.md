@@ -55,7 +55,7 @@ Seven topics, from `packages/core/src/events.ts` and `scripts/kafka-init.ts`:
 | `payment.posted`        | `credit.payment.posted`        | Loans demo pay                        | `paymentId`, `loanId`, `installmentId`, `amountCents`                                                                                  |
 | `ews.alert`             | `credit.ews.alert`             | Worker monitoring                     | `alertId`, `loanId`, `installmentId` when present, `alertType`, `severity`                                                             |
 
-Envelope shape: `{id, type, version: 1, occurredAt, applicationId?, loanId?, payload}`. Payload schemas in `packages/core/src/schemas.ts:210-326` are strict (`.strict()`), so unknown keys are rejected.
+Envelope shape: `{id, type, version: 1, occurredAt, applicationId?, loanId?, payload}`. Payload schemas in `packages/core/src/schemas.ts:320-387` are strict (`.strict()`), so unknown keys are rejected.
 
 Dedupe keys, from `packages/core/src/events.ts:50-71`:
 

@@ -4,11 +4,7 @@ import { idempotencyKeys, type Db } from "@credit/db/applications";
 import { HttpError } from "@credit/service-kit";
 import { and, eq } from "drizzle-orm";
 
-export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-export function isUuid(value: string): boolean {
-	return UUID_RE.test(value);
-}
+export { UUID_RE, isUuid } from "@credit/service-kit";
 
 /** Fast-path replay read (no lock): null when unused, 409 on hash/app
  * mismatch. Submit passes `applicationId`; create/draft-create omit it. */

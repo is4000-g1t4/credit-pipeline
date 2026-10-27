@@ -9,7 +9,6 @@ import { join } from "node:path";
 import { createDb } from "@credit/db";
 import {
 	auditLog,
-	caseAccessGrants,
 	chaseRequestFindings,
 	chaseRequests,
 	documentCrosschecks,
@@ -28,6 +27,7 @@ import type { ScannerAdapter } from "../../src/documents/scanner.js";
 import { loadEnv } from "../../src/env.js";
 import {
 	createUser,
+	grantOfficer,
 	individualPayload,
 	multipart,
 	pdfBytes,
@@ -127,19 +127,13 @@ async function postApplicationId(user: TestUser, sme: boolean): Promise<string> 
 	return ((await res.json()) as { id: string }).id;
 }
 
-async function grantOfficer(applicationId: string, officer: TestUser): Promise<void> {
-	await ctx.db
-		.insert(caseAccessGrants)
-		.values({ applicationId, userId: officer.id, accessRole: "assigned_officer" });
-}
-
 async function newCase(
 	sme: boolean,
 ): Promise<{ appId: string; owner: TestUser; officer: TestUser }> {
 	const owner = await createUser(ctx);
 	const officer = await createUser(ctx, "officer");
 	const appId = await postApplicationId(owner, sme);
-	await grantOfficer(appId, officer);
+	await grantOfficer(ctx.db, appId, officer);
 	return { appId, owner, officer };
 }
 
@@ -589,7 +583,7 @@ describe("draft chase", () => {
 			const owner = await createUser(ctx);
 			const officer = await createUser(ctx, "officer");
 			const appId = await postApplicationId(owner, true);
-			await grantOfficer(appId, officer);
+			await grantOfficer(ctx.db, appId, officer);
 
 			const boundary = `----d2e2e${randomUUID().replace(/-/g, "")}`;
 			const bytes = pdfBytes("e2e-chase");
@@ -686,7 +680,7 @@ describe("draft chase", () => {
 			const other = await createUser(ctx);
 			const otherApp = await postApplicationId(other, true);
 			const otherOfficer = await createUser(ctx, "officer");
-			await grantOfficer(otherApp, otherOfficer);
+			await grantOfficer(ctx.db, otherApp, otherOfficer);
 			await seedFile(otherApp, "other", [{ text: "x" }]);
 			const otherRun = await postCrosscheck(otherOfficer, otherApp);
 			const otherBody = (await otherRun.json()) as { crosscheck: { id: string } };

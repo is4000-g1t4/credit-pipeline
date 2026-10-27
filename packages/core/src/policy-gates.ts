@@ -5,6 +5,7 @@
 // memo text. Keeping them in core prevents the two services from drifting.
 
 import { createHmac } from "node:crypto";
+import { escapeRegExp } from "./text.js";
 
 const OUT_OF_SCOPE = [
 	"aml",
@@ -103,10 +104,6 @@ export function scrubKnownPii(text: string, values: readonly string[]): string {
 		out = out.replaceAll(new RegExp(escapeRegExp(value), "gi"), "[case party]");
 	}
 	return out;
-}
-
-function escapeRegExp(value: string): string {
-	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /** Action/decision language that must never appear in advisory navigator

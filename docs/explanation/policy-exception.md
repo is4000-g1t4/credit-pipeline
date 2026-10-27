@@ -7,7 +7,8 @@ is deterministic, what the model may write, and what must fail closed.
 
 Related: [eval design](eval-design.md#45-feature-registry) (registry row and
 results), the implementation plan
-(`.scratch/plans/en06-en07-e3-policy-exception-navigator.md`).
+(historical plan path, not in repo:
+`.scratch/plans/en06-en07-e3-policy-exception-navigator.md`).
 
 ## What is deterministic
 

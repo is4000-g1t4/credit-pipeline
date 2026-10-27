@@ -11,7 +11,7 @@ import {
 	type EvidenceBundle,
 	type UnavailableSource,
 } from "./evidence.js";
-import { locateQuote } from "./text.js";
+import { escapeRegExp, locateQuote } from "./text.js";
 import { FAIR_LENDING_PROXY_RE, PROTECTED_ATTRIBUTE_RE } from "./fair-lending.js";
 
 export const ARTIFACT_TYPES = [
@@ -403,10 +403,6 @@ function knownPii(evidence: EvidenceBundle): string[] {
 			// long tokens still get the known-PII check.
 			.filter((value) => /[\s\d_-]/.test(value) || value.length >= 12)
 	);
-}
-
-function escapeRegExp(value: string): string {
-	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function citationNodes(artifactType: ArtifactType, content: GeneratedContent): ClaimNode[] {

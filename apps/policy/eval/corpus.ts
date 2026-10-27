@@ -3,9 +3,12 @@
 // importer; the DB is replaced by in-memory chunks.
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { RetrievedSection } from "../src/answer.js";
+import { embeddingText } from "../src/chunks.js";
 import { readPolicyDir } from "../src/markdown.js";
+import { cosine } from "../src/retrieval.js";
 import type { PolicyChunk } from "../src/store.js";
+
+export { cosine, embeddingText };
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const POLICIES_DIR = path.join(HERE, "..", "policies", "credit");
@@ -50,11 +53,6 @@ export function loadCorpus(): CorpusSection[] {
 		}
 	}
 	return out;
-}
-
-/** Production embeds `title > heading > body`; match it exactly. */
-export function embeddingText(section: RetrievedSection): string {
-	return `${section.title} > ${section.heading} > ${section.body}`;
 }
 
 export async function embedCorpus(

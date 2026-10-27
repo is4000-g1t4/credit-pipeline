@@ -20,6 +20,7 @@ import {
 	uuid,
 	vector,
 } from "drizzle-orm/pg-core";
+import { createdAtColumn, updatedAtColumn } from "./shared.js";
 
 export { createDb, withTx, type Db, type Tx } from "./client.js";
 
@@ -28,15 +29,6 @@ export { createDb, withTx, type Db, type Tx } from "./client.js";
 // Chosen by the held-out embedding eval (voyage-4-large, 1024 dims).
 // Changing this requires a re-embed index plus a generated migration.
 export const POLICY_EMBEDDING_DIMENSIONS = 1024;
-
-const createdAt = () =>
-	timestamp("created_at", { withTimezone: true, mode: "date" }).defaultNow().notNull();
-
-const updatedAt = () =>
-	timestamp("updated_at", { withTimezone: true, mode: "date" })
-		.defaultNow()
-		.$onUpdate(() => new Date())
-		.notNull();
 
 const ts = (name: string) => timestamp(name, { withTimezone: true, mode: "date" });
 const tsNotNull = (name: string) =>
@@ -103,7 +95,7 @@ export const policyDocuments = pgTable("policy_documents", {
 	jurisdiction: text("jurisdiction").notNull(),
 	// Cross-DB reference to credit_auth.users — plain uuid, never an FK.
 	ownerId: uuid("owner_id").notNull(),
-	createdAt: createdAt(),
+	createdAt: createdAtColumn(),
 });
 
 export const policyRoles = pgTable(
@@ -159,7 +151,7 @@ export const policyAclAudit = pgTable(
 		permission: policyAclPermission("permission").notNull(),
 		action: text("action").notNull(),
 		actorId: uuid("actor_id"),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 	},
 	(t) => [index("policy_acl_audit_policy_time_idx").on(t.policyId, t.createdAt)],
 );
@@ -189,7 +181,7 @@ export const policyVersions = pgTable(
 		approvedAt: ts("approved_at"),
 		contentHash: text("content_hash").notNull(),
 		sourceUri: text("source_uri").notNull(),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 	},
 	(t) => [
 		uniqueIndex("policy_versions_policy_version_uniq").on(t.policyId, t.version),
@@ -246,7 +238,7 @@ export const policyApprovals = pgTable(
 		actorRole: text("actor_role").notNull(),
 		action: approvalAction("action").notNull(),
 		comment: text("comment"),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 	},
 	(t) => [index("policy_approvals_version_time_idx").on(t.versionId, t.createdAt)],
 );
@@ -277,7 +269,7 @@ export const policyChunks = pgTable(
 		embeddingDimensions: integer("embedding_dimensions").notNull(),
 		embeddingVersion: text("embedding_version").notNull(),
 		tsv: tsvector("tsv").generatedAlwaysAs(sql`to_tsvector('english', heading || ' ' || text)`),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 	},
 	(t) => [
 		uniqueIndex("policy_chunks_generation_section_chunk_uniq").on(
@@ -298,7 +290,7 @@ export const policyIndexMeta = pgTable(
 		embeddingDimensions: integer("embedding_dimensions").notNull(),
 		chunkingVersion: text("chunking_version").notNull(),
 		status: indexStatus("status").notNull(),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 		activatedAt: ts("activated_at"),
 	},
 	(t) => [
@@ -327,7 +319,7 @@ export const policyQueries = pgTable(
 		errorCode: text("error_code"),
 		retrievedSectionIds: jsonb("retrieved_section_ids"),
 		usageCost: numeric("usage_cost").notNull().default("0"),
-		createdAt: createdAt(),
+		createdAt: createdAtColumn(),
 	},
 	(t) => [
 		index("policy_queries_actor_created_idx").on(t.actorId, t.createdAt),
@@ -344,7 +336,7 @@ export const policyDailySpend = pgTable(
 		budgetClass: policyBudgetClass("budget_class").notNull(),
 		reservedUsd: numeric("reserved_usd").notNull().default("0"),
 		spentUsd: numeric("spent_usd").notNull().default("0"),
-		updatedAt: updatedAt(),
+		updatedAt: updatedAtColumn(),
 	},
 	(t) => [primaryKey({ columns: [t.day, t.budgetClass] })],
 );
@@ -356,7 +348,7 @@ export const policyActorSpend = pgTable(
 		actorId: uuid("actor_id").notNull(),
 		reservedUsd: numeric("reserved_usd").notNull().default("0"),
 		spentUsd: numeric("spent_usd").notNull().default("0"),
-		updatedAt: updatedAt(),
+		updatedAt: updatedAtColumn(),
 	},
 	(t) => [primaryKey({ columns: [t.day, t.actorId] })],
 );

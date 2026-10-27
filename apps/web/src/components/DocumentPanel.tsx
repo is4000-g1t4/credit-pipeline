@@ -8,13 +8,14 @@ import { useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-q
 import { useRef, useState } from "react";
 import {
 	ApiError,
-	apiErrorMessage,
 	claimDocuments,
 	createChaseDraft,
 	downloadDocument,
 	fetchCrosscheck,
 	fetchDocumentFiles,
 	fetchDocumentPages,
+	formatDate,
+	queryKeys,
 	retryDocumentOcr,
 	runCrosscheck,
 	toast,
@@ -26,63 +27,8 @@ import {
 	type DocumentKind,
 	type DocumentsList,
 } from "../lib/api";
+import { clean, friendlyMessage, shortId } from "../lib/format";
 import { Card, ErrorBox, StatusBadge } from "./ui";
-
-/** Strip bidi/zero-width controls so pasted document text cannot reorder UI. */
-function clean(value: string): string {
-	return value.replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/g, "");
-}
-
-function shortId(id: string): string {
-	return id.length > 8 ? id.slice(0, 8) : id;
-}
-
-function friendlyMessage(err: unknown): string {
-	if (!(err instanceof ApiError)) return apiErrorMessage(err);
-	switch (err.code) {
-		case "CONSENT_REQUIRED":
-			return "Document processing consent is required before documents can be used.";
-		case "FILE_TOO_LARGE":
-			return "That file is too large — the limit is 10 MB.";
-		case "UNSUPPORTED_TYPE":
-			return "Unsupported file type — upload a PDF, PNG, or JPEG.";
-		case "MALWARE_DETECTED":
-			return "That file failed the malware scan and was rejected.";
-		case "DOCUMENTS_NOT_READY":
-			return "No ready documents to check yet — upload a supported file first.";
-		case "NO_TEXT":
-			return "ID documents carry no page text — they always need a manual check.";
-		case "OCR_NOT_RETRYABLE":
-			return "Only failed or unsupported extractions can be retried.";
-		case "ORIGINAL_NOT_OPENED":
-			return "Open the original document before drafting a chase.";
-		case "LOCK_TIMEOUT":
-			return "The case is busy — retry in a moment.";
-		case "OCR_BUSY":
-			return "Text extraction is saturated — retry shortly.";
-		case "ENCRYPTION_UNAVAILABLE":
-		case "UPLOAD_TIMEOUT":
-			return "The document service is temporarily unavailable — retry shortly.";
-		default:
-			break;
-	}
-	switch (err.status) {
-		case 404:
-			return "Documents are not available for this case.";
-		case 413:
-			return "That file is too large — the limit is 10 MB.";
-		case 415:
-			return "Unsupported file type — upload a PDF, PNG, or JPEG.";
-		case 422:
-			return "That file was rejected — try a different file.";
-		case 429:
-			return "The service is busy — retry in a moment.";
-		case 503:
-			return "The document service is temporarily unavailable — retry shortly.";
-		default:
-			return apiErrorMessage(err);
-	}
-}
 
 const KINDS: DocumentKind[] = [
 	"business_registration",
@@ -196,7 +142,7 @@ function FileRow({
 				</div>
 				<div>
 					<dt className="inline font-medium">Keep until: </dt>
-					<dd className="inline">{new Date(file.retentionUntil).toLocaleDateString()}</dd>
+					<dd className="inline">{formatDate(file.retentionUntil)}</dd>
 				</div>
 				{file.errorCode && (
 					<div>
@@ -431,7 +377,7 @@ function ApplicantDocuments({
 	});
 	const refresh = (): void => {
 		void queryClient.invalidateQueries({ queryKey: ["documents", applicationId] });
-		void queryClient.invalidateQueries({ queryKey: ["application", applicationId] });
+		void queryClient.invalidateQueries({ queryKey: queryKeys.case(applicationId) });
 		void queryClient.invalidateQueries({ queryKey: ["integrity", applicationId] });
 	};
 

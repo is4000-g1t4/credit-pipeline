@@ -15,11 +15,40 @@ import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Api, ApiError, gotoHydrated, poll, uiLogin, uiLogout, waitStatus } from "./helpers.js";
+import { Api, ApiError, type CaseDetail, gotoHydrated, poll, uiLogin, uiLogout, waitStatus } from "./helpers.js";
 
 const SETUP_HINT =
 	"breadtalk fixtures unavailable — run the stack (pnpm dev or compose), then " +
 	"DEMO_MODE=true pnpm demo:seed to create the breadtalk customer";
+
+/** Case this spec touched (created draft or reused active case). Declined in
+ * afterEach when still pending_review, so repeat runs never hit the
+ * 3-active-application cap. Draft-only runs (blocked leg without fresh
+ * evidence) leave a draft behind — drafts have their own cap and no
+ * terminal transition, so those still need `demo:reset` eventually. */
+let trackedCase: string | null = null;
+
+test.afterEach(async () => {
+	if (trackedCase === null) return;
+	const id = trackedCase;
+	trackedCase = null;
+	try {
+		const applicant = new Api();
+		await applicant.login("breadtalk@example.com");
+		const detail = await applicant.get<CaseDetail>(`/api/applications/${id}`);
+		if (detail.application.status !== "pending_review") return;
+		const officer = new Api();
+		await officer.login("officer@example.com");
+		await officer.post(`/api/review/${id}/decision`, {
+			requestId: crypto.randomUUID(),
+			outcome: "decline",
+			reasonCode: "OFFICER_JUDGEMENT",
+			notes: "e2e cleanup: decline leftover breadtalk case",
+		});
+	} catch {
+		// Best-effort: must not fail the spec.
+	}
+});
 
 test("BreadTalk draft: prefill → stale checklist → blocked submit → reuse → submit", async ({
 	page,
@@ -75,6 +104,7 @@ test("BreadTalk draft: prefill → stale checklist → blocked submit → reuse 
 	await page.waitForURL(/\/applications\/.+/);
 	const appId = page.url().split("/").pop() ?? "";
 	expect(appId).toMatch(/^[0-9a-f-]{36}$/);
+	trackedCase = appId;
 
 	// Draft: no submission happened.
 	const detail = await applicant.get<{ application: { status: string } }>(
@@ -175,6 +205,7 @@ test("BreadTalk draft: prefill → stale checklist → blocked submit → reuse 
 			done.application.status,
 		);
 	}
+	trackedCase = caseId;
 
 	// --- Context leg (D4): officer opens the submitted case and sees the
 	// Internal context section after T11, then accept/dismiss round-trips a

@@ -1,8 +1,8 @@
-// Shared OpenAI Agents SDK surface for the memo writer: one client cast,
-// one usage reader, one tracing switch. The Agents SDK's CJS typings load
-// openai's `client.d.ts` while ESM importers load `client.d.mts`: same
-// runtime API, distinct `#private` identities. The SDK duck-types the
-// client (no instanceof on this path), so one boundary cast is safe.
+// Shared OpenAI Agents SDK surface: one client cast, one usage reader, one
+// tracing switch. The Agents SDK's CJS typings load openai's `client.d.ts`
+// while ESM importers load `client.d.mts`: same runtime API, distinct
+// `#private` identities. The SDK duck-types the client (no instanceof on
+// this path), so one boundary cast is safe.
 import { OpenAIChatCompletionsModel, setTracingDisabled } from "@openai/agents";
 
 setTracingDisabled(true);

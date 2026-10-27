@@ -2,22 +2,16 @@
 // §2.5). Guarded by DEMO_MODE/non-production plus manifest version/hash;
 // upserts users/customers/accounts/transactions/evidence with deterministic
 // fixture keys; never overwrites applicant rows or fixture drafts.
-import { assertDemoMutable } from "@credit/core";
+import { assertDemoMutable } from "@credit/service-kit";
 import { createDb } from "@credit/db/applications";
-import { assertFixtureClock, assertManifest, loadManifest } from "./lib/manifest.js";
+import { assertManifest, loadVerifiedManifest } from "./lib/manifest.js";
 import { cliCustomerConfig, cliFlags, dbUserDirectory, requireEnv } from "./lib/env.js";
 import { seedDemo } from "./lib/seed.js";
 
 const flags = cliFlags();
 assertDemoMutable(flags);
 
-const manifest = loadManifest();
-if (flags.demoSeedVersion !== String(manifest.version)) {
-	throw new Error(
-		`DEMO_SEED_VERSION ${flags.demoSeedVersion} != manifest version ${manifest.version}`,
-	);
-}
-assertFixtureClock(manifest.demoAsOf, process.env.DEMO_AS_OF);
+const manifest = loadVerifiedManifest(flags.demoSeedVersion);
 const { hash } = assertManifest(manifest);
 
 const auth = createDb(requireEnv("AUTH_DATABASE_URL"));

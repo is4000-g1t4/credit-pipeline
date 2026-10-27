@@ -4,13 +4,13 @@
 // order, volumes allowlisted, node_modules never listed, only host roots
 // cleared, reseed order).
 import { describe, expect, it } from "vitest";
-import { loadManifest } from "../../../../scripts/lib/manifest.js";
+import { loadManifest } from "../lib/manifest.js";
 import {
 	assertResetVolumeOwnership,
 	planDemoReset,
 	withRemovableVolumes,
 	type ResetOptions,
-} from "../../../../scripts/lib/reset.js";
+} from "../lib/reset.js";
 
 const manifest = loadManifest();
 

@@ -7,7 +7,7 @@ dotenv.config({
 });
 
 import { randomUUID } from "node:crypto";
-import { applications, auditLog, createDb, type Db } from "@credit/db/applications";
+import { auditLog, createDb } from "@credit/db/applications";
 import { HttpError } from "@credit/service-kit";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -20,6 +20,7 @@ import {
 	updateArtifact,
 } from "../../src/assist/artifacts.js";
 import type { MemoAgentTrace } from "../../src/assist/memo-trace.js";
+import { insertApplication } from "../helper.js";
 
 const TITLE = "SENTINEL-TRACE-TITLE-T404";
 const QUOTE = "SENTINEL-TRACE-QUOTE-Q505";
@@ -48,26 +49,6 @@ const { db, sql } = createDb(
 		"postgres://credit:credit@localhost:5432/credit_applications",
 );
 
-async function insertApplication(database: Db): Promise<string> {
-	const [row] = await database
-		.insert(applications)
-		.values({
-			reference: `TRACE-${randomUUID()}`,
-			applicantUserId: randomUUID(),
-			type: "individual",
-			product: "personal_loan",
-			status: "submitted",
-			amountCents: 1200000,
-			termMonths: 48,
-			purpose: "trace persistence test",
-			identity: { fullName: "Trace Tester" },
-			consents: [true],
-			submittedAt: new Date(),
-		})
-		.returning();
-	return row.id;
-}
-
 beforeAll(async () => {
 	await sql`select 1`;
 });
@@ -78,7 +59,11 @@ afterAll(async () => {
 
 describe("trace persistence and DTO", () => {
 	it("persists trace/hash on create and exposes them on the DTO", async () => {
-		const applicationId = await insertApplication(db);
+		const applicationId = await insertApplication(db, {
+			referencePrefix: "TRACE",
+			purpose: "trace persistence test",
+			applicantName: "Trace Tester",
+		});
 		const created = await createArtifact(db, {
 			applicationId,
 			type: "credit_memo",
@@ -95,7 +80,11 @@ describe("trace persistence and DTO", () => {
 		expect(created.agentTrace?.toolCalls).toHaveLength(1);
 
 		// Explicit evidenceHash wins over the trace's when both are supplied.
-		const applicationId2 = await insertApplication(db);
+		const applicationId2 = await insertApplication(db, {
+			referencePrefix: "TRACE",
+			purpose: "trace persistence test",
+			applicantName: "Trace Tester",
+		});
 		const explicit = await createArtifact(db, {
 			applicationId: applicationId2,
 			type: "credit_memo",
@@ -112,7 +101,11 @@ describe("trace persistence and DTO", () => {
 
 		// No trace: both stay null (existing behavior unchanged).
 		const untraced = await createArtifact(db, {
-			applicationId: await insertApplication(db),
+			applicationId: await insertApplication(db, {
+				referencePrefix: "TRACE",
+				purpose: "trace persistence test",
+				applicantName: "Trace Tester",
+			}),
 			type: "credit_memo",
 			content: { title: TITLE },
 			citations: [],
@@ -126,7 +119,11 @@ describe("trace persistence and DTO", () => {
 	});
 
 	it("rejects an invalid trace with a typed internal error (no leak)", async () => {
-		const applicationId = await insertApplication(db);
+		const applicationId = await insertApplication(db, {
+			referencePrefix: "TRACE",
+			purpose: "trace persistence test",
+			applicantName: "Trace Tester",
+		});
 		const bad = trace("hash-bad") as unknown as Record<string, unknown>;
 		delete bad["steps"];
 		await expect(
@@ -147,7 +144,11 @@ describe("trace persistence and DTO", () => {
 
 describe("update preserves trace", () => {
 	it("draft edits and approved forks keep the trace unless replaced", async () => {
-		const applicationId = await insertApplication(db);
+		const applicationId = await insertApplication(db, {
+			referencePrefix: "TRACE",
+			purpose: "trace persistence test",
+			applicantName: "Trace Tester",
+		});
 		const actor = randomUUID();
 		const v1 = await createArtifact(db, {
 			applicationId,
@@ -208,8 +209,16 @@ describe("update preserves trace", () => {
 
 describe("findArtifactByEvidence", () => {
 	it("returns the newest non-deleted row, scoped by case/type/hash", async () => {
-		const applicationId = await insertApplication(db);
-		const otherApp = await insertApplication(db);
+		const applicationId = await insertApplication(db, {
+			referencePrefix: "TRACE",
+			purpose: "trace persistence test",
+			applicantName: "Trace Tester",
+		});
+		const otherApp = await insertApplication(db, {
+			referencePrefix: "TRACE",
+			purpose: "trace persistence test",
+			applicantName: "Trace Tester",
+		});
 		const actor = randomUUID();
 		const v1 = await createArtifact(db, {
 			applicationId,
@@ -295,7 +304,11 @@ describe("findArtifactByEvidence", () => {
 
 describe("supersedeDraft", () => {
 	it("retires the live draft, versions forward, and audits metadata-only", async () => {
-		const applicationId = await insertApplication(db);
+		const applicationId = await insertApplication(db, {
+			referencePrefix: "TRACE",
+			purpose: "trace persistence test",
+			applicantName: "Trace Tester",
+		});
 		const actor = randomUUID();
 		const input = {
 			applicationId,
@@ -339,7 +352,11 @@ describe("supersedeDraft", () => {
 
 describe("trace audit hygiene", () => {
 	it("audit payloads carry metadata only, never content text", async () => {
-		const applicationId = await insertApplication(db);
+		const applicationId = await insertApplication(db, {
+			referencePrefix: "TRACE",
+			purpose: "trace persistence test",
+			applicantName: "Trace Tester",
+		});
 		await createArtifact(db, {
 			applicationId,
 			type: "credit_memo",
@@ -363,7 +380,11 @@ describe("trace audit hygiene", () => {
 	});
 
 	it("invalid trace error carries no trace content", async () => {
-		const applicationId = await insertApplication(db);
+		const applicationId = await insertApplication(db, {
+			referencePrefix: "TRACE",
+			purpose: "trace persistence test",
+			applicantName: "Trace Tester",
+		});
 		const bad = { ...trace("hash-bad"), writer: "rogue-model" };
 		try {
 			await createArtifact(db, {

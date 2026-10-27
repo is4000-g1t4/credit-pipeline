@@ -14,7 +14,7 @@ import {
 } from "@openai/agents";
 import OpenAI, { APIConnectionTimeoutError } from "openai";
 import type { MemoAgentTrace } from "../assist/memo-trace.js";
-import { readRunUsage, type AgentsOpenAIClient } from "../assist/openai-agents.js";
+import { readRunUsage, type AgentsOpenAIClient } from "@credit/agent-observability/openai-agents";
 import { applicationObservability } from "../observability.js";
 import {
 	INTEGRITY_TOOL_NAMES,

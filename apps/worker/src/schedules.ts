@@ -13,6 +13,8 @@ import {
 	ScheduleNotFoundError,
 	ScheduleOverlapPolicy,
 } from "@temporalio/client";
+import { workerEnv } from "./env.js";
+import { logger } from "./logger.js";
 
 export type ScheduleBootstrapOutcome = "created" | "updated";
 
@@ -41,7 +43,7 @@ export async function bootstrapMonitoringSchedule(
 		active = client;
 	} else {
 		connection = await Connection.connect({
-			address: address ?? process.env.TEMPORAL_ADDRESS ?? "localhost:7233",
+			address: address ?? workerEnv.temporalAddress,
 		});
 		active = new Client({ connection });
 	}
@@ -52,7 +54,7 @@ export async function bootstrapMonitoringSchedule(
 			const handle = c.schedule.getHandle(MONITORING_SCHEDULE_ID);
 			const previous = await handle.describe();
 			await handle.update(() => ({ ...definition, state: previous.state }));
-			console.log(`worker: monitoring schedule '${MONITORING_SCHEDULE_ID}' updated in place`);
+			logger.info(`worker: monitoring schedule '${MONITORING_SCHEDULE_ID}' updated in place`);
 			return "updated";
 		} catch (err) {
 			if (!(err instanceof ScheduleNotFoundError)) throw err;
@@ -61,7 +63,7 @@ export async function bootstrapMonitoringSchedule(
 					scheduleId: MONITORING_SCHEDULE_ID,
 					...definition,
 				});
-				console.log(`worker: monitoring schedule '${MONITORING_SCHEDULE_ID}' created (every 5m)`);
+				logger.info(`worker: monitoring schedule '${MONITORING_SCHEDULE_ID}' created (every 5m)`);
 				return "created";
 			} catch (createErr) {
 				if (!(createErr instanceof ScheduleAlreadyRunning)) throw createErr;
@@ -69,7 +71,7 @@ export async function bootstrapMonitoringSchedule(
 				await c.schedule
 					.getHandle(MONITORING_SCHEDULE_ID)
 					.update(() => ({ ...definition, state: previous.state }));
-				console.log(
+				logger.info(
 					`worker: monitoring schedule '${MONITORING_SCHEDULE_ID}' updated in place (won create race)`,
 				);
 				return "updated";

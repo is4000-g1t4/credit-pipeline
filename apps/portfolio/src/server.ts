@@ -1,6 +1,6 @@
 import { createLogger } from "@credit/service-kit";
 import { createApp } from "./app.js";
-import { getDb } from "./db.js";
+import { closeDb, getDb } from "./db.js";
 import { loadEnv } from "./env.js";
 import { startConsumer } from "./events/consumer.js";
 
@@ -26,6 +26,11 @@ const shutdown = async () => {
 	} catch (err) {
 		logger.error({ err }, "portfolio: consumer stop failed");
 	}
+	try {
+		await closeDb();
+	} catch (err) {
+		logger.error({ err }, "portfolio: db close failed");
+	}
 	process.exit(0);
 };
 process.on("SIGINT", () => void shutdown());
@@ -44,4 +49,4 @@ export default {
 	},
 };
 
-console.log(`portfolio listening on http://${env.host}:${env.port}`);
+logger.info(`portfolio listening on http://${env.host}:${env.port}`);

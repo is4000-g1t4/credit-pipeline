@@ -3,7 +3,7 @@
 // require non-empty deterministic types. Every other mode (flags-off,
 // skipped/failed/not_applicable) is a passing seam. Compose-free.
 import { describe, expect, it } from "vitest";
-import { checkExpectedSignals } from "../../../../scripts/lib/verify.js";
+import { checkExpectedSignals } from "../lib/verify.js";
 
 const BREADTALK = ["round_trip", "cash_deposit_share", "returned_payment"];
 

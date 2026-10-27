@@ -52,6 +52,10 @@ describe("observability failure boundary", () => {
 		resetObservability();
 		delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 		delete process.env.OTEL_SDK_DISABLED;
+		// The shared pipeline gates on AGENTO11Y ingest config (repo .env
+		// sets these for real deployments); the client itself is mocked.
+		process.env.AGENTO11Y_ENDPOINT = "http://127.0.0.1:4318";
+		process.env.AGENTO11Y_AUTH_TOKEN = "test-token";
 		return () => {
 			for (const key of Object.keys(process.env)) {
 				if (!(key in backup)) delete process.env[key];

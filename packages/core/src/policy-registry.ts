@@ -31,6 +31,8 @@ import { hashCanonical } from "./canonical.js";
 import type { PolicyReasonCode } from "./reasons.js";
 
 export const POLICY_REGISTRY_VERSION = "policy-registry-v1";
+/** Section ids of the POL-CR-009 decision-engine standard (checked by seed/approval). */
+export const POLICY_ENGINE_STANDARD_SECTION_IDS: readonly string[] = ["9.0", "9.1", "9.2", "9.3", "9.4"];
 /** Hash of the 9.0-9.4 bodies in POL-CR-009 (checked by seed/approval). */
 export const POLICY_ENGINE_STANDARD_HASH =
 	"423725bd2c35c3eaf3184dcc796f7432feed9ada01cb1f3033ef04e3982dbecd";

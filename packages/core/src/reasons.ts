@@ -19,7 +19,13 @@ export type PolicyReasonCode =
 
 export type CheckReasonCode = "IDENTITY_FAILED" | "SANCTIONS_HIT";
 
-export type OfficerReasonCode = "OFFICER_JUDGEMENT" | "INSUFFICIENT_EVIDENCE" | "POLICY_EXCEPTION";
+export const OFFICER_REASON_CODES = [
+	"OFFICER_JUDGEMENT",
+	"INSUFFICIENT_EVIDENCE",
+	"POLICY_EXCEPTION",
+] as const;
+
+export type OfficerReasonCode = (typeof OFFICER_REASON_CODES)[number];
 
 export type ReasonCode = PolicyReasonCode | CheckReasonCode | OfficerReasonCode;
 

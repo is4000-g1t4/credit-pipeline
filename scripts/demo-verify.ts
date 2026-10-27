@@ -5,7 +5,7 @@
 // non-zero on any failure. Never content/PII beyond ids and codes.
 import { createDb } from "@credit/db/applications";
 import { createDb as createResearchDb } from "@credit/db/research";
-import { assertFixtureClock, assertManifest, loadManifest } from "./lib/manifest.js";
+import { loadVerifiedManifest } from "./lib/manifest.js";
 import { cliCustomerConfig, cliFlags, dbUserDirectory, requireEnv } from "./lib/env.js";
 import { verifyDemo, type VerifyPhase } from "./lib/verify.js";
 
@@ -21,9 +21,7 @@ if (!["pre-refresh", "post-refresh", "post-attach", "post-submit"].includes(phas
 
 const flags = cliFlags();
 if (!flags.demoMode) throw new Error("refusing: DEMO_MODE is not true");
-const manifest = loadManifest();
-assertFixtureClock(manifest.demoAsOf, process.env.DEMO_AS_OF);
-assertManifest(manifest);
+const manifest = loadVerifiedManifest();
 
 const auth = createDb(requireEnv("AUTH_DATABASE_URL"));
 const { db: appDb, sql } = createDb(requireEnv("APPLICATIONS_DATABASE_URL"));

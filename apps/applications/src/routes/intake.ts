@@ -45,6 +45,7 @@ import {
 	requirementsFor,
 } from "../customer/requirements.js";
 import { isUniqueViolation } from "../documents/pipeline.js";
+import { resolveDocumentAccess } from "../documents/access.js";
 import { isUuid, readIdempotencyReplay } from "../ids.js";
 
 const contextConsentSchema = z.object({ consent: z.boolean() }).strict();
@@ -416,7 +417,6 @@ export function intakeRoutes(deps: IntakeRouteDeps): ServiceApp {
 			if (row.applicantUserId !== me.id) throw new HttpError(404, "NOT_FOUND", "not found");
 		} else if (me.role === "officer") {
 			if (row.status === "draft") throw new HttpError(404, "NOT_FOUND", "not found");
-			const { resolveDocumentAccess } = await import("../documents/access.js");
 			const resolved = await resolveDocumentAccess(db, id, me);
 			if (!resolved || resolved.access !== "assigned") {
 				throw new HttpError(404, "NOT_FOUND", "not found");

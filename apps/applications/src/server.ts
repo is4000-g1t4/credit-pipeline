@@ -1,6 +1,6 @@
 import { createDb } from "@credit/db";
 import { createLogger, createTemporalGateway } from "@credit/service-kit";
-import { assertDemoBoot } from "@credit/core";
+import { assertDemoBoot } from "@credit/service-kit";
 import { createApp } from "./app.js";
 import { createAgentsMemoRunner, startArtifactRetention } from "./assist/index.js";
 import { createHttpPolicyClient } from "./assist/policy-exception/policy-client.js";

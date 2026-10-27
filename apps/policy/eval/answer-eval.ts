@@ -29,6 +29,7 @@ import {
 import { policyObservability } from "../src/observability.js";
 import { rankChunks } from "../src/retrieval.js";
 import { embedCorpus, loadCorpus, type CorpusSection } from "./corpus.js";
+import { evalArg as arg, mean, p95, wilson } from "./lib.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = path.join(HERE, "results");
@@ -89,11 +90,6 @@ interface TrialRow {
 type SupportVerdict = "supported" | "partial" | "unsupported" | "unknown";
 type CompleteVerdict = "complete" | "partial" | "missing" | "unknown";
 
-function arg(name: string, fallback: string): string {
-	const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
-	return hit ? hit.slice(name.length + 3) : fallback;
-}
-
 function expectedList(value: string | string[]): string[] {
 	return Array.isArray(value) ? value : [value];
 }
@@ -104,26 +100,6 @@ function sectionKey(policyKey: string, sectionId: string): string {
 
 function percent(n: number, d: number): number {
 	return d === 0 ? 0 : n / d;
-}
-
-function mean(values: number[]): number {
-	return values.length === 0 ? 0 : values.reduce((a, b) => a + b, 0) / values.length;
-}
-
-function p95(values: number[]): number {
-	if (values.length === 0) return 0;
-	const sorted = [...values].sort((a, b) => a - b);
-	return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1)];
-}
-
-function wilson(passes: number, total: number): { low: number; high: number } {
-	if (total === 0) return { low: 0, high: 0 };
-	const z = 1.96;
-	const p = passes / total;
-	const denom = 1 + (z * z) / total;
-	const centre = (p + (z * z) / (2 * total)) / denom;
-	const margin = (z * Math.sqrt((p * (1 - p)) / total + (z * z) / (4 * total * total))) / denom;
-	return { low: Math.max(0, centre - margin), high: Math.min(1, centre + margin) };
 }
 
 const env = loadEnv();

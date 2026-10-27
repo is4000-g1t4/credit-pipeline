@@ -29,6 +29,9 @@ export interface CreateArtifactInput {
 	documentDerived?: boolean;
 	createdBy: string;
 	actorRole?: string;
+	/** Overrides the `artifact.created` audit actor only (row `createdBy`
+	 * still uses `createdBy`); the brief writer audits as the system. */
+	auditActor?: string;
 	model: string;
 	promptVersion: string;
 	retentionDays: number;
@@ -224,108 +227,110 @@ async function nextVersion(
 	return (rows[0]?.version ?? 0) + 1;
 }
 
-export async function createArtifact(db: Db, input: CreateArtifactInput): Promise<ArtifactDto> {
+export async function createArtifactInTx(tx: Tx, input: CreateArtifactInput): Promise<ArtifactDto> {
 	const now = input.now ?? new Date();
 	const trace = resolveTraceColumns(input, { agentTrace: null, evidenceHash: null });
-	return artifactTx(db, async (tx) => {
-		const version = await nextVersion(tx, input.applicationId, input.type);
-		if (input.supersedeDraft === true) {
-			// Memo regeneration after a replay miss: retire the live draft so
-			// the new version becomes the active one. Historical (approved,
-			// superseded, deleted) rows are untouched.
-			const live = await tx
-				.select()
-				.from(generatedArtifacts)
-				.where(
-					and(
-						eq(generatedArtifacts.applicationId, input.applicationId),
-						eq(generatedArtifacts.type, input.type),
-						eq(generatedArtifacts.status, "draft"),
-					),
-				)
-				.limit(1)
-				.for("update");
-			for (const stale of live) {
-				await tx
-					.update(generatedArtifacts)
-					.set({ status: "superseded" as ArtifactStatus, supersededAt: now })
-					.where(eq(generatedArtifacts.id, stale.id));
-				await writeAudit(tx, {
-					applicationId: input.applicationId,
-					actor: input.createdBy,
-					action: "artifact.superseded",
-					entity: "generated_artifact",
-					payload: {
-						feature:
-							input.auditFeature ??
-							(input.type === "policy_exception_memo" ? "policy_exception" : "assist"),
-						artifactId: stale.id,
-						applicationId: input.applicationId,
-						type: input.type,
-						version: stale.version,
-						supersededByVersion: version,
-						actorRole: input.actorRole ?? "officer",
-						model: stale.model,
-						promptVersion: stale.promptVersion,
-					},
-				});
-			}
-		}
-		let row: ArtifactRow;
-		try {
-			[row] = await tx
-				.insert(generatedArtifacts)
-				.values({
+	const version = await nextVersion(tx, input.applicationId, input.type);
+	if (input.supersedeDraft === true) {
+		// Memo regeneration after a replay miss: retire the live draft so
+		// the new version becomes the active one. Historical (approved,
+		// superseded, deleted) rows are untouched.
+		const live = await tx
+			.select()
+			.from(generatedArtifacts)
+			.where(
+				and(
+					eq(generatedArtifacts.applicationId, input.applicationId),
+					eq(generatedArtifacts.type, input.type),
+					eq(generatedArtifacts.status, "draft"),
+				),
+			)
+			.limit(1)
+			.for("update");
+		for (const stale of live) {
+			await tx
+				.update(generatedArtifacts)
+				.set({ status: "superseded" as ArtifactStatus, supersededAt: now })
+				.where(eq(generatedArtifacts.id, stale.id));
+			await writeAudit(tx, {
+				applicationId: input.applicationId,
+				actor: input.auditActor ?? input.createdBy,
+				action: "artifact.superseded",
+				entity: "generated_artifact",
+				payload: {
+					feature:
+						input.auditFeature ??
+						(input.type === "policy_exception_memo" ? "policy_exception" : "assist"),
+					artifactId: stale.id,
 					applicationId: input.applicationId,
 					type: input.type,
-					version,
-					revision: 1,
-					status: "draft" as ArtifactStatus,
-					documentDerived: input.documentDerived ?? false,
-					content: input.content,
-					citations: input.citations,
-					contentHash: hashCanonical(input.content),
-					agentTrace: trace.agentTrace,
-					evidenceHash: trace.evidenceHash,
-					model: input.model,
-					promptVersion: input.promptVersion,
-					createdBy: input.createdBy,
-					retentionUntil: addDays(now, input.retentionDays),
-				})
-				.returning();
-		} catch (err) {
-			if (isUniqueViolation(err, "generated_artifacts_active_draft_uniq")) {
-				throw new HttpError(409, "DRAFT_EXISTS", "a draft already exists for this case and type");
-			}
-			if (isUniqueViolation(err, "generated_artifacts_case_type_version_uniq")) {
-				throw new HttpError(409, "VERSION_CONFLICT", "a newer version was created concurrently");
-			}
-			throw err;
+					version: stale.version,
+					supersededByVersion: version,
+					actorRole: input.actorRole ?? "officer",
+					model: stale.model,
+					promptVersion: stale.promptVersion,
+				},
+			});
 		}
-		if (!row) throw new HttpError(500, "ARTIFACT_CREATE_FAILED", "artifact insert returned no row");
-		await writeAudit(tx, {
-			applicationId: input.applicationId,
-			actor: input.createdBy,
-			action: "artifact.created",
-			entity: "generated_artifact",
-			payload: {
-				...input.auditMetadata,
-				...traceAudit(trace.agentTrace),
-				feature:
-					input.auditFeature ??
-					(input.type === "policy_exception_memo" ? "policy_exception" : "assist"),
-				artifactId: row.id,
+	}
+	let row: ArtifactRow;
+	try {
+		[row] = await tx
+			.insert(generatedArtifacts)
+			.values({
 				applicationId: input.applicationId,
 				type: input.type,
 				version,
-				actorRole: input.actorRole ?? "officer",
+				revision: 1,
+				status: "draft" as ArtifactStatus,
+				documentDerived: input.documentDerived ?? false,
+				content: input.content,
+				citations: input.citations,
+				contentHash: hashCanonical(input.content),
+				agentTrace: trace.agentTrace,
+				evidenceHash: trace.evidenceHash,
 				model: input.model,
 				promptVersion: input.promptVersion,
-				citationCount: input.citations.length,
-			},
-		});
-		return toDto(row);
+				createdBy: input.createdBy,
+				retentionUntil: addDays(now, input.retentionDays),
+			})
+			.returning();
+	} catch (err) {
+		if (isUniqueViolation(err, "generated_artifacts_active_draft_uniq")) {
+			throw new HttpError(409, "DRAFT_EXISTS", "a draft already exists for this case and type");
+		}
+		if (isUniqueViolation(err, "generated_artifacts_case_type_version_uniq")) {
+			throw new HttpError(409, "VERSION_CONFLICT", "a newer version was created concurrently");
+		}
+		throw err;
+	}
+	if (!row) throw new HttpError(500, "ARTIFACT_CREATE_FAILED", "artifact insert returned no row");
+	await writeAudit(tx, {
+		applicationId: input.applicationId,
+		actor: input.auditActor ?? input.createdBy,
+		action: "artifact.created",
+		entity: "generated_artifact",
+		payload: {
+			...input.auditMetadata,
+			...traceAudit(trace.agentTrace),
+			feature:
+				input.auditFeature ??
+				(input.type === "policy_exception_memo" ? "policy_exception" : "assist"),
+			artifactId: row.id,
+			applicationId: input.applicationId,
+			type: input.type,
+			version,
+			actorRole: input.actorRole ?? "officer",
+			model: input.model,
+			promptVersion: input.promptVersion,
+			citationCount: input.citations.length,
+		},
 	});
+	return toDto(row);
+}
+
+export async function createArtifact(db: Db, input: CreateArtifactInput): Promise<ArtifactDto> {
+	return artifactTx(db, (tx) => createArtifactInTx(tx, input));
 }
 
 export async function updateArtifact(

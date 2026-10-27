@@ -208,7 +208,7 @@ describe("applicationWorkflow: refer path", () => {
 				outcome: "approve",
 				approvedAmountCents: 5000000,
 				termMonths: 60,
-				officerUserId: "officer-1",
+				officerUserId: "00000000-0000-4000-8000-000000000001",
 			});
 			expect(update).toMatchObject({
 				outcome: "booked",
@@ -222,7 +222,7 @@ describe("applicationWorkflow: refer path", () => {
 				approvedAmountCents: 5000000,
 				termMonths: 60,
 				requestId: REQUEST_A,
-				officerUserId: "officer-1",
+				officerUserId: "00000000-0000-4000-8000-000000000001",
 				notes: null,
 			});
 			const result = await handle.result();
@@ -289,7 +289,7 @@ describe("applicationWorkflow: refer path", () => {
 				outcome: "decline",
 				reasonCode: "INSUFFICIENT_EVIDENCE",
 				notes: "thin file",
-				officerUserId: "officer-1",
+				officerUserId: "00000000-0000-4000-8000-000000000001",
 			});
 			expect(update).toMatchObject({
 				outcome: "declined",
@@ -300,7 +300,7 @@ describe("applicationWorkflow: refer path", () => {
 			expect(mocks.persistOfficerDecline).toHaveBeenCalledWith({
 				applicationId: APP_ID,
 				requestId: REQUEST_A,
-				officerUserId: "officer-1",
+				officerUserId: "00000000-0000-4000-8000-000000000001",
 				reasonCode: "INSUFFICIENT_EVIDENCE",
 				notes: "thin file",
 			});
@@ -340,7 +340,7 @@ describe("applicationWorkflow: refer path", () => {
 				outcome: "decline",
 				reasonCode: "OFFICER_JUDGEMENT",
 				notes: "weighed the cited filing",
-				officerUserId: "officer-1",
+				officerUserId: "00000000-0000-4000-8000-000000000001",
 				research,
 			});
 			expect(update).toMatchObject({ outcome: "declined" });
@@ -348,7 +348,7 @@ describe("applicationWorkflow: refer path", () => {
 			expect(mocks.persistOfficerDecline).toHaveBeenCalledWith({
 				applicationId: APP_ID,
 				requestId: REQUEST_A,
-				officerUserId: "officer-1",
+				officerUserId: "00000000-0000-4000-8000-000000000001",
 				reasonCode: "OFFICER_JUDGEMENT",
 				notes: "weighed the cited filing",
 				research,

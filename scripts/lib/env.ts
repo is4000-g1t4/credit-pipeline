@@ -7,7 +7,7 @@ import dotenv from "dotenv";
 dotenv.config({ path: fileURLToPath(new URL("../../.env", import.meta.url)) });
 
 import { users } from "@credit/db/auth";
-import { resolveWorkspacePath } from "@credit/core";
+import { resolveWorkspacePath } from "@credit/service-kit";
 import type { Db } from "@credit/db/applications";
 import { hashPassword } from "@credit/db/password";
 import { eq } from "drizzle-orm";
@@ -57,6 +57,42 @@ export function requireEnv(name: string): string {
 	const value = process.env[name];
 	if (!value) throw new Error(`demo: ${name} is not set (root .env?)`);
 	return value;
+}
+
+/** Base URL for the `demo:*` HTTP CLIs (gateway). Override with `API_BASE`. */
+export function apiBase(): string {
+	return process.env.API_BASE ?? "http://127.0.0.1:3001";
+}
+
+/** Login failure: `status` is set for non-2xx responses, absent when the
+ * session cookie is missing or the request never completed. */
+export class LoginError extends Error {
+	status?: number;
+
+	constructor(message: string, status?: number) {
+		super(message);
+		this.status = status;
+	}
+}
+
+/** Gateway password login returning the raw `session=...` cookie value.
+ * Throws `LoginError` with the same messages the CLIs used to build
+ * inline (`login <email> failed: HTTP <status>` / `login <email>: no
+ * session cookie`). */
+export async function loginCookie(
+	email: string,
+	password = "demo1234",
+	base: string = apiBase(),
+): Promise<string> {
+	const res = await fetch(`${base}/api/auth/login`, {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ email, password }),
+	});
+	if (!res.ok) throw new LoginError(`login ${email} failed: HTTP ${res.status}`, res.status);
+	const session = (res.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+	if (!session.startsWith("session=")) throw new LoginError(`login ${email}: no session cookie`);
+	return session;
 }
 
 /** Auth-DB user directory: upsert fixture users with the demo password. */

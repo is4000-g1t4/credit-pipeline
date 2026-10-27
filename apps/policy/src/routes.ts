@@ -1,16 +1,16 @@
 import { randomUUID } from "node:crypto";
+import { POLICY_ENGINE_STANDARD_SECTION_IDS } from "@credit/core";
 import {
-	hashCanonical,
-	hashQuote,
-	POLICY_ENGINE_STANDARD_HASH,
-	validateRegistryRefs,
-} from "@credit/core";
-import { HttpError, readJson, requireService, type ServiceVariables } from "@credit/service-kit";
+	HttpError,
+	readJson,
+	requireOfficer,
+	requireService,
+	type ServiceVariables,
+} from "@credit/service-kit";
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import { z } from "zod";
 import {
-	createDrawerToken,
 	validateCaseAnswer,
 	validateNavigatorAnswer,
 	verifyDrawerToken,
@@ -18,10 +18,16 @@ import {
 } from "./answer.js";
 import { policyCaseContextSchema } from "./case-context.js";
 import { verifyCaseToken } from "./case-token.js";
+import {
+	assertRegistryRefs,
+	assertStandardHash,
+	CorpusIntegrityError,
+} from "./corpus-integrity.js";
+import { SERVICE_CASE_EXPLAIN, capBridgeBodies, toBridgeDelivery, type BridgeRow } from "./bridge.js";
 import { classifyScope, hasDirectIdentifier, hmacQuestion } from "./gates.js";
 import { caseRetrievalText, DOCUMENT_FAMILY, policyFamiliesForSignal } from "./mapping.js";
 import { canRead, filterByAcl, rankChunks, type Actor } from "./retrieval.js";
-import type { PolicyDeps, PolicyStore } from "./store.js";
+import type { PolicyChunk, PolicyDeps, PolicyStore } from "./store.js";
 
 const askSchema = z
 	.object({
@@ -86,103 +92,6 @@ const bridgeSearchSchema = exceptionBaseSchema
 		topK: z.number().int().min(1).max(12).optional(),
 	})
 	.strict();
-
-const SECTION_BODY_CAP = 8000;
-const TOTAL_BODY_CAP = 40000;
-const SERVICE_CASE_EXPLAIN: Actor = {
-	id: "service:case_explain",
-	role: "service",
-	policyRoles: [],
-};
-
-interface BridgeRow {
-	policyId: string;
-	policyVersionId: string;
-	policyKey: string;
-	sectionId: string;
-	version: string;
-	heading: string;
-	body: string;
-	effectiveFrom: string;
-	effectiveTo: string | null;
-	contentHash: string;
-}
-
-function capBridgeBodies(
-	rows: BridgeRow[],
-): Array<{ row: BridgeRow; body: string; truncated: boolean }> {
-	let total = 0;
-	return rows.map((row) => {
-		let body = row.body;
-		let truncated = false;
-		if (body.length > SECTION_BODY_CAP) {
-			body = body.slice(0, SECTION_BODY_CAP);
-			truncated = true;
-		}
-		if (total + body.length > TOTAL_BODY_CAP) {
-			const room = TOTAL_BODY_CAP - total;
-			if (room <= 0) {
-				body = "";
-				truncated = true;
-			} else {
-				body = body.slice(0, room);
-				truncated = true;
-			}
-		}
-		total += body.length;
-		return { row, body, truncated };
-	});
-}
-
-function toBridgeDelivery(
-	capped: { row: BridgeRow; body: string; truncated: boolean },
-	secret: string,
-	asOf: string,
-	queryId: string,
-): {
-	policyId: string;
-	policyVersionId: string;
-	policyKey: string;
-	sectionId: string;
-	version: string;
-	heading: string;
-	body: string;
-	truncated: boolean;
-	effectiveFrom: string;
-	effectiveTo: string | null;
-	contentHash: string;
-	quoteHash: string;
-	drawerToken: string;
-} {
-	const { row, body, truncated } = capped;
-	return {
-		policyId: row.policyId,
-		policyVersionId: row.policyVersionId,
-		policyKey: row.policyKey,
-		sectionId: row.sectionId,
-		version: row.version,
-		heading: row.heading,
-		body,
-		truncated,
-		effectiveFrom: row.effectiveFrom,
-		effectiveTo: row.effectiveTo,
-		contentHash: row.contentHash,
-		quoteHash: hashQuote(body),
-		drawerToken: createDrawerToken(secret, {
-			versionId: row.policyVersionId,
-			sectionId: row.sectionId,
-			asOf,
-			queryId,
-		}),
-	};
-}
-
-const requireOfficer = createMiddleware<{ Variables: ServiceVariables }>(async (c, next) => {
-	const me = c.var.user;
-	if (!me) throw new HttpError(401, "UNAUTHENTICATED", "login required");
-	if (me.role !== "officer") throw new HttpError(403, "FORBIDDEN", "officer only");
-	await next();
-});
 
 function today(): string {
 	return new Date().toISOString().slice(0, 10);
@@ -316,6 +225,42 @@ async function settleInvalidAnswer(
 	return { status, limitations: validation.answer.limitations };
 }
 
+/** Shared retrieval pipeline: embed → load chunks → ACL → rank. The ACL
+ * filter always runs before ranking; callers pass endpoint-specific filters,
+ * scopes, and the actor. Returns ranked chunks; callers map section ids. */
+async function retrieveSections(
+	deps: PolicyDeps,
+	input: {
+		queryText: string;
+		conversationId: string;
+		asOf: string;
+		productScope: "individual" | "sme";
+		jurisdiction: string;
+		statuses: Array<"approved" | "retired">;
+		actor: Actor;
+		topK: number;
+		familyFilter?: (chunk: PolicyChunk) => boolean;
+		emptyError?: string;
+	},
+): Promise<PolicyChunk[]> {
+	const active = await requireActiveIndex(deps.store, deps.env);
+	const [vector] = await deps.embedder.embed([input.queryText], {
+		conversationId: input.conversationId,
+	});
+	if (!vector) throw new Error(input.emptyError ?? "policy query embedding is empty");
+	const chunks = await deps.store.loadChunks({
+		asOf: input.asOf,
+		productScope: input.productScope,
+		jurisdiction: input.jurisdiction,
+		statuses: input.statuses,
+		indexVersion: active.indexVersion,
+	});
+	const acls = await deps.store.loadAcls([...new Set(chunks.map((chunk) => chunk.policyId))]);
+	const allowed = filterByAcl(chunks, input.actor, acls);
+	const scoped = input.familyFilter ? allowed.filter(input.familyFilter) : allowed;
+	return rankChunks(input.queryText, vector, scoped.length > 0 ? scoped : allowed, input.topK);
+}
+
 export function createPolicyRoutes(deps: PolicyDeps): Hono<{ Variables: ServiceVariables }> {
 	const app = new Hono<{ Variables: ServiceVariables }>();
 	const { store, env, logger } = deps;
@@ -374,24 +319,17 @@ export function createPolicyRoutes(deps: PolicyDeps): Hono<{ Variables: ServiceV
 			"policy budget settle failed",
 		);
 		try {
-			const active = await requireActiveIndex(store, env);
-			const [vector] = await deps.embedder.embed([question], { conversationId: queryId });
-			if (!vector) throw new Error("policy query embedding is empty");
-			const chunks = await store.loadChunks({
+			const actor = await loadActor(store, me);
+			const ranked = await retrieveSections(deps, {
+				queryText: question,
+				conversationId: queryId,
 				asOf,
 				productScope: productScope(parsed.data.product),
 				jurisdiction: parsed.data.jurisdiction ?? env.jurisdiction,
 				statuses: ["approved"],
-				indexVersion: active.indexVersion,
+				actor,
+				topK: env.retrievalTopK,
 			});
-			const actor = await loadActor(store, me);
-			const acls = await store.loadAcls([...new Set(chunks.map((chunk) => chunk.policyId))]);
-			const ranked = rankChunks(
-				question,
-				vector,
-				filterByAcl(chunks, actor, acls),
-				env.retrievalTopK,
-			);
 			const retrievedIds = ranked.map((chunk) => chunk.sectionId);
 			if (ranked.length === 0) {
 				await logQuery(store, base, "no_match", null, []);
@@ -505,31 +443,23 @@ export function createPolicyRoutes(deps: PolicyDeps): Hono<{ Variables: ServiceV
 			"policy case budget settle failed",
 		);
 		try {
-			const active = await requireActiveIndex(store, env);
 			const retrievalText = caseRetrievalText(caseContext);
-			const [vector] = await deps.embedder.embed([retrievalText], { conversationId: queryId });
-			if (!vector) throw new Error("case query embedding is empty");
-			const chunks = await store.loadChunks({
-				asOf: caseContext.asOf,
-				productScope: caseContext.type === "sme" ? "sme" : "individual",
-				jurisdiction: env.jurisdiction,
-				statuses: ["approved", "retired"],
-				indexVersion: active.indexVersion,
-			});
-			const actor: Actor = { id: "service:case_explain", role: "service", policyRoles: [] };
-			const acls = await store.loadAcls([...new Set(chunks.map((chunk) => chunk.policyId))]);
-			const allowed = filterByAcl(chunks, actor, acls);
 			const families = new Set([
 				...caseContext.signals.flatMap((signal) => policyFamiliesForSignal(signal)),
 				DOCUMENT_FAMILY,
 			]);
-			const scoped = allowed.filter((chunk) => families.has(chunk.policyFamily));
-			const ranked = rankChunks(
-				retrievalText,
-				vector,
-				scoped.length > 0 ? scoped : allowed,
-				env.retrievalTopK,
-			);
+			const ranked = await retrieveSections(deps, {
+				queryText: retrievalText,
+				conversationId: queryId,
+				asOf: caseContext.asOf,
+				productScope: caseContext.type === "sme" ? "sme" : "individual",
+				jurisdiction: env.jurisdiction,
+				statuses: ["approved", "retired"],
+				actor: SERVICE_CASE_EXPLAIN,
+				topK: env.retrievalTopK,
+				familyFilter: (chunk) => families.has(chunk.policyFamily),
+				emptyError: "case query embedding is empty",
+			});
 			const retrievedIds = ranked.map((chunk) => chunk.sectionId);
 			if (ranked.length === 0) {
 				await logQuery(store, base, "no_match", null, []);
@@ -750,23 +680,16 @@ export function createPolicyRoutes(deps: PolicyDeps): Hono<{ Variables: ServiceV
 			"policy exception budget settle failed",
 		);
 		try {
-			const active = await requireActiveIndex(store, env);
-			const [vector] = await deps.embedder.embed([trimmed], { conversationId: queryId });
-			if (!vector) throw new Error("policy query embedding is empty");
-			const chunks = await store.loadChunks({
+			const ranked = await retrieveSections(deps, {
+				queryText: trimmed,
+				conversationId: queryId,
 				asOf: policyAsOf,
 				productScope,
 				jurisdiction: env.jurisdiction,
 				statuses: ["approved", "retired"],
-				indexVersion: active.indexVersion,
-			});
-			const acls = await store.loadAcls([...new Set(chunks.map((chunk) => chunk.policyId))]);
-			const ranked = rankChunks(
-				trimmed,
-				vector,
-				chunks.filter((chunk) => canRead(chunk.policyId, SERVICE_CASE_EXPLAIN, acls)),
+				actor: SERVICE_CASE_EXPLAIN,
 				topK,
-			);
+			});
 			const retrievedIds = ranked.map((chunk) => `${chunk.policyKey}#${chunk.sectionId}`);
 			if (ranked.length === 0) {
 				await logQuery(store, base, "no_match", null, [], 0);
@@ -884,26 +807,17 @@ export function createPolicyRoutes(deps: PolicyDeps): Hono<{ Variables: ServiceV
 				seen.add(key);
 			}
 		}
-		const refs = new Set(union.map((s) => `${s.policyKey}#${s.sectionId}`));
-		for (const kind of ["individual", "sme"] as const) {
-			const validation = validateRegistryRefs(refs, union, kind, true);
-			if (
-				validation.missingRefs.length > 0 ||
-				validation.scopeMismatches.length > 0 ||
-				validation.missingExceptionRuleIds.length > 0
-			) {
-				throw new HttpError(
-					409,
-					"REGISTRY_MAPPING_MISSING",
-					`registry refs missing for ${kind}: ${[...validation.missingRefs, ...validation.scopeMismatches].join(", ")}`,
-				);
-			}
+		// Ref check first: actionable 409 before any standard-body fetch.
+		try {
+			assertRegistryRefs(union);
+		} catch (err) {
+			if (err instanceof CorpusIntegrityError) throw new HttpError(409, err.code, err.message);
+			throw err;
 		}
-		const STANDARD_IDS = ["9.0", "9.1", "9.2", "9.3", "9.4"];
 		const versionPolicyKey = versionCorpus[0]?.policyKey;
 		const standardBodies: Array<{ sectionId: string; body: string }> = [];
 		if (versionPolicyKey === "POL-CR-009") {
-			for (const sectionId of STANDARD_IDS) {
+			for (const sectionId of POLICY_ENGINE_STANDARD_SECTION_IDS) {
 				const section = await store.getSection(version.id, sectionId);
 				if (!section) {
 					throw new HttpError(
@@ -915,7 +829,7 @@ export function createPolicyRoutes(deps: PolicyDeps): Hono<{ Variables: ServiceV
 				standardBodies.push({ sectionId, body: section.body });
 			}
 		} else {
-			for (const sectionId of STANDARD_IDS) {
+			for (const sectionId of POLICY_ENGINE_STANDARD_SECTION_IDS) {
 				const row = await store.getSectionByRef({
 					policyKey: "POL-CR-009",
 					sectionId,
@@ -934,9 +848,11 @@ export function createPolicyRoutes(deps: PolicyDeps): Hono<{ Variables: ServiceV
 			}
 		}
 		void sectionIds;
-		standardBodies.sort((a, b) => (a.sectionId < b.sectionId ? -1 : 1));
-		if (hashCanonical(standardBodies) !== POLICY_ENGINE_STANDARD_HASH) {
-			throw new HttpError(409, "STANDARD_CHANGED", "decision-engine standard 9.0-9.4 has changed");
+		try {
+			assertStandardHash(standardBodies);
+		} catch (err) {
+			if (err instanceof CorpusIntegrityError) throw new HttpError(409, err.code, err.message);
+			throw err;
 		}
 		if (!(await store.hasVersionChunks(version.id))) {
 			throw new HttpError(

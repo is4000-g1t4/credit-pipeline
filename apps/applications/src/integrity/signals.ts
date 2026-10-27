@@ -32,10 +32,6 @@ export interface SignalInput {
 
 const SEVERITY_RANK: Record<IntegritySeverity, number> = { low: 1, medium: 2, high: 3 };
 
-export function severityRank(severity: IntegritySeverity): number {
-	return SEVERITY_RANK[severity];
-}
-
 export function maxSeverity(signals: DeterministicSignal[]): IntegritySeverity | null {
 	let best: IntegritySeverity | null = null;
 	for (const signal of signals) {

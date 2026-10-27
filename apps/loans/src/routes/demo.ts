@@ -4,11 +4,11 @@
 import { computeNextDueDate, dedupePaymentPosted, loanRollup } from "@credit/core";
 import { ewsAlerts, installments, loans, payments, withTx, type Db } from "@credit/db/loans";
 import {
-	GatewayError,
 	HttpError,
 	insertOutbox,
 	readJson,
 	requireOfficer,
+	UUID_RE,
 	writeAudit,
 	type ServiceApp,
 	type ServiceVariables,
@@ -19,8 +19,6 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import { z } from "zod";
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface DemoRouteDeps {
 	db: Db;
@@ -51,14 +49,9 @@ export function demoRoutes(deps: DemoRouteDeps): ServiceApp {
 	const demo = requireDemoOfficer(deps);
 
 	app.post("/api/demo/monitoring/run", demo, async (c) => {
-		try {
-			const { counts, workflowId, timedOut } = await gateway.runMonitoring(true);
-			if (timedOut) return c.json({ workflowId }, 202);
-			return c.json({ ...counts, workflowId });
-		} catch (err) {
-			if (err instanceof GatewayError) throw new HttpError(err.status, err.code, err.message);
-			throw err;
-		}
+		const { counts, workflowId, timedOut } = await gateway.runMonitoring(true);
+		if (timedOut) return c.json({ workflowId }, 202);
+		return c.json({ ...counts, workflowId });
 	});
 
 	app.post("/api/demo/loans/:id/pay", demo, async (c) => {
@@ -204,14 +197,9 @@ export function demoRoutes(deps: DemoRouteDeps): ServiceApp {
 			return moved.length;
 		});
 		// Then run monitoring synchronously and return its counts (FR-8.5).
-		try {
-			const { counts, workflowId, timedOut } = await gateway.runMonitoring(true);
-			if (timedOut) return c.json({ aged, workflowId }, 202);
-			return c.json({ aged, ...counts, workflowId });
-		} catch (err) {
-			if (err instanceof GatewayError) throw new HttpError(err.status, err.code, err.message);
-			throw err;
-		}
+		const { counts, workflowId, timedOut } = await gateway.runMonitoring(true);
+		if (timedOut) return c.json({ aged, workflowId }, 202);
+		return c.json({ aged, ...counts, workflowId });
 	});
 
 	return app;

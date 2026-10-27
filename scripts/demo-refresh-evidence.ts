@@ -1,9 +1,9 @@
 // pnpm demo:refresh-evidence --persona <key> — adds the persona's fresh
 // customer evidence only (SPEC-t17-t18 §2.5). Never attaches to the
 // application: the checklist stays blocked until explicit applicant reuse.
-import { assertDemoMutable } from "@credit/core";
+import { assertDemoMutable } from "@credit/service-kit";
 import { createDb } from "@credit/db/applications";
-import { assertFixtureClock, assertManifest, loadManifest } from "./lib/manifest.js";
+import { loadVerifiedManifest } from "./lib/manifest.js";
 import { cliCustomerConfig, cliFlags, dbUserDirectory, requireEnv } from "./lib/env.js";
 import { refreshDemoEvidence } from "./lib/refresh.js";
 
@@ -12,9 +12,7 @@ if (!persona) throw new Error("usage: bun scripts/demo-refresh-evidence.ts --per
 
 const flags = cliFlags();
 assertDemoMutable(flags);
-const manifest = loadManifest();
-assertFixtureClock(manifest.demoAsOf, process.env.DEMO_AS_OF);
-assertManifest(manifest);
+const manifest = loadVerifiedManifest();
 
 const auth = createDb(requireEnv("AUTH_DATABASE_URL"));
 const { db: appDb, sql } = createDb(requireEnv("APPLICATIONS_DATABASE_URL"));
