@@ -511,7 +511,7 @@ export function explainPolicyRules(
 			effect: "informational",
 			evaluated: true,
 			persisted: persistedCodes.has("SECTOR_REVIEW"),
-			decisionRelevant: persistedCodes.has("SECTOR_REVIEW"),
+			decisionRelevant: false,
 			observedValue: inputs.industry,
 			observed: inputs.industry,
 			threshold: definition.threshold.display,
