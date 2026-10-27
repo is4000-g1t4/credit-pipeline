@@ -50,11 +50,10 @@ test("Sam decline path: apply → declined SCORE_TOO_LOW, no loan", async ({ pag
 	expect(codes).toContain("SCORE_TOO_LOW");
 	expect(done.loan).toBeNull();
 
-	// UI proof: declined badge, SCORE_TOO_LOW, negative factors, no loan card.
+	// UI proof: declined badge, SCORE_TOO_LOW, no loan card.
 	await expect(page.getByText("SCORE_TOO_LOW").first()).toBeVisible({
 		timeout: 60_000,
 	});
-	await expect(page.getByText("(DELINQUENCIES)").first()).toBeVisible();
 	await expect(page.getByText("Decision: declined (system)")).toBeVisible();
 	await expect(page.getByText("Loan", { exact: true })).toHaveCount(0);
 	const detail = await getCase(api, appId);

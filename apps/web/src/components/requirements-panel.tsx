@@ -5,11 +5,13 @@
 // dangerous HTML, nothing document-derived logged.
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
 import {
 	ApiError,
 	apiErrorMessage,
 	fetchCustomerProfile,
 	fetchRequirements,
+	fieldLabel,
 	formatDate,
 	formatDateOnly,
 	isTerminal,
@@ -19,7 +21,7 @@ import {
 	toast,
 	type RequirementsResponse,
 } from "../lib/api";
-import { Card, ErrorBox } from "./ui";
+import { ErrorBox, Panel } from "./ubs";
 
 /** Reason code → applicant-facing action. Unknown codes render as-is. */
 function actionFor(kind: string, reason: string): string {
@@ -40,15 +42,15 @@ function actionFor(kind: string, reason: string): string {
 function BlockerList({ requirements }: { requirements: RequirementsResponse }) {
 	const entries = Object.entries(requirements.blockers);
 	if (entries.length === 0) {
-		return <p className="text-sm text-green-800">All hard requirements are met.</p>;
+		return <p className="text-sm text-success-ink">All hard requirements are met.</p>;
 	}
 	return (
 		<ul className="space-y-1.5">
 			{entries.map(([key, reasons]) => (
-				<li key={key} className="rounded border border-red-200 bg-red-50 p-2 text-sm">
-					<span className="font-medium">{key}</span>
-					<span className="text-red-800"> — {reasons.join(", ")}</span>
-					<p className="mt-0.5 text-xs text-gray-600">{actionFor(key, reasons[0] ?? "")}</p>
+				<li key={key} className="rounded-sm border border-rule bg-tag-red p-2 text-sm">
+					<span className="font-medium text-ink">{key}</span>
+					<span className="text-danger-ink"> — {reasons.join(", ")}</span>
+					<p className="mt-0.5 text-xs text-slate">{actionFor(key, reasons[0] ?? "")}</p>
 				</li>
 			))}
 		</ul>
@@ -89,7 +91,7 @@ function ReuseList({
 	}
 
 	if (requirements.reusableDocuments.length === 0) {
-		return <p className="text-sm text-gray-500">No reusable evidence — upload fresh documents.</p>;
+		return <p className="text-sm text-slate">No reusable evidence — upload fresh documents.</p>;
 	}
 	return (
 		<div>
@@ -102,23 +104,24 @@ function ReuseList({
 				{requirements.reusableDocuments.map((d) => (
 					<li
 						key={d.customerDocumentId}
-						className="flex flex-wrap items-center justify-between gap-2 rounded border border-gray-200 p-2 text-sm"
+						className="flex flex-wrap items-center justify-between gap-2 rounded-sm border border-rule p-2 text-sm"
 					>
-						<span>
-							<span className="font-medium">{d.kind}</span>{" "}
-							<span className="text-xs text-gray-500">
+						<span className="text-ink">
+							<span className="font-medium">{fieldLabel(d.kind)}</span>{" "}
+							<span className="text-xs text-slate">
 								period {d.periodEnd ?? d.documentDate ?? "unknown"} · reusable
 							</span>
 						</span>
-						<button
+						<Button
 							type="button"
+							variant="outline"
+							size="sm"
 							onClick={() => void reuse(d.customerDocumentId, d.kind)}
 							disabled={busyId !== null}
 							aria-label={`Reuse ${d.kind} evidence`}
-							className="rounded border border-gray-300 px-3 py-1 text-sm disabled:opacity-50"
 						>
 							{busyId === d.customerDocumentId ? "Attaching…" : "Reuse"}
-						</button>
+						</Button>
 					</li>
 				))}
 			</ul>
@@ -167,18 +170,17 @@ function SubmitButton({
 					<ErrorBox message={error} />
 				</div>
 			)}
-			<button
+			<Button
 				type="button"
 				onClick={() => void submit()}
 				disabled={!ready || busy}
 				aria-label="Submit draft application"
 				title={ready ? undefined : "Blocked until all hard requirements are met"}
-				className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
 			>
 				{busy ? "Submitting…" : "Submit application"}
-			</button>
+			</Button>
 			{!ready && (
-				<p className="mt-1 text-xs text-gray-500">
+				<p className="mt-1 text-xs text-slate">
 					Blocked until every hard requirement above is met.
 				</p>
 			)}
@@ -208,10 +210,10 @@ export function RequirementsPanel({
 	};
 
 	return (
-		<Card title="Requirements">
+		<Panel title="Requirements" outline>
 			<div aria-live="polite">
 				{requirements.isPending ? (
-					<p className="text-sm text-gray-500">Loading checklist…</p>
+					<p className="text-sm text-slate">Loading checklist…</p>
 				) : requirements.isError ? (
 					<ErrorBox
 						message={apiErrorMessage(requirements.error)}
@@ -221,23 +223,25 @@ export function RequirementsPanel({
 					<div className="space-y-3">
 						<p className="text-sm">
 							{requirements.data.readyToSubmit ? (
-								<span className="font-medium text-green-800">Ready to submit.</span>
+								<span className="font-medium text-success-ink">Ready to submit.</span>
 							) : (
-								<span className="font-medium text-red-700">Not ready to submit.</span>
+								<span className="font-medium text-danger-ink">Not ready to submit.</span>
 							)}{" "}
-							<span className="text-xs text-gray-500">
+							<span className="text-xs text-slate">
 								Policy {requirements.data.policyVersion} · as of{" "}
 								{formatDate(requirements.data.asOf)}
 							</span>
 						</p>
 						<div>
-							<h3 className="mb-1 text-sm font-semibold">Hard requirements</h3>
+							<h3 className="mb-1 text-sm font-medium text-ink">Hard requirements</h3>
 							<BlockerList requirements={requirements.data} />
 						</div>
 						{requirements.data.warnings.length > 0 && (
 							<div>
-								<h3 className="mb-1 text-sm font-semibold">Warnings (do not block submit)</h3>
-								<ul className="space-y-1 text-sm text-gray-600">
+								<h3 className="mb-1 text-sm font-medium text-ink">
+									Warnings (do not block submit)
+								</h3>
+								<ul className="space-y-1 text-sm text-slate">
 									{requirements.data.warnings.map((w, i) => (
 										<li key={`${w.code}-${w.kind ?? w.field ?? i}`}>
 											{w.code}
@@ -249,7 +253,7 @@ export function RequirementsPanel({
 							</div>
 						)}
 						<div>
-							<h3 className="mb-1 text-sm font-semibold">Reusable evidence</h3>
+							<h3 className="mb-1 text-sm font-medium text-ink">Reusable evidence</h3>
 							<ReuseList
 								applicationId={applicationId}
 								requirements={requirements.data}
@@ -257,20 +261,20 @@ export function RequirementsPanel({
 							/>
 						</div>
 						<div className="text-sm">
-							<h3 className="mb-1 text-sm font-semibold">KYC</h3>
-							<p className="text-gray-600">
+							<h3 className="mb-1 text-sm font-medium text-ink">KYC</h3>
+							<p className="text-slate">
 								{requirements.data.kyc.status ?? "no profile"} ·{" "}
 								{requirements.data.kyc.expiresAt
 									? `expires ${formatDateOnly(requirements.data.kyc.expiresAt)}`
 									: "no expiry on file"}
 							</p>
 							{requirements.data.prefill.reused.length > 0 && (
-								<p className="mt-1 text-xs text-gray-500">
+								<p className="mt-1 text-xs text-slate">
 									Reused profile fields: {requirements.data.prefill.reused.join(", ")}
 								</p>
 							)}
 							{requirements.data.prefill.edited.length > 0 && (
-								<p className="mt-1 text-xs text-gray-500">
+								<p className="mt-1 text-xs text-slate">
 									Edited fields: {requirements.data.prefill.edited.join(", ")}
 								</p>
 							)}
@@ -285,7 +289,7 @@ export function RequirementsPanel({
 					</div>
 				)}
 			</div>
-		</Card>
+		</Panel>
 	);
 }
 
@@ -300,29 +304,27 @@ export function CustomerSnapshot() {
 	if (profile.isPending || profile.isError || !profile.data) return null;
 	const { profile: p, accounts, documents } = profile.data;
 	return (
-		<Card title="Your customer profile">
-			<dl className="divide-y divide-gray-100 text-sm">
+		<Panel title="Your customer profile" outline>
+			<dl className="divide-y divide-rule text-sm">
 				<div className="flex flex-wrap justify-between gap-2 py-1">
-					<dt className="text-gray-500">KYC</dt>
-					<dd className="font-medium">
+					<dt className="text-slate">KYC</dt>
+					<dd className="font-medium text-ink">
 						{p.kycStatus}
 						{p.kycFresh ? "" : " (not fresh)"} ·{" "}
-						{p.kycExpiresAt
-							? `expires ${formatDateOnly(p.kycExpiresAt)}`
-							: "no expiry on file"}
+						{p.kycExpiresAt ? `expires ${formatDateOnly(p.kycExpiresAt)}` : "no expiry on file"}
 					</dd>
 				</div>
 				<div className="flex flex-wrap justify-between gap-2 py-1">
-					<dt className="text-gray-500">Accounts</dt>
-					<dd className="font-medium">
+					<dt className="text-slate">Accounts</dt>
+					<dd className="font-medium text-ink">
 						{accounts.length === 0
 							? "none on file"
 							: accounts.map((a) => `${a.bankName} ${a.maskedNumber}`).join("; ")}
 					</dd>
 				</div>
 				<div className="flex flex-wrap justify-between gap-2 py-1">
-					<dt className="text-gray-500">Evidence on file</dt>
-					<dd className="font-medium">
+					<dt className="text-slate">Evidence on file</dt>
+					<dd className="font-medium text-ink">
 						{documents.length === 0
 							? "none"
 							: documents
@@ -334,6 +336,6 @@ export function CustomerSnapshot() {
 					</dd>
 				</div>
 			</dl>
-		</Card>
+		</Panel>
 	);
 }

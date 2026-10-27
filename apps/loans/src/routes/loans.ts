@@ -13,11 +13,39 @@ import {
 	writeAudit,
 	type ServiceApp,
 } from "@credit/service-kit";
-import { and, count, desc, eq, inArray, lte } from "drizzle-orm";
+import { and, count, desc, eq, inArray, lte, sql, sum } from "drizzle-orm";
 import { Hono } from "hono";
 import type { LoansEnv } from "../env.js";
+import { buildSeries, toCents, weekBuckets } from "../portfolio.js";
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+const LOAN_STATUS_FILTER = ["active", "overdue", "closed"] as const;
+type LoanStatusFilter = (typeof LOAN_STATUS_FILTER)[number];
+/** Offset cap for the bounded loan page (SPEC §5): deep scans stay bounded
+ * until the (disbursed_at, id) index follow-up lands. */
+const OFFSET_CAP = 1000;
+
+function parsePage(query: (name: string) => string | undefined): { limit: number; offset: number } {
+	let limit = 50;
+	const rawLimit = query("limit");
+	if (rawLimit !== undefined) {
+		const n = Number(rawLimit);
+		if (!Number.isFinite(n)) throw new HttpError(400, "VALIDATION_ERROR", "invalid limit");
+		limit = Math.min(100, Math.max(1, Math.floor(n)));
+	}
+	let offset = 0;
+	const rawOffset = query("offset");
+	if (rawOffset !== undefined) {
+		const n = Number(rawOffset);
+		if (!Number.isFinite(n)) throw new HttpError(400, "VALIDATION_ERROR", "invalid offset");
+		if (Math.floor(n) > OFFSET_CAP) {
+			throw new HttpError(400, "VALIDATION_ERROR", "offset exceeds 1000");
+		}
+		offset = Math.max(0, Math.floor(n));
+	}
+	return { limit, offset };
+}
 
 export function summarizeLoan(loan: typeof loans.$inferSelect): Record<string, unknown> {
 	return {
@@ -53,12 +81,36 @@ export function loansRoutes(deps: LoansRouteDeps): ServiceApp {
 
 	app.get("/api/loans", async (c) => {
 		const me = c.var.user;
-		const rows = await db
-			.select()
-			.from(loans)
-			.where(me.role === "officer" ? undefined : eq(loans.applicantUserId, me.id))
-			.orderBy(desc(loans.disbursedAt));
-		return c.json({ items: rows.map((loan) => summarizeLoan(loan)) });
+		const status = c.req.query("status");
+		if (status !== undefined && !(LOAN_STATUS_FILTER as readonly string[]).includes(status)) {
+			throw new HttpError(400, "VALIDATION_ERROR", "unknown status");
+		}
+		const { limit, offset } = parsePage((name) => c.req.query(name));
+		const scope = me.role === "officer" ? undefined : eq(loans.applicantUserId, me.id);
+		const statusCond =
+			status === undefined ? undefined : eq(loans.status, status as LoanStatusFilter);
+		const where = scope ? (statusCond ? and(scope, statusCond) : scope) : statusCond;
+		const [totalRows, rows] = await Promise.all([
+			db.select({ n: count() }).from(loans).where(where),
+			db
+				.select()
+				.from(loans)
+				.where(where)
+				.orderBy(desc(loans.disbursedAt), desc(loans.id))
+				.limit(limit)
+				.offset(offset),
+		]);
+		const total = totalRows[0]?.n ?? 0;
+		const items = rows.map((loan) => summarizeLoan(loan));
+		const done = offset + items.length >= total;
+		return c.json({
+			items,
+			total,
+			limit,
+			offset,
+			nextOffset: !done && offset + limit <= OFFSET_CAP ? offset + limit : null,
+			truncated: !done,
+		});
 	});
 
 	app.get("/api/loans/:id", async (c) => {
@@ -322,6 +374,99 @@ export function loansRoutes(deps: LoansRouteDeps): ServiceApp {
 			.from(loans)
 			.groupBy(loans.status);
 		return c.json({ loans: Object.fromEntries(loanCounts.map((r) => [r.status, r.n])) });
+	});
+
+	// Portfolio book summary (SPEC §5): current-book aggregates, the 12-week
+	// booked series in the SGT reporting week, composition by product, and
+	// open EWS alerts on current-book loans. Officer-signed; the portfolio
+	// service proxies this for `/api/portfolio/summary`.
+	app.get("/internal/portfolio/summary", requireOfficerRole, async (c) => {
+		const currentBook = inArray(loans.status, ["active", "overdue"]);
+		const [bookRows, overdueRows, compositionRows] = await Promise.all([
+			db
+				.select({
+					principal: sum(loans.principalCents),
+					outstanding: sum(loans.outstandingCents),
+					n: count(),
+				})
+				.from(loans)
+				.where(currentBook),
+			db
+				.select({ outstanding: sum(loans.outstandingCents), n: count() })
+				.from(loans)
+				.where(eq(loans.status, "overdue")),
+			db
+				.select({ product: loans.product, outstanding: sum(loans.outstandingCents) })
+				.from(loans)
+				.where(currentBook)
+				.groupBy(loans.product),
+		]);
+		// Weekly booked principal in the SGT reporting week (Monday start,
+		// matching reportingWeekStart); closed loans count (they were booked
+		// that week). Zero-filled in TS below. Only the 12-week window is
+		// scanned; older rows cannot enter a bucket.
+		const weeks = weekBuckets();
+		const seriesDb = (await db.execute(sql`
+			SELECT to_char(
+					date_trunc('week', disbursed_at AT TIME ZONE 'Asia/Singapore'),
+					'YYYY-MM-DD'
+				) AS week,
+				sum(principal_cents)::bigint AS booked
+			FROM loans
+			WHERE disbursed_at >= (${weeks[0]}::date::timestamp AT TIME ZONE 'Asia/Singapore')
+			GROUP BY 1
+		`)) as unknown as Array<{ week: string; booked: string | number | bigint | null }>;
+		const alertWhere = and(eq(ewsAlerts.status, "open"), currentBook);
+		const [alertCountRows, alertRows] = await Promise.all([
+			db
+				.select({ n: count() })
+				.from(ewsAlerts)
+				.innerJoin(loans, eq(ewsAlerts.loanId, loans.id))
+				.where(alertWhere),
+			db
+				.select({
+					id: ewsAlerts.id,
+					loanId: ewsAlerts.loanId,
+					reference: loans.applicationReference,
+					type: ewsAlerts.type,
+					severity: ewsAlerts.severity,
+					status: ewsAlerts.status,
+					createdAt: ewsAlerts.createdAt,
+				})
+				.from(ewsAlerts)
+				.innerJoin(loans, eq(ewsAlerts.loanId, loans.id))
+				.where(alertWhere)
+				.orderBy(desc(ewsAlerts.createdAt), desc(ewsAlerts.id))
+				.limit(20),
+		]);
+		const bookedByWeek: Record<string, number> = {};
+		for (const row of seriesDb) bookedByWeek[String(row.week)] = toCents(row.booked);
+		const alertsTotal = alertCountRows[0]?.n ?? 0;
+		return c.json({
+			principalCents: toCents(bookRows[0]?.principal),
+			outstandingCents: toCents(bookRows[0]?.outstanding),
+			overdueExposureCents: toCents(overdueRows[0]?.outstanding),
+			activeLoans: bookRows[0]?.n ?? 0,
+			overdueLoans: overdueRows[0]?.n ?? 0,
+			openAlerts: alertsTotal,
+			alertsTotal,
+			alertsTruncated: alertsTotal > alertRows.length,
+			coverageRatio: null,
+			series: buildSeries(weeks, bookedByWeek),
+			composition: compositionRows.map((r) => ({
+				product: r.product,
+				outstandingCents: toCents(r.outstanding),
+			})),
+			alerts: alertRows.map((a) => ({
+				id: a.id,
+				loanId: a.loanId,
+				reference: a.reference,
+				type: a.type,
+				severity: a.severity,
+				status: a.status,
+				createdAt: a.createdAt.toISOString(),
+			})),
+		});
 	});
 
 	return app;

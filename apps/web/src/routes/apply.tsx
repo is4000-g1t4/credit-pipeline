@@ -8,7 +8,11 @@ import {
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Card, ErrorBox, Field, inputCls, Page } from "../components/ui";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Steps } from "../components/applicant/steps";
+import { ErrorBox, Money, Overline, Page, PageHead, Panel, inputCls } from "../components/ubs";
 import {
 	ApiError,
 	api,
@@ -16,7 +20,10 @@ import {
 	createDraft,
 	fetchCustomerProfile,
 	formatDateOnly,
+	formatMoney,
+	productLabel,
 	toast,
+	typeLabel,
 	type CustomerProfileResponse,
 } from "../lib/api";
 import {
@@ -35,6 +42,13 @@ export const Route = createFileRoute("/apply")({
 		</RequireAuth>
 	),
 });
+
+const STEP_TITLES = ["Loan details", "About you", "Review & consent"];
+const STEP_SUBTITLES = [
+	"Tell us what you need and for how long. You can change everything before you submit.",
+	"We use this to verify your identity. It is encrypted and never shared with other clients.",
+	"Review the details, choose your consents, and submit. Nothing is sent before this step.",
+];
 
 function Wizard() {
 	const me = useMe();
@@ -243,24 +257,25 @@ function Wizard() {
 		}
 	}
 
+	const amountCents = dollars(amount) ?? 0;
+
 	return (
 		<Page>
-			<h1 className="mb-1 text-xl font-bold">New application</h1>
-			<p className="mb-4 text-sm text-gray-500">Step {step} of 3</p>
+			<PageHead title={STEP_TITLES[step - 1]} subtitle={STEP_SUBTITLES[step - 1]} />
+			<div className="mb-8">
+				<Steps steps={STEP_TITLES} current={step - 1} />
+			</div>
 			{profileQuery.isPending && (
-				<p className="mb-4 text-sm text-gray-500" aria-live="polite">
+				<p className="mb-4 text-sm text-slate" aria-live="polite">
 					Checking your customer profile…
 				</p>
 			)}
 			{profile && (
-				<div
-					className="mb-4 rounded border border-blue-200 bg-blue-50 p-3 text-sm"
-					aria-live="polite"
-				>
-					<p className="font-medium text-blue-900">
+				<div className="mb-6 rounded-sm bg-warm p-4 text-sm" aria-live="polite">
+					<p className="font-medium text-ink">
 						Prefilled from your customer profile — review, confirm, or edit every field.
 					</p>
-					<p className="mt-1 text-xs text-blue-800">
+					<p className="mt-1 text-xs text-slate">
 						KYC {profile.profile.kycStatus}
 						{profile.profile.kycFresh ? "" : " (not fresh)"}
 						{profile.profile.kycExpiresAt
@@ -272,411 +287,518 @@ function Wizard() {
 					</p>
 				</div>
 			)}
-			{step === 1 && (
-				<Card title="Loan details">
-					<div className="grid gap-3 sm:grid-cols-2">
-						<Field label="Borrower type">
-							<select
-								id="field-borrower-type"
-								value={borrowerType}
-								onChange={(e) => setBorrowerType(e.target.value as "individual" | "sme")}
-								className={inputCls}
-							>
-								<option value="individual">Individual → personal loan</option>
-								<option value="sme">SME → term loan</option>
-							</select>
-						</Field>
-						<Field label="Product">
-							<input
-								id="field-product"
-								value={product}
-								disabled
-								className={`${inputCls} bg-gray-100`}
-							/>
-						</Field>
-						<Field label="Amount (USD)" error={errors.amount ?? errors.amountCents}>
-							<input
-								id="field-amount-usd"
-								inputMode="decimal"
-								value={amount}
-								onChange={(e) => setAmount(e.target.value)}
-								className={inputCls}
-							/>
-						</Field>
-						<Field label="Term (months)" error={errors.term ?? errors.termMonths}>
-							<input
-								id="field-term-months"
-								inputMode="numeric"
-								value={term}
-								onChange={(e) => setTerm(e.target.value)}
-								className={inputCls}
-							/>
-						</Field>
-						<div className="sm:col-span-2">
-							<Field label="Purpose" error={errors.purpose}>
-								<input
-									id="field-purpose"
-									value={purpose}
-									onChange={(e) => setPurpose(e.target.value)}
-									className={inputCls}
-								/>
-							</Field>
-						</div>
-					</div>
-				</Card>
-			)}
-			{step === 2 && (
-				<div className="space-y-4">
-					<Card title="Identity">
-						{prefilled.filter((f) => f.startsWith("identity.")).length > 0 && (
-							<p className="mb-2 text-xs text-gray-500">
-								From your customer profile (
-								{prefilled
-									.filter((f) => f.startsWith("identity."))
-									.map((f) => f.slice("identity.".length))
-									.join(", ")}
-								) — editable; changes are recorded as edited, not reused.
-							</p>
-						)}
-						<div className="grid gap-3 sm:grid-cols-2">
-							<Field label="Full name" error={errors["identity.fullName"]}>
-								<input
-									id="field-full-name"
-									value={identity.fullName}
-									onChange={(e) => setI("fullName", e.target.value)}
-									className={inputCls}
-								/>
-							</Field>
-							<Field label="Date of birth (YYYY-MM-DD)" error={errors["identity.dob"]}>
-								<input
-									id="field-date-of-birth"
-									placeholder="1990-05-14"
-									value={identity.dob}
-									onChange={(e) => setI("dob", e.target.value)}
-									className={inputCls}
-								/>
-							</Field>
-							<Field label="National ID" error={errors["identity.nationalId"]}>
-								<input
-									id="field-national-id"
-									value={identity.nationalId}
-									onChange={(e) => setI("nationalId", e.target.value)}
-									className={inputCls}
-								/>
-							</Field>
-							<Field label="Email" error={errors["identity.email"]}>
-								<input
-									id="field-email"
-									type="email"
-									value={identity.email}
-									onChange={(e) => setI("email", e.target.value)}
-									className={inputCls}
-								/>
-							</Field>
-							<Field label="Phone" error={errors["identity.phone"]}>
-								<input
-									id="field-phone"
-									value={identity.phone}
-									onChange={(e) => setI("phone", e.target.value)}
-									className={inputCls}
-								/>
-							</Field>
-							<Field label="Address" error={errors["identity.address"]}>
-								<input
-									id="field-address"
-									value={identity.address}
-									onChange={(e) => setI("address", e.target.value)}
-									className={inputCls}
-								/>
-							</Field>
-							<Field label="City" error={errors["identity.city"]}>
-								<input
-									id="field-city"
-									value={identity.city}
-									onChange={(e) => setI("city", e.target.value)}
-									className={inputCls}
-								/>
-							</Field>
-						</div>
-					</Card>
-					{borrowerType === "individual" ? (
-						<Card title="Financial (individual)">
-							<div className="grid gap-3 sm:grid-cols-2">
-								<Field label="Employment status">
+			<div className="grid gap-8 lg:grid-cols-3">
+				<div className="space-y-4 lg:col-span-2">
+					{step === 1 && (
+						<Panel title="Loan details" outline>
+							<div className="grid gap-4 sm:grid-cols-2">
+								<div className="space-y-2">
+									<Label htmlFor="field-borrower-type">Borrower type</Label>
 									<select
-										id="field-employment-status"
-										value={ind.employmentStatus}
-										onChange={(e) => setN("employmentStatus", e.target.value)}
+										id="field-borrower-type"
+										value={borrowerType}
+										onChange={(e) => setBorrowerType(e.target.value as "individual" | "sme")}
 										className={inputCls}
 									>
-										<option value="employed">Employed</option>
-										<option value="self_employed">Self-employed</option>
-										<option value="retired">Retired</option>
-										<option value="student">Student</option>
+										<option value="individual">Individual → personal loan</option>
+										<option value="sme">SME → term loan</option>
 									</select>
-								</Field>
-								<Field label="Employer name" error={errors["individual.employerName"]}>
-									<input
-										id="field-employer-name"
-										value={ind.employerName}
-										onChange={(e) => setN("employerName", e.target.value)}
-										className={inputCls}
-									/>
-								</Field>
-								<Field label="Employment years">
-									<input
-										id="field-employment-years"
-										inputMode="numeric"
-										value={ind.employmentYears}
-										onChange={(e) => setN("employmentYears", e.target.value)}
-										className={inputCls}
-									/>
-								</Field>
-								<Field label="Bank relationship (years)">
-									<input
-										id="field-bank-relationship-years"
-										inputMode="numeric"
-										value={ind.bankRelationshipYears}
-										onChange={(e) => setN("bankRelationshipYears", e.target.value)}
-										className={inputCls}
-									/>
-								</Field>
-								<Field label="Monthly net income (USD)" error={errors["individual.monthlyIncome"]}>
-									<input
-										id="field-monthly-income"
+								</div>
+								<div className="space-y-2">
+									<span className="text-xs font-medium text-slate">Product</span>
+									<p
+										id="field-product"
+										className="flex h-12 items-center border-b border-rule-strong text-base text-ink"
+									>
+										{productLabel(product)}
+									</p>
+								</div>
+								<div className="space-y-2">
+									<Label htmlFor="field-amount-usd">Amount (USD)</Label>
+									<Input
+										id="field-amount-usd"
 										inputMode="decimal"
-										value={ind.monthlyIncome}
-										onChange={(e) => setN("monthlyIncome", e.target.value)}
-										className={inputCls}
+										value={amount}
+										onChange={(e) => setAmount(e.target.value)}
 									/>
-								</Field>
-								<Field
-									label="Existing debt payments (USD/mo)"
-									error={errors["individual.existingDebt"]}
-								>
-									<input
-										id="field-existing-debt"
-										inputMode="decimal"
-										value={ind.existingDebt}
-										onChange={(e) => setN("existingDebt", e.target.value)}
-										className={inputCls}
+									{(errors.amount ?? errors.amountCents) && (
+										<p role="alert" className="text-xs text-danger-ink">
+											{errors.amount ?? errors.amountCents}
+										</p>
+									)}
+								</div>
+								<div className="space-y-2">
+									<Label htmlFor="field-term-months">Term (months)</Label>
+									<Input
+										id="field-term-months"
+										inputMode="numeric"
+										value={term}
+										onChange={(e) => setTerm(e.target.value)}
 									/>
-								</Field>
+									{(errors.term ?? errors.termMonths) && (
+										<p role="alert" className="text-xs text-danger-ink">
+											{errors.term ?? errors.termMonths}
+										</p>
+									)}
+								</div>
+								<div className="space-y-2 sm:col-span-2">
+									<Label htmlFor="field-purpose">Purpose</Label>
+									<Input
+										id="field-purpose"
+										value={purpose}
+										onChange={(e) => setPurpose(e.target.value)}
+									/>
+									{errors.purpose && (
+										<p role="alert" className="text-xs text-danger-ink">
+											{errors.purpose}
+										</p>
+									)}
+								</div>
 							</div>
-						</Card>
-					) : (
-						<Card title="Business (SME)">
-							{prefilled.filter((f) => f.startsWith("sme.")).length > 0 && (
-								<p className="mb-2 text-xs text-gray-500">
-									From your customer profile (
-									{prefilled
-										.filter((f) => f.startsWith("sme."))
-										.map((f) => f.slice("sme.".length))
-										.join(", ")}
-									) — editable; changes are recorded as edited, not reused.
+						</Panel>
+					)}
+					{step === 2 && (
+						<div className="space-y-4">
+							<Panel title="Identity" outline>
+								{prefilled.filter((f) => f.startsWith("identity.")).length > 0 && (
+									<p className="mb-4 text-xs text-slate">
+										From your customer profile (
+										{prefilled
+											.filter((f) => f.startsWith("identity."))
+											.map((f) => f.slice("identity.".length))
+											.join(", ")}{" "}
+										) — editable; changes are recorded as edited, not reused.
+									</p>
+								)}
+								<div className="grid gap-4 sm:grid-cols-2">
+									<div className="space-y-2">
+										<Label htmlFor="field-full-name">Full name</Label>
+										<Input
+											id="field-full-name"
+											value={identity.fullName}
+											onChange={(e) => setI("fullName", e.target.value)}
+										/>
+										{errors["identity.fullName"] && (
+											<p role="alert" className="text-xs text-danger-ink">
+												{errors["identity.fullName"]}
+											</p>
+										)}
+									</div>
+									<div className="space-y-2">
+										<Label htmlFor="field-date-of-birth">Date of birth (YYYY-MM-DD)</Label>
+										<Input
+											id="field-date-of-birth"
+											placeholder="1990-05-14"
+											value={identity.dob}
+											onChange={(e) => setI("dob", e.target.value)}
+										/>
+										{errors["identity.dob"] && (
+											<p role="alert" className="text-xs text-danger-ink">
+												{errors["identity.dob"]}
+											</p>
+										)}
+									</div>
+									<div className="space-y-2">
+										<Label htmlFor="field-national-id">National ID</Label>
+										<Input
+											id="field-national-id"
+											value={identity.nationalId}
+											onChange={(e) => setI("nationalId", e.target.value)}
+										/>
+										{errors["identity.nationalId"] && (
+											<p role="alert" className="text-xs text-danger-ink">
+												{errors["identity.nationalId"]}
+											</p>
+										)}
+									</div>
+									<div className="space-y-2">
+										<Label htmlFor="field-email">Email</Label>
+										<Input
+											id="field-email"
+											type="email"
+											value={identity.email}
+											onChange={(e) => setI("email", e.target.value)}
+										/>
+										{errors["identity.email"] && (
+											<p role="alert" className="text-xs text-danger-ink">
+												{errors["identity.email"]}
+											</p>
+										)}
+									</div>
+									<div className="space-y-2">
+										<Label htmlFor="field-phone">Phone</Label>
+										<Input
+											id="field-phone"
+											value={identity.phone}
+											onChange={(e) => setI("phone", e.target.value)}
+										/>
+										{errors["identity.phone"] && (
+											<p role="alert" className="text-xs text-danger-ink">
+												{errors["identity.phone"]}
+											</p>
+										)}
+									</div>
+									<div className="space-y-2">
+										<Label htmlFor="field-address">Address</Label>
+										<Input
+											id="field-address"
+											value={identity.address}
+											onChange={(e) => setI("address", e.target.value)}
+										/>
+										{errors["identity.address"] && (
+											<p role="alert" className="text-xs text-danger-ink">
+												{errors["identity.address"]}
+											</p>
+										)}
+									</div>
+									<div className="space-y-2 sm:col-span-2">
+										<Label htmlFor="field-city">City</Label>
+										<Input
+											id="field-city"
+											value={identity.city}
+											onChange={(e) => setI("city", e.target.value)}
+										/>
+										{errors["identity.city"] && (
+											<p role="alert" className="text-xs text-danger-ink">
+												{errors["identity.city"]}
+											</p>
+										)}
+									</div>
+								</div>
+							</Panel>
+							{borrowerType === "individual" ? (
+								<Panel title="Financial (individual)" outline>
+									<div className="grid gap-4 sm:grid-cols-2">
+										<div className="space-y-2">
+											<Label htmlFor="field-employment-status">Employment status</Label>
+											<select
+												id="field-employment-status"
+												value={ind.employmentStatus}
+												onChange={(e) => setN("employmentStatus", e.target.value)}
+												className={inputCls}
+											>
+												<option value="employed">Employed</option>
+												<option value="self_employed">Self-employed</option>
+												<option value="retired">Retired</option>
+												<option value="student">Student</option>
+											</select>
+										</div>
+										<div className="space-y-2">
+											<Label htmlFor="field-employer-name">Employer name</Label>
+											<Input
+												id="field-employer-name"
+												value={ind.employerName}
+												onChange={(e) => setN("employerName", e.target.value)}
+											/>
+											{errors["individual.employerName"] && (
+												<p role="alert" className="text-xs text-danger-ink">
+													{errors["individual.employerName"]}
+												</p>
+											)}
+										</div>
+										<div className="space-y-2">
+											<Label htmlFor="field-employment-years">Employment years</Label>
+											<Input
+												id="field-employment-years"
+												inputMode="numeric"
+												value={ind.employmentYears}
+												onChange={(e) => setN("employmentYears", e.target.value)}
+											/>
+										</div>
+										<div className="space-y-2">
+											<Label htmlFor="field-bank-relationship-years">
+												Bank relationship (years)
+											</Label>
+											<Input
+												id="field-bank-relationship-years"
+												inputMode="numeric"
+												value={ind.bankRelationshipYears}
+												onChange={(e) => setN("bankRelationshipYears", e.target.value)}
+											/>
+										</div>
+										<div className="space-y-2">
+											<Label htmlFor="field-monthly-income">Monthly net income (USD)</Label>
+											<Input
+												id="field-monthly-income"
+												inputMode="decimal"
+												value={ind.monthlyIncome}
+												onChange={(e) => setN("monthlyIncome", e.target.value)}
+											/>
+											{errors["individual.monthlyIncome"] && (
+												<p role="alert" className="text-xs text-danger-ink">
+													{errors["individual.monthlyIncome"]}
+												</p>
+											)}
+										</div>
+										<div className="space-y-2">
+											<Label htmlFor="field-existing-debt">Existing debt payments (USD/mo)</Label>
+											<Input
+												id="field-existing-debt"
+												inputMode="decimal"
+												value={ind.existingDebt}
+												onChange={(e) => setN("existingDebt", e.target.value)}
+											/>
+											{errors["individual.existingDebt"] && (
+												<p role="alert" className="text-xs text-danger-ink">
+													{errors["individual.existingDebt"]}
+												</p>
+											)}
+										</div>
+									</div>
+								</Panel>
+							) : (
+								<Panel title="Business (SME)" outline>
+									{prefilled.filter((f) => f.startsWith("sme.")).length > 0 && (
+										<p className="mb-4 text-xs text-slate">
+											From your customer profile (
+											{prefilled
+												.filter((f) => f.startsWith("sme."))
+												.map((f) => f.slice("sme.".length))
+												.join(", ")}{" "}
+											) — editable; changes are recorded as edited, not reused.
+										</p>
+									)}
+									<div className="grid gap-4 sm:grid-cols-2">
+										<div className="space-y-2">
+											<Label htmlFor="field-company-name">Company name</Label>
+											<Input
+												id="field-company-name"
+												value={sme.companyName}
+												onChange={(e) => setS("companyName", e.target.value)}
+											/>
+											{errors["sme.companyName"] && (
+												<p role="alert" className="text-xs text-danger-ink">
+													{errors["sme.companyName"]}
+												</p>
+											)}
+										</div>
+										<div className="space-y-2">
+											<Label htmlFor="field-registration-no">Registration no.</Label>
+											<Input
+												id="field-registration-no"
+												value={sme.registrationNumber}
+												onChange={(e) => setS("registrationNumber", e.target.value)}
+											/>
+											{errors["sme.registrationNumber"] && (
+												<p role="alert" className="text-xs text-danger-ink">
+													{errors["sme.registrationNumber"]}
+												</p>
+											)}
+										</div>
+										<div className="space-y-2">
+											<Label htmlFor="field-industry">Industry</Label>
+											<select
+												id="field-industry"
+												value={sme.industry}
+												onChange={(e) => setS("industry", e.target.value)}
+												className={inputCls}
+											>
+												<option value="hospitality">Hospitality</option>
+												<option value="retail">Retail</option>
+												<option value="services">Services</option>
+												<option value="construction">Construction</option>
+												<option value="other">Other</option>
+											</select>
+										</div>
+										<div className="space-y-2">
+											<Label htmlFor="field-years-trading">Years trading</Label>
+											<Input
+												id="field-years-trading"
+												inputMode="numeric"
+												value={sme.yearsTrading}
+												onChange={(e) => setS("yearsTrading", e.target.value)}
+											/>
+										</div>
+										<div className="space-y-2">
+											<Label htmlFor="field-employees">Employees</Label>
+											<Input
+												id="field-employees"
+												inputMode="numeric"
+												value={sme.employees}
+												onChange={(e) => setS("employees", e.target.value)}
+											/>
+										</div>
+										<div className="space-y-2">
+											<Label htmlFor="field-annual-revenue">Annual revenue (USD)</Label>
+											<Input
+												id="field-annual-revenue"
+												inputMode="decimal"
+												value={sme.annualRevenue}
+												onChange={(e) => setS("annualRevenue", e.target.value)}
+											/>
+										</div>
+										<div className="space-y-2">
+											<Label htmlFor="field-monthly-fcf">Monthly free cash flow (USD)</Label>
+											<Input
+												id="field-monthly-fcf"
+												inputMode="decimal"
+												value={sme.monthlyFcf}
+												onChange={(e) => setS("monthlyFcf", e.target.value)}
+											/>
+											{errors["sme.monthlyFcf"] && (
+												<p role="alert" className="text-xs text-danger-ink">
+													{errors["sme.monthlyFcf"]}
+												</p>
+											)}
+										</div>
+										<div className="space-y-2">
+											<Label htmlFor="field-debt-service">Existing debt service (USD/mo)</Label>
+											<Input
+												id="field-debt-service"
+												inputMode="decimal"
+												value={sme.existingDebtService}
+												onChange={(e) => setS("existingDebtService", e.target.value)}
+											/>
+										</div>
+									</div>
+								</Panel>
+							)}
+						</div>
+					)}
+					{step === 3 && (
+						<Panel title="Review & consent" outline>
+							<dl className="mb-6 grid gap-1 border-b border-rule pb-6 text-sm">
+								<div className="flex justify-between gap-4">
+									<dt className="text-slate">Type / product</dt>
+									<dd className="font-medium text-ink">
+										{typeLabel(borrowerType)} / {productLabel(product)}
+									</dd>
+								</div>
+								<div className="flex justify-between gap-4">
+									<dt className="text-slate">Amount</dt>
+									<dd className="font-medium tabular text-ink">
+										{amountCents > 0 ? formatMoney(amountCents) : "$" + amount}
+									</dd>
+								</div>
+								<div className="flex justify-between gap-4">
+									<dt className="text-slate">Term</dt>
+									<dd className="font-medium text-ink">{term} months</dd>
+								</div>
+								<div className="flex justify-between gap-4">
+									<dt className="text-slate">Name</dt>
+									<dd className="font-medium text-ink">{identity.fullName || "—"}</dd>
+								</div>
+							</dl>
+							<fieldset>
+								<legend className="mb-2 text-sm font-medium text-ink">
+									Consents (all required)
+								</legend>
+								{["Credit check consent", "Data processing consent", "Terms consent"].map(
+									(label, i) => (
+										<label key={label} className="flex items-center gap-2 py-1 text-sm text-ink">
+											<input
+												type="checkbox"
+												className="size-4"
+												checked={consents[i] ?? false}
+												onChange={(e) =>
+													setConsents((p) => p.map((c, j) => (j === i ? e.target.checked : c)))
+												}
+												aria-label={label}
+											/>
+											{label}
+										</label>
+									),
+								)}
+							</fieldset>
+							<label className="mt-2 flex items-center gap-2 py-1 text-sm text-ink">
+								<input
+									type="checkbox"
+									className="size-4"
+									checked={aiResearchConsent}
+									onChange={(e) => setAiResearchConsent(e.target.checked)}
+									aria-label="AI research consent"
+								/>
+								AI research consent (optional)
+							</label>
+							<label className="mt-2 flex items-center gap-2 py-1 text-sm text-ink">
+								<input
+									type="checkbox"
+									className="size-4"
+									checked={documentProcessingConsent}
+									onChange={(e) => setDocumentProcessingConsent(e.target.checked)}
+									aria-label="Document processing consent"
+								/>
+								Document processing consent (optional for now)
+							</label>
+							<label className="mt-2 flex items-center gap-2 py-1 text-sm text-ink">
+								<input
+									type="checkbox"
+									className="size-4"
+									checked={contextAnalysisConsent}
+									onChange={(e) => setContextAnalysisConsent(e.target.checked)}
+									aria-label="Context analysis consent"
+								/>
+								Context analysis consent (optional)
+							</label>
+							{errors.consents && (
+								<p role="alert" className="mt-1 text-sm text-danger-ink">
+									{errors.consents}
 								</p>
 							)}
-							<div className="grid gap-3 sm:grid-cols-2">
-								<Field label="Company name" error={errors["sme.companyName"]}>
-									<input
-										id="field-company-name"
-										value={sme.companyName}
-										onChange={(e) => setS("companyName", e.target.value)}
-										className={inputCls}
-									/>
-								</Field>
-								<Field label="Registration no." error={errors["sme.registrationNumber"]}>
-									<input
-										id="field-registration-no"
-										value={sme.registrationNumber}
-										onChange={(e) => setS("registrationNumber", e.target.value)}
-										className={inputCls}
-									/>
-								</Field>
-								<Field label="Industry">
-									<select
-										id="field-industry"
-										value={sme.industry}
-										onChange={(e) => setS("industry", e.target.value)}
-										className={inputCls}
-									>
-										<option value="hospitality">Hospitality</option>
-										<option value="retail">Retail</option>
-										<option value="services">Services</option>
-										<option value="construction">Construction</option>
-										<option value="other">Other</option>
-									</select>
-								</Field>
-								<Field label="Years trading">
-									<input
-										id="field-years-trading"
-										inputMode="numeric"
-										value={sme.yearsTrading}
-										onChange={(e) => setS("yearsTrading", e.target.value)}
-										className={inputCls}
-									/>
-								</Field>
-								<Field label="Employees">
-									<input
-										id="field-employees"
-										inputMode="numeric"
-										value={sme.employees}
-										onChange={(e) => setS("employees", e.target.value)}
-										className={inputCls}
-									/>
-								</Field>
-								<Field label="Annual revenue (USD)">
-									<input
-										id="field-annual-revenue"
-										inputMode="decimal"
-										value={sme.annualRevenue}
-										onChange={(e) => setS("annualRevenue", e.target.value)}
-										className={inputCls}
-									/>
-								</Field>
-								<Field label="Monthly free cash flow (USD)" error={errors["sme.monthlyFcf"]}>
-									<input
-										id="field-monthly-fcf"
-										inputMode="decimal"
-										value={sme.monthlyFcf}
-										onChange={(e) => setS("monthlyFcf", e.target.value)}
-										className={inputCls}
-									/>
-								</Field>
-								<Field label="Existing debt service (USD/mo)">
-									<input
-										id="field-debt-service"
-										inputMode="decimal"
-										value={sme.existingDebtService}
-										onChange={(e) => setS("existingDebtService", e.target.value)}
-										className={inputCls}
-									/>
-								</Field>
-							</div>
-						</Card>
+							{Object.entries(errors).filter(([k]) => k !== "consents").length > 0 && (
+								<ul className="mt-3 space-y-1 text-sm text-danger-ink">
+									{Object.entries(errors)
+										.filter(([k]) => k !== "consents")
+										.map(([k, v]) => (
+											<li key={k} role="alert">
+												{k}: {v}
+											</li>
+										))}
+								</ul>
+							)}
+							{serverError && (
+								<div className="mt-3">
+									<ErrorBox message={serverError} />
+								</div>
+							)}
+						</Panel>
 					)}
-				</div>
-			)}
-			{step === 3 && (
-				<Card title="Review & consent">
-					<dl className="mb-4 grid gap-1 text-sm">
-						<div className="flex justify-between">
-							<dt className="text-gray-500">Type / product</dt>
-							<dd className="font-medium">
-								{borrowerType} / {product}
-							</dd>
-						</div>
-						<div className="flex justify-between">
-							<dt className="text-gray-500">Amount</dt>
-							<dd className="font-medium">${amount}</dd>
-						</div>
-						<div className="flex justify-between">
-							<dt className="text-gray-500">Term</dt>
-							<dd className="font-medium">{term} months</dd>
-						</div>
-						<div className="flex justify-between">
-							<dt className="text-gray-500">Name</dt>
-							<dd className="font-medium">{identity.fullName || "—"}</dd>
-						</div>
-					</dl>
-					<fieldset>
-						<legend className="mb-2 text-sm font-medium">Consents (all required)</legend>
-						{["Credit check consent", "Data processing consent", "Terms consent"].map(
-							(label, i) => (
-								<label key={label} className="flex items-center gap-2 py-1 text-sm">
-									<input
-										type="checkbox"
-										checked={consents[i] ?? false}
-										onChange={(e) =>
-											setConsents((p) => p.map((c, j) => (j === i ? e.target.checked : c)))
-										}
-										aria-label={label}
-									/>
-									{label}
-								</label>
-							),
+					<div className="flex flex-wrap gap-3">
+						{step > 1 && (
+							<Button type="button" variant="outline" onClick={() => setStep(step - 1)}>
+								Back
+							</Button>
 						)}
-					</fieldset>
-					<label className="mt-2 flex items-center gap-2 py-1 text-sm">
-						<input
-							type="checkbox"
-							checked={aiResearchConsent}
-							onChange={(e) => setAiResearchConsent(e.target.checked)}
-							aria-label="AI research consent"
-						/>
-						AI research consent (optional)
-					</label>
-					<label className="mt-2 flex items-center gap-2 py-1 text-sm">
-						<input
-							type="checkbox"
-							checked={documentProcessingConsent}
-							onChange={(e) => setDocumentProcessingConsent(e.target.checked)}
-							aria-label="Document processing consent"
-						/>
-						Document processing consent (optional for now)
-					</label>
-					<label className="mt-2 flex items-center gap-2 py-1 text-sm">
-						<input
-							type="checkbox"
-							checked={contextAnalysisConsent}
-							onChange={(e) => setContextAnalysisConsent(e.target.checked)}
-							aria-label="Context analysis consent"
-						/>
-						Context analysis consent (optional)
-					</label>
-					{errors.consents && (
-						<p role="alert" className="mt-1 text-sm text-red-600">
-							{errors.consents}
+						{step < 3 ? (
+							<Button
+								type="button"
+								onClick={() => {
+									if (checkStep(step + 1)) setStep(step + 1);
+								}}
+							>
+								Continue
+							</Button>
+						) : (
+							<Button type="button" onClick={submit} disabled={busy || profileQuery.isPending}>
+								{busy ? "Submitting…" : profile ? "Create draft" : "Submit application"}
+							</Button>
+						)}
+					</div>
+				</div>
+				<aside>
+					<Panel title="Your application" tone="warm">
+						<Overline>{productLabel(product)}</Overline>
+						<p className="mt-2 text-4xl leading-tight font-light tabular text-ink">
+							<Money cents={amountCents} />
 						</p>
-					)}
-					{Object.entries(errors).filter(([k]) => k !== "consents").length > 0 && (
-						<ul className="mt-3 space-y-1 text-sm text-red-600">
-							{Object.entries(errors)
-								.filter(([k]) => k !== "consents")
-								.map(([k, v]) => (
-									<li key={k} role="alert">
-										{k}: {v}
-									</li>
-								))}
-						</ul>
-					)}
-					{serverError && (
-						<div className="mt-3">
-							<ErrorBox message={serverError} />
-						</div>
-					)}
-				</Card>
-			)}
-			<div className="mt-4 flex gap-2">
-				{step > 1 && (
-					<button
-						type="button"
-						onClick={() => setStep(step - 1)}
-						className="rounded border border-gray-300 px-4 py-2 text-sm font-medium"
-					>
-						Back
-					</button>
-				)}
-				{step < 3 ? (
-					<button
-						type="button"
-						onClick={() => {
-							if (checkStep(step + 1)) setStep(step + 1);
-						}}
-						className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white"
-					>
-						Continue
-					</button>
-				) : (
-					<button
-						type="button"
-						onClick={submit}
-						disabled={busy || profileQuery.isPending}
-						className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-					>
-						{busy ? "Submitting…" : profile ? "Create draft" : "Submit application"}
-					</button>
-				)}
+						<p className="mt-1 text-sm text-slate">over {term} months</p>
+						<dl className="mt-4 space-y-1 border-t border-rule pt-4 text-sm">
+							<div className="flex justify-between gap-4">
+								<dt className="text-slate">Borrowing range</dt>
+								<dd className="font-medium tabular text-ink">
+									{formatMoney(minCents)} – {formatMoney(maxCents)}
+								</dd>
+							</div>
+							<div className="flex justify-between gap-4">
+								<dt className="text-slate">Purpose</dt>
+								<dd className="font-medium text-ink">{purpose || "—"}</dd>
+							</div>
+						</dl>
+						<p className="mt-4 text-xs text-slate">
+							Indicative only. Final rate and terms are confirmed at the decision.
+						</p>
+					</Panel>
+				</aside>
 			</div>
 		</Page>
 	);

@@ -1,8 +1,9 @@
-import { selectActiveSection, type PolicySectionRow } from "@credit/core";
+import { reportingDay, selectActiveSection, type PolicySectionRow } from "@credit/core";
 import type { Sql } from "postgres";
 import type {
 	ActiveIndex,
 	AclRow,
+	ApprovedPolicyDocument,
 	PolicyChunk,
 	PolicyQueryRecord,
 	PolicySectionDetail,
@@ -302,6 +303,50 @@ export function createPostgresPolicyStore(sql: Sql): PolicyStore {
 			}));
 		},
 
+		async listApprovedPolicyDocuments(asOf): Promise<ApprovedPolicyDocument[]> {
+			// One row per policy_key: the newest effective approved version wins
+			// (legacy data may overlap; tiebreak created_at then id for determinism).
+			const rows = (await sql`
+				SELECT DISTINCT ON (d.policy_key)
+					d.id AS policy_id, d.policy_key, d.title,
+					v.id AS version_id, v.version,
+					v.effective_from::text AS effective_from,
+					v.effective_to::text AS effective_to,
+					d.product_scope::text AS product_scope,
+					d.jurisdiction,
+					(SELECT count(*)::int FROM policy_sections s WHERE s.version_id = v.id) AS section_count
+				FROM policy_versions v
+				JOIN policy_documents d ON d.id = v.policy_id
+				WHERE v.status = 'approved'
+				  AND v.effective_from <= ${asOf}::date
+				  AND (v.effective_to IS NULL OR v.effective_to >= ${asOf}::date)
+				ORDER BY d.policy_key, v.effective_from DESC, v.created_at DESC, v.id DESC
+			`) as unknown as Array<{
+				policy_id: string;
+				policy_key: string;
+				title: string;
+				version_id: string;
+				version: string;
+				effective_from: string;
+				effective_to: string | null;
+				product_scope: string;
+				jurisdiction: string;
+				section_count: number;
+			}>;
+			return rows.map((row) => ({
+				policyId: row.policy_id,
+				policyKey: row.policy_key,
+				title: row.title,
+				version: row.version,
+				versionId: row.version_id,
+				effectiveFrom: row.effective_from,
+				effectiveTo: row.effective_to,
+				productScope: row.product_scope,
+				jurisdiction: row.jurisdiction,
+				sectionCount: row.section_count,
+			}));
+		},
+
 		async hasVersionChunks(versionId) {
 			const active = await store.getActiveIndex();
 			if (!active) return false;
@@ -448,7 +493,7 @@ export function createPostgresPolicyStore(sql: Sql): PolicyStore {
 				const version = rows[0];
 				if (!version) throw new Error("version not found");
 				await tx`SELECT id FROM policy_documents WHERE id = ${version.policy_id} FOR UPDATE`;
-				const day = new Date().toISOString().slice(0, 10);
+				const day = reportingDay(new Date());
 				const future = version.effective_from > day;
 				const next = (await tx`
 					SELECT effective_from::text AS effective_from
@@ -499,7 +544,8 @@ export function createPostgresPolicyStore(sql: Sql): PolicyStore {
 				const classSpent = (await tx`
 					SELECT COALESCE(SUM(usage_cost), 0) AS n
 					FROM policy_queries
-					WHERE created_at::date = ${input.day}::date AND budget_class = ${input.budgetClass}
+					WHERE (created_at AT TIME ZONE 'Asia/Singapore')::date = ${input.day}::date
+					  AND budget_class = ${input.budgetClass}
 				`) as unknown as Array<{ n: string }>;
 				if (
 					num(classReserved[0]?.n) + num(classSpent[0]?.n) + input.maxCostUsd >
@@ -517,7 +563,8 @@ export function createPostgresPolicyStore(sql: Sql): PolicyStore {
 					const actorSpent = (await tx`
 						SELECT COALESCE(SUM(usage_cost), 0) AS n
 						FROM policy_queries
-						WHERE created_at::date = ${input.day}::date AND actor_id = ${input.actorId}
+						WHERE (created_at AT TIME ZONE 'Asia/Singapore')::date = ${input.day}::date
+						  AND actor_id = ${input.actorId}
 					`) as unknown as Array<{ n: string }>;
 					if (
 						num(actorReserved[0]?.n) + num(actorSpent[0]?.n) + input.maxCostUsd >

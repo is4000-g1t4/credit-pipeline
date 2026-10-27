@@ -55,9 +55,9 @@ export function RequireAuth({
 
 	if (!me.isFetched || !me.data) {
 		return (
-			<main className="mx-auto max-w-5xl animate-pulse p-4 sm:p-6" aria-label="Loading">
-				<div className="h-8 w-48 rounded bg-gray-200" />
-				<div className="mt-4 h-40 rounded bg-gray-100" />
+			<main className="container-ubs py-10" aria-label="Loading">
+				<div className="h-8 w-48 animate-pulse rounded-sm bg-warm" />
+				<div className="mt-4 h-40 animate-pulse rounded-sm bg-warm" />
 			</main>
 		);
 	}

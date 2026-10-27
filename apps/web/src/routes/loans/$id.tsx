@@ -1,16 +1,32 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
+import { ChevronRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
-	Card,
+	Table,
+	TableBody,
+	TableCell,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from "@/components/ui/table";
+import {
 	EmptyState,
 	ErrorBox,
-	Field,
-	inputCls,
+	Meter,
+	Money,
+	Overline,
 	Page,
-	Skeleton,
+	PageHead,
+	Panel,
+	SectionHead,
 	StatusBadge,
-} from "../../components/ui";
+	Tag,
+	Skeleton,
+} from "../../components/ubs";
 import {
 	ApiError,
 	api,
@@ -50,7 +66,7 @@ function LoanPage() {
 					<EmptyState
 						title="Loan not found"
 						action={
-							<Link to="/loans" className="text-sm text-blue-700 hover:underline">
+							<Link to="/loans" className="text-sm text-red-link hover:underline">
 								Back to loans
 							</Link>
 						}
@@ -59,117 +75,229 @@ function LoanPage() {
 					<ErrorBox message={apiErrorMessage(loan.error)} onRetry={() => void loan.refetch()} />
 				)
 			) : (
-				<div className="space-y-4">
-					<LoanSummaryCard detail={loan.data} />
-					<ScheduleCard detail={loan.data} />
-					<AlertsCard
-						detail={loan.data}
-						isOfficer={me.data?.user.role === "officer"}
-						onChanged={() => void loan.refetch()}
-					/>
-					{me.data?.demoMode && me.data.user.role === "officer" && (
-						<DemoPanel detail={loan.data} onChanged={() => void loan.refetch()} />
-					)}
+				<div className="space-y-8">
+					<LoanHead detail={loan.data} />
+					<LoanHero detail={loan.data} />
+					<div className="grid gap-6 lg:grid-cols-3">
+						<div className="space-y-8 lg:col-span-2">
+							<ScheduleCard detail={loan.data} />
+							<AlertsCard
+								detail={loan.data}
+								isOfficer={me.data?.user.role === "officer"}
+								onChanged={() => void loan.refetch()}
+							/>
+							{me.data?.demoMode && me.data.user.role === "officer" && (
+								<DemoPanel detail={loan.data} onChanged={() => void loan.refetch()} />
+							)}
+						</div>
+						<aside className="space-y-6">
+							<Panel title="Payment details" tone="warm">
+								<dl className="grid gap-3">
+									<div className="flex items-baseline justify-between gap-4">
+										<dt className="text-sm text-slate">Loan reference</dt>
+										<dd className="text-sm font-medium text-ink tabular">
+											{loan.data.loan.reference}
+										</dd>
+									</div>
+									<div className="flex items-baseline justify-between gap-4">
+										<dt className="text-sm text-slate">Status</dt>
+										<dd>
+											<StatusBadge status={loan.data.loan.status} />
+										</dd>
+									</div>
+									<div className="flex items-baseline justify-between gap-4">
+										<dt className="text-sm text-slate">Disbursed</dt>
+										<dd className="text-sm text-ink tabular">
+											{formatDate(loan.data.loan.disbursedAt)}
+										</dd>
+									</div>
+									<div className="flex items-baseline justify-between gap-4">
+										<dt className="text-sm text-slate">Next due</dt>
+										<dd className="text-sm font-medium text-ink tabular">
+											{formatDate(loan.data.loan.nextDueDate)}
+										</dd>
+									</div>
+									<div className="flex items-baseline justify-between gap-4">
+										<dt className="text-sm text-slate">Outstanding</dt>
+										<dd className="text-sm font-medium text-ink">
+											<Money cents={loan.data.loan.outstandingCents} />
+										</dd>
+									</div>
+								</dl>
+							</Panel>
+							<Panel title="Need help?" outline>
+								<p className="text-sm text-slate">
+									If a payment looks unexpected or you need more time, talk to us before the due
+									date.
+								</p>
+								<a
+									href="https://www.ubs.com/global/en/contact.html"
+									target="_blank"
+									rel="noreferrer"
+									className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-ink hover:underline"
+								>
+									Visit the help centre
+									<ChevronRight
+										className="size-4 text-red-link"
+										strokeWidth={1.5}
+										aria-hidden="true"
+									/>
+								</a>
+							</Panel>
+						</aside>
+					</div>
 				</div>
 			)}
 		</Page>
 	);
 }
 
-function LoanSummaryCard({ detail }: { detail: LoanDetail }) {
+function LoanHead({ detail }: { detail: LoanDetail }) {
 	const l = detail.loan;
 	const openAlerts = detail.alerts.filter((a) => a.status === "open").length;
 	return (
-		<Card
-			title={
-				<span className="flex flex-wrap items-center gap-2">
-					{l.reference} <StatusBadge status={l.status} />
+		<PageHead
+			title={l.reference}
+			subtitle={`${formatMoney(l.principalCents)} over ${l.termMonths} months at ${(
+				l.rateBps / 100
+			).toFixed(2)}% fixed.`}
+			actions={
+				<>
+					<StatusBadge status={l.status} />
 					{openAlerts > 0 && (
-						<span className="rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-800">
+						<Tag tone="danger">
 							{openAlerts} alert{openAlerts === 1 ? "" : "s"}
-						</span>
+						</Tag>
 					)}
-				</span>
+				</>
 			}
-		>
-			<dl className="grid gap-1 text-sm sm:grid-cols-2">
-				<div className="flex justify-between gap-2">
-					<dt className="text-gray-500">Principal</dt>
-					<dd className="font-medium tabular-nums">{formatMoney(l.principalCents)}</dd>
+		/>
+	);
+}
+
+function LoanHero({ detail }: { detail: LoanDetail }) {
+	const l = detail.loan;
+	const paid = detail.installments.filter((i) => i.status === "paid").length;
+	const total = detail.installments.length;
+	const overdue = detail.installments.filter((i) => i.status === "overdue").length;
+	const openAlerts = detail.alerts.filter((a) => a.status === "open").length;
+	return (
+		<Panel>
+			<div className="grid gap-8 lg:grid-cols-3">
+				<div>
+					<Overline>Outstanding balance</Overline>
+					<p className="mt-2 text-4xl leading-tight font-light text-ink tabular">
+						<Money cents={l.outstandingCents} />
+					</p>
+					<p className="mt-1 text-sm text-slate">
+						of <Money cents={l.principalCents} /> principal · {paid} of {total} instalments paid
+					</p>
+					<Meter value={paid} max={Math.max(total, 1)} tone="ink" label="Instalments paid" />
 				</div>
-				<div className="flex justify-between gap-2">
-					<dt className="text-gray-500">Rate</dt>
-					<dd className="font-medium tabular-nums">{(l.rateBps / 100).toFixed(2)}%</dd>
+				<div className="grid gap-6 sm:grid-cols-3 lg:col-span-2 lg:border-l lg:border-rule lg:pl-8">
+					<div>
+						<Overline>Next payment</Overline>
+						<p className="mt-2 text-2xl leading-8 font-light text-ink tabular">
+							<Money cents={l.monthlyPaymentCents} />
+						</p>
+						<p className="mt-1 text-sm text-slate">Due {formatDate(l.nextDueDate)}</p>
+					</div>
+					<div>
+						<Overline>Rate</Overline>
+						<p className="mt-2 text-2xl leading-8 font-light text-ink tabular">
+							{(l.rateBps / 100).toFixed(2)}%
+						</p>
+						<p className="mt-1 text-sm text-slate">Fixed for the term</p>
+					</div>
+					<div>
+						<Overline>Overdue</Overline>
+						<p className="mt-2 text-2xl leading-8 font-light text-ink tabular">{overdue}</p>
+						<p className="mt-1 text-sm text-slate">
+							{openAlerts > 0
+								? `${openAlerts} open alert${openAlerts === 1 ? "" : "s"}`
+								: "No alerts"}
+						</p>
+					</div>
 				</div>
-				<div className="flex justify-between gap-2">
-					<dt className="text-gray-500">Monthly</dt>
-					<dd className="font-medium tabular-nums">{formatMoney(l.monthlyPaymentCents)}</dd>
-				</div>
-				<div className="flex justify-between gap-2">
-					<dt className="text-gray-500">Outstanding</dt>
-					<dd className="font-medium tabular-nums">{formatMoney(l.outstandingCents)}</dd>
-				</div>
-				<div className="flex justify-between gap-2">
-					<dt className="text-gray-500">Next due</dt>
-					<dd className="font-medium tabular-nums">{formatDate(l.nextDueDate)}</dd>
-				</div>
-				<div className="flex justify-between gap-2">
-					<dt className="text-gray-500">Disbursed</dt>
-					<dd className="font-medium tabular-nums">{formatDate(l.disbursedAt)}</dd>
-				</div>
-			</dl>
-		</Card>
+			</div>
+		</Panel>
 	);
 }
 
 function ScheduleCard({ detail }: { detail: LoanDetail }) {
 	return (
-		<Card title="Repayment schedule">
-			<div className="overflow-x-auto">
-				<table className="w-full min-w-[640px] text-left text-sm">
-					<thead className="border-b border-gray-200 text-gray-500">
-						<tr>
-							<th className="px-2 py-1.5">#</th>
-							<th className="px-2 py-1.5">Due</th>
-							<th className="px-2 py-1.5">Total</th>
-							<th className="px-2 py-1.5">Principal</th>
-							<th className="px-2 py-1.5">Interest</th>
-							<th className="px-2 py-1.5">Status</th>
-							<th className="px-2 py-1.5">Paid</th>
-						</tr>
-					</thead>
-					<tbody>
-						{detail.installments.map((i) => (
-							<tr key={i.id} className="border-b border-gray-100 last:border-0">
-								<td className="px-2 py-1.5 tabular-nums">{i.number}</td>
-								<td className="px-2 py-1.5 tabular-nums">{formatDate(i.dueDate)}</td>
-								<td className="px-2 py-1.5 tabular-nums">{formatMoney(i.totalCents)}</td>
-								<td className="px-2 py-1.5 tabular-nums">{formatMoney(i.principalCents)}</td>
-								<td className="px-2 py-1.5 tabular-nums">{formatMoney(i.interestCents)}</td>
-								<td className="px-2 py-1.5">
-									<StatusBadge status={i.status} />
-								</td>
-								<td className="px-2 py-1.5 tabular-nums">
+		<Panel title="Repayment schedule" outline>
+			<Table>
+				<TableHeader>
+					<TableRow>
+						<TableHead>#</TableHead>
+						<TableHead>
+							<span className="block text-right">Due</span>
+						</TableHead>
+						<TableHead>
+							<span className="block text-right">Total</span>
+						</TableHead>
+						<TableHead>
+							<span className="block text-right">Principal</span>
+						</TableHead>
+						<TableHead>
+							<span className="block text-right">Interest</span>
+						</TableHead>
+						<TableHead>Status</TableHead>
+						<TableHead>
+							<span className="block text-right">Paid</span>
+						</TableHead>
+					</TableRow>
+				</TableHeader>
+				<TableBody>
+					{detail.installments.map((i) => (
+						<TableRow key={i.id}>
+							<TableCell>
+								<span className="tabular">{i.number}</span>
+							</TableCell>
+							<TableCell>
+								<span className="block text-right tabular">{formatDate(i.dueDate)}</span>
+							</TableCell>
+							<TableCell>
+								<span className="block text-right tabular">
+									<Money cents={i.totalCents} />
+								</span>
+							</TableCell>
+							<TableCell>
+								<span className="block text-right tabular">
+									<Money cents={i.principalCents} />
+								</span>
+							</TableCell>
+							<TableCell>
+								<span className="block text-right tabular">
+									<Money cents={i.interestCents} />
+								</span>
+							</TableCell>
+							<TableCell>
+								<StatusBadge status={i.status} />
+							</TableCell>
+							<TableCell>
+								<span className="block text-right tabular">
 									{i.paidAt ? formatDate(i.paidAt) : "—"}
-								</td>
-							</tr>
-						))}
-					</tbody>
-				</table>
-			</div>
+								</span>
+							</TableCell>
+						</TableRow>
+					))}
+				</TableBody>
+			</Table>
 			{detail.payments.length > 0 && (
-				<div className="mt-3">
-					<h3 className="mb-1 text-sm font-semibold">Payments</h3>
-					<ul className="space-y-1 text-sm">
+				<div className="mt-6">
+					<h3 className="mb-2 text-lg font-light text-ink">Payments</h3>
+					<ul className="space-y-1 text-sm text-ink">
 						{detail.payments.map((p) => (
-							<li key={p.id} className="tabular-nums">
-								{formatMoney(p.amountCents)} · {formatDateTime(p.paidAt)} · {p.source}
+							<li key={p.id} className="tabular">
+								<Money cents={p.amountCents} /> · {formatDateTime(p.paidAt)} · {p.source}
 							</li>
 						))}
 					</ul>
 				</div>
 			)}
-		</Card>
+		</Panel>
 	);
 }
 
@@ -197,31 +325,33 @@ function AlertsCard({
 		}
 	}
 	return (
-		<Card title="Alerts">
+		<section>
+			<SectionHead title="Alerts" />
 			{detail.alerts.length === 0 ? (
-				<p className="text-sm text-gray-500">No alerts.</p>
+				<p className="text-sm text-slate">No alerts.</p>
 			) : (
 				<ul className="space-y-2 text-sm">
 					{detail.alerts.map((a) => (
 						<li key={a.id} className="flex flex-wrap items-center gap-2">
 							<StatusBadge status={a.status} />
-							<span className="font-medium">{a.type}</span>
-							<span className="text-gray-500">severity {a.severity}</span>
+							<span className="font-medium text-ink">{a.type}</span>
+							<span className="text-slate">severity {a.severity}</span>
 							{isOfficer && a.status === "open" && (
-								<button
+								<Button
 									type="button"
+									variant="outline"
+									size="sm"
 									onClick={() => void acknowledge(a.id)}
-									className="rounded border border-gray-300 px-2 py-1 text-xs font-medium"
 									aria-label={`Acknowledge alert ${a.type}`}
 								>
 									Acknowledge
-								</button>
+								</Button>
 							)}
 						</li>
 					))}
 				</ul>
 			)}
-		</Card>
+		</section>
 	);
 }
 
@@ -250,9 +380,9 @@ function DemoPanel({ detail, onChanged }: { detail: LoanDetail; onChanged: () =>
 	}
 
 	return (
-		<Card title="Demo controls (officer, demo mode)">
-			<div className="flex flex-wrap items-center gap-2">
-				<button
+		<Panel title="Demo controls (officer, demo mode)" outline>
+			<div className="flex flex-wrap items-end gap-3">
+				<Button
 					type="button"
 					disabled={busy !== null || !next}
 					onClick={() =>
@@ -263,25 +393,27 @@ function DemoPanel({ detail, onChanged }: { detail: LoanDetail; onChanged: () =>
 							}),
 						)
 					}
-					className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
 				>
 					{busy === "pay"
 						? "Paying…"
 						: next
 							? `Pay next installment (#${next.number})`
 							: "All paid"}
-				</button>
-				<Field label="Age (days)">
-					<input
-						id="field-age-days"
-						inputMode="numeric"
-						value={days}
-						onChange={(e) => setDays(e.target.value)}
-						className={`${inputCls} w-24`}
-					/>
-				</Field>
-				<button
+				</Button>
+				<div className="space-y-2">
+					<Label htmlFor="field-age-days">Age (days)</Label>
+					<div className="w-24">
+						<Input
+							id="field-age-days"
+							inputMode="numeric"
+							value={days}
+							onChange={(e) => setDays(e.target.value)}
+						/>
+					</div>
+				</div>
+				<Button
 					type="button"
+					variant="outline"
 					disabled={busy !== null}
 					onClick={() =>
 						void run("age", () =>
@@ -291,24 +423,21 @@ function DemoPanel({ detail, onChanged }: { detail: LoanDetail; onChanged: () =>
 							}),
 						)
 					}
-					className="rounded border border-gray-300 px-3 py-1.5 text-sm font-medium disabled:opacity-50"
 				>
 					{busy === "age" ? "Ageing…" : "Age loan"}
-				</button>
-				<button
+				</Button>
+				<Button
 					type="button"
+					variant="outline"
 					disabled={busy !== null}
 					onClick={() =>
 						void run("monitor", () => api("/api/demo/monitoring/run", { method: "POST" }))
 					}
-					className="rounded border border-gray-300 px-3 py-1.5 text-sm font-medium disabled:opacity-50"
 				>
 					{busy === "monitor" ? "Running…" : "Run monitoring"}
-				</button>
+				</Button>
 			</div>
-			{result && (
-				<output className="mt-2 block break-all font-mono text-xs text-gray-600">{result}</output>
-			)}
-		</Card>
+			{result && <output className="mt-2 block text-xs break-all text-slate">{result}</output>}
+		</Panel>
 	);
 }

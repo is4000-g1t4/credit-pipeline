@@ -40,9 +40,9 @@ export function TraceDetails({
 }) {
 	if (!trace) return null;
 	return (
-		<details className="mt-3 rounded border border-gray-200 p-3">
+		<details className="mt-3 rounded border border-rule p-3">
 			<summary className="cursor-pointer text-sm font-semibold">{title}</summary>
-			<dl className="mt-2 grid gap-x-4 gap-y-1 text-xs text-gray-600 sm:grid-cols-2">
+			<dl className="mt-2 grid gap-x-4 gap-y-1 text-xs text-slate sm:grid-cols-2">
 				{trace.runId !== undefined && (
 					<div>
 						<dt className="inline font-medium">Run: </dt>
@@ -84,13 +84,17 @@ export function TraceDetails({
 				{trace.registryVersion !== undefined && (
 					<div>
 						<dt className="inline font-medium">Registry: </dt>
-						<dd className="inline font-mono">{trace.registryVersion === null ? "-" : clean(trace.registryVersion)}</dd>
+						<dd className="inline font-mono">
+							{trace.registryVersion === null ? "-" : clean(trace.registryVersion)}
+						</dd>
 					</div>
 				)}
 				{trace.validatorVersion !== undefined && (
 					<div>
 						<dt className="inline font-medium">Validator: </dt>
-						<dd className="inline font-mono">{trace.validatorVersion === null ? "-" : clean(trace.validatorVersion)}</dd>
+						<dd className="inline font-mono">
+							{trace.validatorVersion === null ? "-" : clean(trace.validatorVersion)}
+						</dd>
 					</div>
 				)}
 				{trace.evidenceHash !== undefined && trace.evidenceHash !== null && (
@@ -106,8 +110,8 @@ export function TraceDetails({
 						<dt className="inline font-medium">Steps: </dt>
 						<dd className="inline tabular-nums">
 							{trace.steps ?? "—"} · {(trace.toolCalls ?? []).length} tool call
-							{(trace.toolCalls ?? []).length === 1 ? "" : "s"} ·{" "}
-							{(trace.sourceRefs ?? []).length} source
+							{(trace.toolCalls ?? []).length === 1 ? "" : "s"} · {(trace.sourceRefs ?? []).length}{" "}
+							source
 							{(trace.sourceRefs ?? []).length === 1 ? "" : "s"}
 						</dd>
 					</div>
@@ -125,7 +129,9 @@ export function TraceDetails({
 						</dd>
 					</div>
 				)}
-				{(trace.inputTokens !== undefined || trace.latencyMs !== undefined || trace.costUsd !== undefined) && (
+				{(trace.inputTokens !== undefined ||
+					trace.latencyMs !== undefined ||
+					trace.costUsd !== undefined) && (
 					<div>
 						<dt className="inline font-medium">Usage: </dt>
 						<dd className="inline tabular-nums">
@@ -145,7 +151,7 @@ export function TraceDetails({
 			{(trace.toolCalls?.length ?? 0) > 0 && (
 				<table className="mt-2 w-full text-xs">
 					<thead>
-						<tr className="text-left text-gray-500">
+						<tr className="text-left text-slate">
 							<th className="py-1 pr-2 font-medium">Step</th>
 							<th className="py-1 pr-2 font-medium">Tool</th>
 							<th className="py-1 pr-2 font-medium">Results</th>
@@ -154,11 +160,11 @@ export function TraceDetails({
 					</thead>
 					<tbody>
 						{(trace.toolCalls ?? []).map((call, i) => (
-							<tr key={`${call.step}-${call.name}-${i}`} className="border-t border-gray-100">
+							<tr key={`${call.step}-${call.name}-${i}`} className="border-t border-rule">
 								<td className="py-1 pr-2 tabular-nums">{call.step}</td>
 								<td className="py-1 pr-2 font-mono">{clean(call.name)}</td>
 								<td className="py-1 pr-2 tabular-nums">{call.resultCount}</td>
-								<td className="py-1 text-gray-600">{clean(call.sourceTypes.join(", ")) || "-"}</td>
+								<td className="py-1 text-slate">{clean(call.sourceTypes.join(", ")) || "-"}</td>
 							</tr>
 						))}
 					</tbody>

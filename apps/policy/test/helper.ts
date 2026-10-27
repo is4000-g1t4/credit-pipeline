@@ -181,6 +181,9 @@ export function fakePolicyStore(overrides: Partial<PolicyStore> = {}): PolicySto
 		async listApprovedCorpusSections() {
 			return [];
 		},
+		async listApprovedPolicyDocuments() {
+			return [];
+		},
 		async hasVersionChunks() {
 			return true;
 		},

@@ -4,9 +4,12 @@
 // locks and only then writes application.submitted + starts the workflow
 // (the worker refer step still owns `review.requested`).
 import {
+	AI_RESEARCH_CONSENT_VERSION,
 	CONTEXT_CONSENT_VERSION,
 	DOCUMENT_CONSENT_VERSION,
 	applicationCreateSchema,
+	applicationDraftUpdateSchema,
+	canonicalJson,
 	dedupeApplicationSubmitted,
 	generateReference,
 	hashCanonical,
@@ -149,6 +152,40 @@ async function buildRequirements(
 	});
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+	return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+type DraftResponse = { id: string; reference: string; updatedAt: string };
+
+function draftResponse(row: { id: string; reference: string; updatedAt: Date }): DraftResponse {
+	return { id: row.id, reference: row.reference, updatedAt: row.updatedAt.toISOString() };
+}
+
+/** Idempotent draft replay with the §4 shape: legacy stored responses
+ * (written before `updatedAt` existed) are filled in from the draft row. */
+async function readDraftReplay(
+	db: Db,
+	input: { userId: string; key: string; requestHash: string },
+): Promise<DraftResponse | null> {
+	const found = await readIdempotencyReplay(db, input);
+	if (!found) return null;
+	if (typeof (found as { updatedAt?: unknown }).updatedAt === "string") {
+		return found as DraftResponse;
+	}
+	const rows = await db
+		.select({
+			id: applications.id,
+			reference: applications.reference,
+			updatedAt: applications.updatedAt,
+		})
+		.from(applications)
+		.where(eq(applications.id, found.id));
+	const row = rows[0];
+	if (!row) return found as DraftResponse;
+	return draftResponse(row);
+}
+
 export function intakeRoutes(deps: IntakeRouteDeps): ServiceApp {
 	const app: ServiceApp = new Hono();
 	const { db, gateway, logger, t17 } = deps;
@@ -254,10 +291,10 @@ export function intakeRoutes(deps: IntakeRouteDeps): ServiceApp {
 		}
 		const requestHash = hashCanonical(body);
 
-		const fast = await readIdempotencyReplay(db, { userId: me.id, key, requestHash });
+		const fast = await readDraftReplay(db, { userId: me.id, key, requestHash });
 		if (fast) return c.json(fast, 201);
 
-		let outcome: { id: string; reference: string };
+		let outcome: DraftResponse;
 		try {
 			outcome = await withTx(db, async (tx) => {
 				await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${me.id}))`);
@@ -274,7 +311,18 @@ export function intakeRoutes(deps: IntakeRouteDeps): ServiceApp {
 							"Idempotency-Key was already used with a different payload",
 						);
 					}
-					return existing.response as { id: string; reference: string };
+					const stored = existing.response as DraftResponse;
+					if (typeof stored.updatedAt === "string") return stored;
+					const draftRows = await tx
+						.select({
+							id: applications.id,
+							reference: applications.reference,
+							updatedAt: applications.updatedAt,
+						})
+						.from(applications)
+						.where(eq(applications.id, stored.id));
+					const draftRow = draftRows[0];
+					return draftRow ? draftResponse(draftRow) : stored;
 				}
 				const drafts = await tx
 					.select({ id: applications.id })
@@ -288,7 +336,7 @@ export function intakeRoutes(deps: IntakeRouteDeps): ServiceApp {
 					t17.demoMode && profiles?.source === "demo_seed"
 						? ("demo_case" as const)
 						: ("live" as const);
-				let inserted: { id: string; reference: string } | null = null;
+				let inserted: { id: string; reference: string; updatedAt: Date } | null = null;
 				let lastErr: unknown = null;
 				for (let attempt = 0; attempt < 3 && !inserted; attempt++) {
 					try {
@@ -319,7 +367,11 @@ export function intakeRoutes(deps: IntakeRouteDeps): ServiceApp {
 								source,
 								submittedAt: null,
 							})
-							.returning({ id: applications.id, reference: applications.reference });
+							.returning({
+								id: applications.id,
+								reference: applications.reference,
+								updatedAt: applications.updatedAt,
+							});
 						inserted = row;
 					} catch (err) {
 						lastErr = err;
@@ -343,8 +395,8 @@ export function intakeRoutes(deps: IntakeRouteDeps): ServiceApp {
 						},
 						claimed: data.profileConfirmations,
 					});
-					reused = [...derived.reused];
-					edited = [...derived.edited];
+					reused = [...new Set(derived.reused)];
+					edited = [...new Set(derived.edited)];
 					if (reused.length > 0) {
 						await tx.insert(applicationProfileConfirmations).values(
 							reused.map((field) => ({
@@ -372,7 +424,7 @@ export function intakeRoutes(deps: IntakeRouteDeps): ServiceApp {
 						payload: { reused, edited },
 					});
 				}
-				const response = { id: inserted.id, reference: inserted.reference };
+				const response = draftResponse(inserted);
 				await tx.insert(idempotencyKeys).values({
 					userId: me.id,
 					key,
@@ -396,12 +448,216 @@ export function intakeRoutes(deps: IntakeRouteDeps): ServiceApp {
 		} catch (err) {
 			if (err instanceof HttpError) throw err;
 			if (!isUniqueViolation(err)) throw err;
-			const winner = await readIdempotencyReplay(db, { userId: me.id, key, requestHash });
+			const winner = await readDraftReplay(db, { userId: me.id, key, requestHash });
 			if (!winner) throw err;
 			return c.json(winner, 201);
 		}
 		// No workflow start, no outbox: drafts are inert until submit.
 		return c.json(outcome, 201);
+	});
+
+	// Draft update (SPEC §4): owner-only optimistic PATCH over the full
+	// create payload plus the `expectedUpdatedAt` token. Absent consent
+	// fields mean unchanged (merged from the stored row before parsing);
+	// an explicitly differing document/context consent 409s to the
+	// dedicated consent routes. No workflow, outbox, or idempotency key —
+	// a retry after success 409s and the UI reloads.
+	app.patch("/api/applications/:id/draft", async (c) => {
+		const me = c.var.user;
+		if (me.role !== "applicant") {
+			throw new HttpError(403, "FORBIDDEN", "applicants only");
+		}
+		const id = c.req.param("id");
+		if (!isUuid(id)) throw new HttpError(404, "NOT_FOUND", "not found");
+		const rawBody: unknown = await readJson(c);
+		const bodyRec: Record<string, unknown> = isPlainObject(rawBody) ? rawBody : {};
+		const rawApp: unknown = bodyRec.application;
+		const suppliedApp: Record<string, unknown> | null = isPlainObject(rawApp)
+			? { ...rawApp }
+			: null;
+		// Pre-read (outside the tx) for the ownership/status gates and the
+		// absent-means-unchanged consent merge.
+		const preRows = await db.select().from(applications).where(eq(applications.id, id));
+		const pre = preRows[0];
+		if (!pre || pre.applicantUserId !== me.id) {
+			throw new HttpError(404, "NOT_FOUND", "not found");
+		}
+		if (pre.status !== "draft") {
+			throw new HttpError(409, "NOT_DRAFT", "only drafts can be updated");
+		}
+		const docExplicit = suppliedApp !== null && "documentProcessingConsent" in suppliedApp;
+		const ctxExplicit = suppliedApp !== null && "contextAnalysisConsent" in suppliedApp;
+		if (suppliedApp !== null) {
+			if (!("aiResearchConsent" in suppliedApp))
+				suppliedApp.aiResearchConsent = pre.aiResearchConsent;
+			if (!docExplicit) suppliedApp.documentProcessingConsent = pre.documentProcessingConsent;
+			if (!ctxExplicit) suppliedApp.contextAnalysisConsent = pre.contextAnalysisConsent;
+		}
+		const parsed = applicationDraftUpdateSchema.safeParse({
+			...bodyRec,
+			application: suppliedApp ?? rawApp,
+		});
+		if (!parsed.success) {
+			throw new HttpError(400, "VALIDATION_ERROR", "invalid application", zodFields(parsed.error));
+		}
+		const data = parsed.data.application;
+		if (docExplicit && data.documentProcessingConsent !== pre.documentProcessingConsent) {
+			throw new HttpError(
+				409,
+				"CONSENT_ROUTE_REQUIRED",
+				"use the document-consent route to change document consent",
+			);
+		}
+		if (ctxExplicit && (data.contextAnalysisConsent ?? false) !== pre.contextAnalysisConsent) {
+			throw new HttpError(
+				409,
+				"CONSENT_ROUTE_REQUIRED",
+				"use the context-consent route to change context consent",
+			);
+		}
+		const now = new Date();
+		if (!isAdult(data.identity.dob, now)) {
+			throw new HttpError(400, "VALIDATION_ERROR", "invalid application", {
+				"identity.dob": ["owner must be 18 or older"],
+			});
+		}
+		if (data.identity.email.toLowerCase() !== me.email.toLowerCase()) {
+			throw new HttpError(400, "VALIDATION_ERROR", "invalid application", {
+				"identity.email": ["must match the signed-in email"],
+			});
+		}
+		for (const entry of data.profileConfirmations ?? []) {
+			if (!isConfirmableField(entry.field)) {
+				throw new HttpError(422, "INVALID_FIELD", `unknown confirmation field: ${entry.field}`);
+			}
+		}
+		const confirmationsSupplied = data.profileConfirmations !== undefined;
+		const outcome = await withTx(db, async (tx) => {
+			await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${id}))`);
+			const rows = await tx.select().from(applications).where(eq(applications.id, id));
+			const row = rows[0];
+			if (!row || row.applicantUserId !== me.id) {
+				throw new HttpError(404, "NOT_FOUND", "not found");
+			}
+			if (row.status !== "draft") {
+				throw new HttpError(409, "NOT_DRAFT", "only drafts can be updated");
+			}
+			if (row.updatedAt.getTime() !== Date.parse(parsed.data.expectedUpdatedAt)) {
+				throw new HttpError(409, "DRAFT_CONFLICT", "draft changed since it was read", {
+					updatedAt: [row.updatedAt.toISOString()],
+				});
+			}
+			// Sample the new token inside the lock, after the CAS, and force it
+			// past the token we validated: the pre-lock `now` must never write
+			// a backwards `updated_at`.
+			const updatedAt = new Date(Math.max(Date.now(), row.updatedAt.getTime() + 1));
+			const changed: string[] = [];
+			if (row.type !== data.type) changed.push("type");
+			if (row.product !== data.product) changed.push("product");
+			if (row.amountCents !== data.amountCents) changed.push("amountCents");
+			if (row.termMonths !== data.termMonths) changed.push("termMonths");
+			if (row.purpose !== data.purpose) changed.push("purpose");
+			if (canonicalJson(row.identity) !== canonicalJson(data.identity)) changed.push("identity");
+			if (canonicalJson(row.financial) !== canonicalJson(data.individual ?? null)) {
+				changed.push("individual");
+			}
+			if (canonicalJson(row.business) !== canonicalJson(data.sme ?? null)) changed.push("sme");
+			if (canonicalJson(row.consents) !== canonicalJson(data.consents)) changed.push("consents");
+			if (row.aiResearchConsent !== data.aiResearchConsent) changed.push("aiResearchConsent");
+			if (confirmationsSupplied) changed.push("profileConfirmations");
+			const [updated] = await tx
+				.update(applications)
+				.set({
+					type: data.type,
+					product: data.product,
+					amountCents: data.amountCents,
+					termMonths: data.termMonths,
+					purpose: data.purpose,
+					identity: data.identity,
+					financial: data.individual ?? null,
+					business: data.sme ?? null,
+					consents: data.consents,
+					aiResearchConsent: data.aiResearchConsent,
+					updatedAt,
+				})
+				.where(eq(applications.id, id))
+				.returning({
+					id: applications.id,
+					reference: applications.reference,
+					updatedAt: applications.updatedAt,
+				});
+			if (!updated) {
+				throw new HttpError(409, "NOT_DRAFT", "only drafts can be updated");
+			}
+			// Server-derived confirmations (canonical equality only), like
+			// create: absent means unchanged, supplied (even []) replaces.
+			// Unprofiled applicants ignore the field exactly as create does.
+			if (confirmationsSupplied) {
+				const profile = await getCustomerProfile(tx as unknown as Db, me.id);
+				if (profile) {
+					await tx
+						.delete(applicationProfileConfirmations)
+						.where(eq(applicationProfileConfirmations.applicationId, id));
+					const derived = deriveConfirmations({
+						application: {
+							identity: data.identity as Record<string, unknown>,
+							sme: (data.sme ?? null) as Record<string, unknown> | null,
+						},
+						profile: {
+							identity: (profile.identity ?? {}) as Record<string, unknown>,
+							business: (profile.business ?? null) as Record<string, unknown> | null,
+						},
+						claimed: data.profileConfirmations ?? [],
+					});
+					// Dedupe by field: the schema does not require unique fields,
+					// and the confirmation table is unique per (application, field).
+					const reused = [...new Set(derived.reused)];
+					const edited = [...new Set(derived.edited)];
+					if (reused.length > 0) {
+						await tx.insert(applicationProfileConfirmations).values(
+							reused.map((field) => ({
+								applicationId: id,
+								customerProfileId: profile.id,
+								field,
+								valueHash: confirmationHmac(
+									getConfirmableValue(
+										{
+											identity: data.identity as Record<string, unknown>,
+											sme: (data.sme ?? null) as Record<string, unknown> | null,
+										},
+										field,
+									),
+									t17.confirmationKey,
+								),
+							})),
+						);
+					}
+					await writeAudit(tx, {
+						applicationId: id,
+						actor: me.id,
+						action: "customer.profile_confirmed",
+						entity: "application",
+						payload: { reused, edited },
+					});
+				}
+			}
+			await writeAudit(tx, {
+				applicationId: id,
+				actor: me.id,
+				action: "application.draft_updated",
+				entity: "application",
+				payload:
+					row.aiResearchConsent !== data.aiResearchConsent
+						? {
+								changed,
+								aiResearchConsent: data.aiResearchConsent,
+								aiResearchConsentVersion: AI_RESEARCH_CONSENT_VERSION,
+							}
+						: { changed },
+			});
+			return draftResponse(updated);
+		});
+		return c.json(outcome, 200);
 	});
 
 	// Requirements checklist: owner (draft or submitted) or assigned
@@ -538,6 +794,22 @@ export function intakeRoutes(deps: IntakeRouteDeps): ServiceApp {
 				}
 				if (row.status !== "draft") {
 					throw new HttpError(409, "NOT_DRAFT", "only drafts can be submitted");
+				}
+				// Fail closed: a draft written with a minor/foreign email can
+				// never be submitted (same 400 field paths as create).
+				const submitIdentity = (row.identity ?? {}) as { dob?: unknown; email?: unknown };
+				if (typeof submitIdentity.dob !== "string" || !isAdult(submitIdentity.dob, new Date())) {
+					throw new HttpError(400, "VALIDATION_ERROR", "invalid application", {
+						"identity.dob": ["owner must be 18 or older"],
+					});
+				}
+				if (
+					typeof submitIdentity.email !== "string" ||
+					submitIdentity.email.toLowerCase() !== me.email.toLowerCase()
+				) {
+					throw new HttpError(400, "VALIDATION_ERROR", "invalid application", {
+						"identity.email": ["must match the signed-in email"],
+					});
 				}
 				const checklist = await buildRequirements(db, t17, id);
 				if (!checklist.readyToSubmit) {

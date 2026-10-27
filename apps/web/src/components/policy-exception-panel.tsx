@@ -29,9 +29,10 @@ import {
 	type PolicyExceptionSection,
 	type PolicyExceptionSectionRef,
 } from "../lib/api";
-import { asMemoContent } from "./MemoContent";
-import { PolicyCitationButton, PolicySectionDrawer } from "./PolicyCitations";
-import { TraceDetails } from "./TraceDetails";
+import { Button } from "./ui/button";
+import { asMemoContent } from "./memo-content";
+import { PolicyCitationButton, PolicySectionDrawer } from "./policy-citations";
+import { TraceDetails } from "./trace-details";
 import { Card, EmptyState, ErrorBox, Skeleton, StatusBadge } from "./ui";
 
 function approverLabel(approver: string | null): string {
@@ -57,7 +58,7 @@ function RefButtons({
 	sections: PolicyExceptionSection[];
 }) {
 	const [open, setOpen] = useState<PolicyCitation | null>(null);
-	if (refs.length === 0) return <span className="text-xs text-gray-500">No policy refs.</span>;
+	if (refs.length === 0) return <span className="text-xs text-slate">No policy refs.</span>;
 	return (
 		<>
 			<span className="flex flex-wrap gap-1.5">
@@ -86,7 +87,7 @@ function RefButtons({
 							onClick={() => setOpen(citation)}
 							aria-label={`Open policy ${ref.policyKey} section ${ref.sectionId}`}
 							title={`${ref.policyKey} §${ref.sectionId} — ${section?.heading ?? ""}`}
-							className="rounded bg-blue-50 px-1.5 py-0.5 font-mono text-xs font-medium text-blue-700 hover:bg-blue-100 hover:underline"
+							className="rounded bg-tag-blue px-1.5 py-0.5 font-mono text-xs font-medium text-red-link hover:bg-warm hover:underline"
 						>
 							{ref.policyKey} §{ref.sectionId}
 						</button>
@@ -94,7 +95,7 @@ function RefButtons({
 						<span
 							key={key}
 							title="source unavailable"
-							className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-xs text-gray-500"
+							className="rounded bg-warm px-1.5 py-0.5 font-mono text-xs text-slate"
 						>
 							{ref.policyKey} §{ref.sectionId} · source unavailable
 						</span>
@@ -137,10 +138,7 @@ function ExceptionSegments({
 		<>
 			<div className="space-y-2">
 				{segments.map((s, i) => (
-					<p
-						key={`${i}-${s.citationIndexes.join(",")}-${s.text}`}
-						className="text-sm text-gray-800"
-					>
+					<p key={`${i}-${s.citationIndexes.join(",")}-${s.text}`} className="text-sm text-ink">
 						{s.text}{" "}
 						{s.citationIndexes.map((ci) => {
 							const cited = citations[ci];
@@ -156,7 +154,7 @@ function ExceptionSegments({
 								<span
 									key={ci}
 									title={cited.quote}
-									className="mx-0.5 rounded bg-gray-100 px-1 font-mono text-xs text-gray-500"
+									className="mx-0.5 rounded bg-warm px-1 font-mono text-xs text-slate"
 								>
 									[{ci + 1}]
 								</span>
@@ -166,7 +164,7 @@ function ExceptionSegments({
 				))}
 			</div>
 			{citations.length > 0 && (
-				<ol className="mt-2 space-y-1 text-xs text-gray-600">
+				<ol className="mt-2 space-y-1 text-xs text-slate">
 					{citations.map((c, i) => (
 						<li key={`${c.policyKey}-${c.sectionId}-${i}`}>
 							<span className="font-mono">
@@ -176,12 +174,12 @@ function ExceptionSegments({
 								<button
 									type="button"
 									onClick={() => setOpen(toPolicyCitation(c))}
-									className="ml-1 text-blue-700 hover:underline"
+									className="ml-1 text-red-link hover:underline"
 								>
 									open
 								</button>
 							)}
-							<blockquote className="border-l-2 border-gray-300 pl-2 italic">
+							<blockquote className="border-l-2 border-rule-strong pl-2 italic">
 								“{c.quote}”
 							</blockquote>
 						</li>
@@ -202,23 +200,21 @@ function FailureCard({
 }) {
 	const ex = failure.exception;
 	return (
-		<li className="rounded border border-gray-200 p-3">
+		<li className="rounded border border-rule p-3">
 			<div className="flex flex-wrap items-center gap-2">
 				<span className="font-mono text-sm font-semibold">{failure.ruleId}</span>
 				<StatusBadge status={failure.effect} />
 				<StatusBadge status={ex.state} />
 				{failure.persisted && failure.decisionRelevant && (
-					<span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-800">
+					<span className="rounded bg-tag-amber px-1.5 py-0.5 text-xs font-medium text-warning-ink">
 						decision driver
 					</span>
 				)}
 				{!failure.evaluated && (
-					<span className="rounded bg-gray-200 px-1.5 py-0.5 text-xs text-gray-700">
-						not evaluated
-					</span>
+					<span className="rounded bg-warm px-1.5 py-0.5 text-xs text-slate">not evaluated</span>
 				)}
 			</div>
-			<dl className="mt-1 grid gap-x-4 gap-y-0.5 text-xs text-gray-600 sm:grid-cols-2">
+			<dl className="mt-1 grid gap-x-4 gap-y-0.5 text-xs text-slate sm:grid-cols-2">
 				<div>
 					<dt className="inline font-medium">Reason: </dt>
 					<dd className="inline font-mono">{failure.reasonCode}</dd>
@@ -237,12 +233,12 @@ function FailureCard({
 				</div>
 			</dl>
 			{failure.explanationLimitation && (
-				<p className="mt-1 text-xs text-gray-500">Limitation: {failure.explanationLimitation}</p>
+				<p className="mt-1 text-xs text-slate">Limitation: {failure.explanationLimitation}</p>
 			)}
 			<div className="mt-1.5">
 				<RefButtons refs={failure.ruleSectionRefs} sections={sections} />
 			</div>
-			<div className="mt-2 rounded bg-gray-50 p-2 text-xs text-gray-700">
+			<div className="mt-2 rounded bg-raised p-2 text-xs text-slate">
 				{ex.state === "mapping_unavailable" ? (
 					<p className="font-medium">
 						No exception route recorded — policy owner required. No approver or mitigant is stated.
@@ -256,7 +252,7 @@ function FailureCard({
 							{ex.dualSignoff ? " · dual sign-off" : ""}
 						</p>
 						{ex.approver !== null && ex.approverVerification === "minimum" && (
-							<p className="mt-0.5 text-amber-800">
+							<p className="mt-0.5 text-warning-ink">
 								Minimum approver only — verify committee routing (staff/PEP/connected status is
 								unavailable).
 							</p>
@@ -266,7 +262,7 @@ function FailureCard({
 								{ex.mitigants.map((m) => (
 									<li key={m.code}>
 										{m.label}{" "}
-										<span className="font-mono text-gray-500">
+										<span className="font-mono text-slate">
 											[{m.code}
 											{m.citations.map((c) => ` ${c.policyKey}#${c.sectionId}`).join(",")}]
 										</span>
@@ -284,7 +280,7 @@ function FailureCard({
 						{ex.regularisationPlanMaxMonths !== null && (
 							<p className="mt-1">Regularisation plan ≤ {ex.regularisationPlanMaxMonths} months.</p>
 						)}
-						{ex.reason && <p className="mt-1 text-gray-500">{ex.reason}</p>}
+						{ex.reason && <p className="mt-1 text-slate">{ex.reason}</p>}
 					</>
 				)}
 			</div>
@@ -322,7 +318,7 @@ function FollowUpSection({ applicationId }: { applicationId: string }) {
 	return (
 		<section aria-label="Policy follow-up" className="mt-4">
 			<h3 className="text-sm font-semibold">Ask a follow-up</h3>
-			<p className="mt-0.5 text-xs text-gray-500">
+			<p className="mt-0.5 text-xs text-slate">
 				Case-scoped only — answers cite this case&apos;s rules and sections.
 			</p>
 			<div className="mt-2 flex flex-wrap gap-2">
@@ -336,22 +332,23 @@ function FollowUpSection({ applicationId }: { applicationId: string }) {
 					maxLength={1000}
 					onChange={(e) => setQuestion(e.target.value)}
 					placeholder="e.g. What mitigants apply to the score rule?"
-					className="min-w-0 flex-1 rounded border border-gray-300 px-2 py-1.5 text-sm"
+					className="h-8 min-w-0 flex-1 rounded-sm border border-rule-strong bg-card px-2 text-sm text-ink"
 				/>
-				<button
+				<Button
 					type="button"
+					variant="outline"
+					size="sm"
 					onClick={() => void ask()}
 					disabled={!valid || asking}
-					className="rounded bg-blue-600 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50"
 				>
 					{asking ? "Asking…" : "Ask"}
-				</button>
+				</Button>
 			</div>
 			{history.length > 0 && (
 				<ul className="mt-2 space-y-2">
 					{history.map((entry, i) => (
-						<li key={i} className="rounded border border-gray-200 p-2">
-							<p className="text-sm font-medium text-gray-900">Q: {entry.question}</p>
+						<li key={i} className="rounded border border-rule p-2">
+							<p className="text-sm font-medium text-ink">Q: {entry.question}</p>
 							{entry.answer ? (
 								<div className="mt-1">
 									{entry.answer.status === "succeeded" ? (
@@ -360,16 +357,16 @@ function FollowUpSection({ applicationId }: { applicationId: string }) {
 											citations={entry.answer.citations}
 										/>
 									) : entry.answer.status === "needs_policy_owner" ? (
-										<p className="text-sm text-gray-600">
+										<p className="text-sm text-slate">
 											Needs a policy owner to answer — escalate through the usual review route.
 										</p>
 									) : (
-										<p className="text-sm text-gray-600">
+										<p className="text-sm text-slate">
 											No matching policy section found for this question.
 										</p>
 									)}
 									{entry.answer.limitations.length > 0 && (
-										<ul className="mt-1 list-disc pl-5 text-xs text-gray-500">
+										<ul className="mt-1 list-disc pl-5 text-xs text-slate">
 											{entry.answer.limitations.map((l) => (
 												<li key={l}>{l}</li>
 											))}
@@ -499,14 +496,15 @@ function MemoSection({
 						}
 						action={
 							canMutate ? (
-								<button
+								<Button
 									type="button"
+									variant="outline"
+									size="sm"
 									onClick={() => void draft()}
 									disabled={drafting}
-									className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
 								>
 									{drafting ? "Drafting…" : "Draft exception memo"}
-								</button>
+								</Button>
 							) : undefined
 						}
 					/>
@@ -535,12 +533,12 @@ function MemoSection({
 					<ErrorBox message={apiErrorWithCode(memo.error)} onRetry={() => void memo.refetch()} />
 				</div>
 			) : !artifact || !content ? (
-				<p className="mt-2 text-sm text-gray-500">The memo is not available.</p>
+				<p className="mt-2 text-sm text-slate">The memo is not available.</p>
 			) : (
 				<div className="mt-2">
 					<div className="flex flex-wrap items-baseline justify-between gap-2">
 						<p className="text-sm font-medium">{shown?.title}</p>
-						<p className="text-xs text-gray-500">
+						<p className="text-xs text-slate">
 							v{artifact.version} · r{artifact.revision} · retained until{" "}
 							{formatDateTime(summary.retentionUntil)}
 						</p>
@@ -552,7 +550,7 @@ function MemoSection({
 								{(shown?.rules ?? []).map((rule) => (
 									<li
 										key={rule.ruleId}
-										className="rounded border border-gray-200 bg-gray-50 px-2 py-1 text-xs text-gray-700"
+										className="rounded border border-rule bg-raised px-2 py-1 text-xs text-slate"
 									>
 										<span className="font-mono font-semibold">{rule.ruleId}</span> · observed{" "}
 										{rule.observed || "—"} · threshold {rule.threshold || "—"} ·{" "}
@@ -571,18 +569,18 @@ function MemoSection({
 							<section key={section.key} aria-label={section.title}>
 								<h4 className="text-sm font-semibold">{section.title}</h4>
 								{section.notAvailable || section.claims.length === 0 ? (
-									<p className="mt-1 text-sm text-gray-500">Not available.</p>
+									<p className="mt-1 text-sm text-slate">Not available.</p>
 								) : (
 									<ul className="mt-1 space-y-2">
 										{section.claims.map((claim, ci) => (
-											<li key={`${section.key}-${ci}`} className="text-sm text-gray-800">
+											<li key={`${section.key}-${ci}`} className="text-sm text-ink">
 												{editing ? (
 													<textarea
 														aria-label={`Edit claim ${ci + 1} in ${section.title}`}
 														value={claim.text}
 														onChange={(event) => updateClaim(si, ci, event.target.value)}
 														rows={3}
-														className="w-full rounded border border-gray-300 px-2 py-1 text-sm"
+														className="h-auto w-full rounded-sm border border-rule-strong bg-card px-2 py-1 text-sm text-ink"
 													/>
 												) : (
 													<p>{claim.text}</p>
@@ -592,10 +590,10 @@ function MemoSection({
 														{claim.citations.map((citation, j) => (
 															<li
 																key={`${citation.ref}-${j}`}
-																className="rounded border border-gray-200 bg-gray-50 px-2 py-1"
+																className="rounded border border-rule bg-raised px-2 py-1"
 															>
-																<p className="font-mono text-xs text-gray-700">{citation.ref}</p>
-																<blockquote className="mt-0.5 border-l-2 border-gray-300 pl-2 text-xs text-gray-600 italic">
+																<p className="font-mono text-xs text-slate">{citation.ref}</p>
+																<blockquote className="mt-0.5 border-l-2 border-rule-strong pl-2 text-xs text-slate italic">
 																	“{citation.quote}”
 																</blockquote>
 															</li>
@@ -612,11 +610,10 @@ function MemoSection({
 					{(shown?.openItems.length ?? 0) > 0 && (
 						<div className="mt-3">
 							<h4 className="text-sm font-semibold">Open items</h4>
-							<ul className="mt-1 list-disc pl-5 text-sm text-gray-700">
+							<ul className="mt-1 list-disc pl-5 text-sm text-slate">
 								{(shown?.openItems ?? []).map((item, i) => (
 									<li key={i}>
-										{item.text}{" "}
-										<span className="font-mono text-xs text-gray-500">[{item.code}]</span>
+										{item.text} <span className="font-mono text-xs text-slate">[{item.code}]</span>
 									</li>
 								))}
 							</ul>
@@ -624,7 +621,7 @@ function MemoSection({
 					)}
 					{shown?.regularisationPlanMonths !== null &&
 						shown?.regularisationPlanMonths !== undefined && (
-							<p className="mt-3 text-sm text-gray-700">
+							<p className="mt-3 text-sm text-slate">
 								Regularisation plan ≤ {shown.regularisationPlanMonths} months.
 							</p>
 						)}
@@ -651,78 +648,79 @@ function MemoSection({
 						}
 					/>
 					{artifact.status === "approved" ? (
-						<p className="mt-3 text-sm text-gray-600">
+						<p className="mt-3 text-sm text-slate">
 							Approved{artifact.approvedBy ? ` by ${artifact.approvedBy}` : ""}
 							{artifact.approvedAt ? ` · ${formatDateTime(artifact.approvedAt)}` : ""}.
 						</p>
 					) : editing ? (
 						<div className="mt-3 flex flex-wrap gap-2">
-							<button
+							<Button
 								type="button"
+								variant="outline"
+								size="sm"
 								onClick={() => void saveEdit()}
 								disabled={acting || !canMutate}
-								className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
 							>
 								{acting ? "Saving…" : "Save changes"}
-							</button>
-							<button
+							</Button>
+							<Button
 								type="button"
+								variant="outline"
+								size="sm"
 								onClick={() => {
 									setEditing(null);
 									setActionError("");
 								}}
 								disabled={acting}
-								className="rounded border border-gray-300 px-4 py-2 text-sm disabled:opacity-50"
 							>
 								Cancel edit
-							</button>
+							</Button>
 						</div>
 					) : canMutate ? (
 						<div className="mt-3 flex flex-wrap gap-2">
 							{artifact.status === "draft" && (
-								<button
-									type="button"
-									onClick={startEdit}
-									className="rounded border border-gray-300 px-4 py-2 text-sm"
-								>
+								<Button type="button" variant="outline" size="sm" onClick={startEdit}>
 									Edit memo
-								</button>
+								</Button>
 							)}
 							{confirming ? (
 								<>
-									<button
+									<Button
 										type="button"
+										variant="outline"
+										size="sm"
 										onClick={() => void approve()}
 										disabled={acting || artifact.status !== "draft"}
-										className="rounded bg-green-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
 									>
 										{acting ? "Approving…" : "Confirm approval"}
-									</button>
-									<button
+									</Button>
+									<Button
 										type="button"
+										variant="outline"
+										size="sm"
 										onClick={() => {
 											setConfirming(false);
 											setActionError("");
 										}}
 										disabled={acting}
-										className="rounded border border-gray-300 px-4 py-2 text-sm disabled:opacity-50"
 									>
 										Cancel
-									</button>
+									</Button>
 								</>
 							) : (
-								<button
+								<Button
 									type="button"
+									variant="outline"
+									size="sm"
 									onClick={() => setConfirming(true)}
 									disabled={artifact.status !== "draft"}
-									className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
 								>
 									Approve memo
-								</button>
+								</Button>
 							)}
 						</div>
 					) : (
-						<p className="mt-3 text-sm text-gray-500">
+						<p className="mt-3 text-sm text-slate">
 							The case is {caseStatus} — the memo can be viewed but not edited or approved.
 						</p>
 					)}
@@ -769,14 +767,15 @@ function ExplainSection({
 
 	return (
 		<section aria-label="Policy explanation" className="mt-4">
-			<button
+			<Button
 				type="button"
+				variant="outline"
+				size="sm"
 				onClick={() => void explain()}
 				disabled={explaining}
-				className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
 			>
 				{explaining ? "Explaining…" : "Explain with policy"}
-			</button>
+			</Button>
 			{explainError && (
 				<div className="mt-2">
 					<ErrorBox message={explainError} />
@@ -786,14 +785,14 @@ function ExplainSection({
 				<div className="mt-3 space-y-3">
 					{explanation.status === "succeeded" ? (
 						explanation.rules.length === 0 ? (
-							<p className="text-sm text-gray-600">No mapped rules to explain.</p>
+							<p className="text-sm text-slate">No mapped rules to explain.</p>
 						) : (
 							<ul className="space-y-3">
 								{explanation.rules.map((rule) => (
-									<li key={rule.ruleId} className="rounded border border-gray-200 p-3">
+									<li key={rule.ruleId} className="rounded border border-rule p-3">
 										<p className="text-sm font-medium">
 											<span className="font-mono">{rule.ruleId}</span>{" "}
-											<span className="rounded bg-blue-100 px-1.5 py-0.5 text-xs font-medium text-blue-800">
+											<span className="rounded bg-tag-blue px-1.5 py-0.5 text-xs font-medium text-ink">
 												{rule.confidence} confidence
 											</span>
 										</p>
@@ -805,18 +804,16 @@ function ExplainSection({
 							</ul>
 						)
 					) : explanation.status === "needs_policy_owner" ? (
-						<p className="text-sm text-gray-600">
+						<p className="text-sm text-slate">
 							The explanation needs a policy owner — escalate through the usual review route.
 						</p>
 					) : (
-						<p className="text-sm text-gray-600">
-							No matching policy section found for these rules.
-						</p>
+						<p className="text-sm text-slate">No matching policy section found for these rules.</p>
 					)}
 					{explanation.limitations.length > 0 && (
 						<div>
 							<h4 className="text-sm font-semibold">Limitations</h4>
-							<ul className="mt-1 list-disc pl-5 text-sm text-gray-700">
+							<ul className="mt-1 list-disc pl-5 text-sm text-slate">
 								{explanation.limitations.map((l) => (
 									<li key={l}>{l}</li>
 								))}
@@ -859,7 +856,7 @@ export function PolicyExceptionPanel({
 			title="Policy & exception navigator"
 			actions={
 				view.data ? (
-					<span className="text-xs text-gray-500">source: {view.data.sourceStatus}</span>
+					<span className="text-xs text-slate">source: {view.data.sourceStatus}</span>
 				) : undefined
 			}
 		>
@@ -871,7 +868,7 @@ export function PolicyExceptionPanel({
 				<EmptyState title="Policy details unavailable" />
 			) : (
 				<div>
-					<dl className="grid gap-x-4 gap-y-1 text-xs text-gray-600 sm:grid-cols-2">
+					<dl className="grid gap-x-4 gap-y-1 text-xs text-slate sm:grid-cols-2">
 						<div>
 							<dt className="inline font-medium">Outcome: </dt>
 							<dd className="inline font-mono">{context.outcome}</dd>
@@ -896,7 +893,7 @@ export function PolicyExceptionPanel({
 					{context.limitations.length > 0 && (
 						<div className="mt-2">
 							<h3 className="text-sm font-semibold">Limitations</h3>
-							<ul className="mt-1 list-disc pl-5 text-sm text-gray-700">
+							<ul className="mt-1 list-disc pl-5 text-sm text-slate">
 								{context.limitations.map((l) => (
 									<li key={l}>{l}</li>
 								))}
@@ -906,7 +903,7 @@ export function PolicyExceptionPanel({
 					<div className="mt-3">
 						<h3 className="text-sm font-semibold">Failed rules</h3>
 						{context.failedRules.length === 0 ? (
-							<p className="mt-1 text-sm text-gray-600">
+							<p className="mt-1 text-sm text-slate">
 								No failed rules — nothing to route for exception.
 							</p>
 						) : (

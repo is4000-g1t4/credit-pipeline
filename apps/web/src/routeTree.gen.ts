@@ -18,6 +18,7 @@ import { Route as LoansIndexRouteImport } from './routes/loans/index'
 import { Route as LoansIdRouteImport } from './routes/loans/$id'
 import { Route as OfficerIndexRouteImport } from './routes/officer/index'
 import { Route as OfficerPoliciesRouteImport } from './routes/officer/policies'
+import { Route as OfficerPortfolioRouteImport } from './routes/officer/portfolio'
 import { Route as OfficerFraudReviewIndexRouteImport } from './routes/officer/fraud-review/index'
 import { Route as OfficerFraudReviewIdRouteImport } from './routes/officer/fraud-review/$id'
 import { Route as OfficerReviewIndexRouteImport } from './routes/officer/review/index'
@@ -68,6 +69,11 @@ const OfficerPoliciesRoute = OfficerPoliciesRouteImport.update({
   path: '/officer/policies',
   getParentRoute: () => rootRouteImport,
 } as any)
+const OfficerPortfolioRoute = OfficerPortfolioRouteImport.update({
+  id: '/officer/portfolio',
+  path: '/officer/portfolio',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const OfficerFraudReviewIndexRoute = OfficerFraudReviewIndexRouteImport.update({
   id: '/officer/fraud-review/',
   path: '/officer/fraud-review/',
@@ -96,6 +102,7 @@ export interface FileRoutesByFullPath {
   '/applications/$id': typeof ApplicationsIdRoute
   '/loans/$id': typeof LoansIdRoute
   '/officer/policies': typeof OfficerPoliciesRoute
+  '/officer/portfolio': typeof OfficerPortfolioRoute
   '/applications/': typeof ApplicationsIndexRoute
   '/loans/': typeof LoansIndexRoute
   '/officer/': typeof OfficerIndexRoute
@@ -111,6 +118,7 @@ export interface FileRoutesByTo {
   '/applications/$id': typeof ApplicationsIdRoute
   '/loans/$id': typeof LoansIdRoute
   '/officer/policies': typeof OfficerPoliciesRoute
+  '/officer/portfolio': typeof OfficerPortfolioRoute
   '/applications': typeof ApplicationsIndexRoute
   '/loans': typeof LoansIndexRoute
   '/officer': typeof OfficerIndexRoute
@@ -127,6 +135,7 @@ export interface FileRoutesById {
   '/applications/$id': typeof ApplicationsIdRoute
   '/loans/$id': typeof LoansIdRoute
   '/officer/policies': typeof OfficerPoliciesRoute
+  '/officer/portfolio': typeof OfficerPortfolioRoute
   '/applications/': typeof ApplicationsIndexRoute
   '/loans/': typeof LoansIndexRoute
   '/officer/': typeof OfficerIndexRoute
@@ -144,6 +153,7 @@ export interface FileRouteTypes {
     | '/applications/$id'
     | '/loans/$id'
     | '/officer/policies'
+    | '/officer/portfolio'
     | '/applications/'
     | '/loans/'
     | '/officer/'
@@ -159,6 +169,7 @@ export interface FileRouteTypes {
     | '/applications/$id'
     | '/loans/$id'
     | '/officer/policies'
+    | '/officer/portfolio'
     | '/applications'
     | '/loans'
     | '/officer'
@@ -174,6 +185,7 @@ export interface FileRouteTypes {
     | '/applications/$id'
     | '/loans/$id'
     | '/officer/policies'
+    | '/officer/portfolio'
     | '/applications/'
     | '/loans/'
     | '/officer/'
@@ -190,6 +202,7 @@ export interface RootRouteChildren {
   ApplicationsIdRoute: typeof ApplicationsIdRoute
   LoansIdRoute: typeof LoansIdRoute
   OfficerPoliciesRoute: typeof OfficerPoliciesRoute
+  OfficerPortfolioRoute: typeof OfficerPortfolioRoute
   ApplicationsIndexRoute: typeof ApplicationsIndexRoute
   LoansIndexRoute: typeof LoansIndexRoute
   OfficerIndexRoute: typeof OfficerIndexRoute
@@ -264,6 +277,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OfficerPoliciesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/officer/portfolio': {
+      id: '/officer/portfolio'
+      path: '/officer/portfolio'
+      fullPath: '/officer/portfolio'
+      preLoaderRoute: typeof OfficerPortfolioRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/officer/fraud-review/': {
       id: '/officer/fraud-review/'
       path: '/officer/fraud-review'
@@ -302,6 +322,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApplicationsIdRoute: ApplicationsIdRoute,
   LoansIdRoute: LoansIdRoute,
   OfficerPoliciesRoute: OfficerPoliciesRoute,
+  OfficerPortfolioRoute: OfficerPortfolioRoute,
   ApplicationsIndexRoute: ApplicationsIndexRoute,
   LoansIndexRoute: LoansIndexRoute,
   OfficerIndexRoute: OfficerIndexRoute,

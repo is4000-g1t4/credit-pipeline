@@ -33,6 +33,7 @@
 	},
 	"devDependencies": {
 		"@playwright/test": "catalog:",
+		"@shadcn/lint": "catalog:",
 		"@types/node": "catalog:",
 		"dotenv": "catalog:",
 		"kafkajs": "catalog:",

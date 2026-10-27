@@ -5,10 +5,12 @@ import { useEffect, useRef, useState } from "react";
 import {
 	apiErrorMessage,
 	fetchPolicySection,
+	formatDateOnly,
 	type PolicyCitation,
 	type PolicySection,
 } from "../lib/api";
 import { ErrorBox, Skeleton } from "./ui";
+import { Button } from "./ui/button";
 
 export function PolicyCitationButton({
 	citation,
@@ -25,7 +27,7 @@ export function PolicyCitationButton({
 			onClick={() => onSelect(citation)}
 			aria-label={`Policy source ${index + 1}: ${citation.policyKey} section ${citation.sectionId}, ${citation.heading}`}
 			title={`${citation.policyKey} §${citation.sectionId} — ${citation.heading}`}
-			className="mx-0.5 rounded bg-blue-50 px-1 font-mono text-xs font-medium text-blue-700 hover:bg-blue-100 hover:underline"
+			className="mx-0.5 rounded bg-tag-blue px-1 font-mono text-xs font-medium text-red-link hover:bg-warm hover:underline"
 		>
 			[{index + 1}]
 		</button>
@@ -61,7 +63,7 @@ function DrawerBody({ citation }: { citation: PolicyCitation }) {
 	if (!section) return <Skeleton label="Loading policy section" />;
 	return (
 		<div className="space-y-3">
-			<dl className="grid gap-x-4 gap-y-0.5 text-xs text-gray-600 sm:grid-cols-2">
+			<dl className="grid gap-x-4 gap-y-0.5 text-xs text-slate sm:grid-cols-2">
 				<div>
 					<dt className="inline font-medium">Version: </dt>
 					<dd className="inline">{section.version}</dd>
@@ -69,16 +71,17 @@ function DrawerBody({ citation }: { citation: PolicyCitation }) {
 				<div>
 					<dt className="inline font-medium">Effective: </dt>
 					<dd className="inline">
-						{section.effectiveFrom} → {section.effectiveTo ?? "current"}
+						{formatDateOnly(section.effectiveFrom)} →{" "}
+						{section.effectiveTo ? formatDateOnly(section.effectiveTo) : "current"}
 					</dd>
 				</div>
 			</dl>
-			<blockquote className="border-l-2 border-blue-300 pl-2 text-sm text-gray-700 italic">
+			<blockquote className="border-l-2 border-rule-strong pl-2 text-sm text-slate italic">
 				“{citation.quote}”
 			</blockquote>
-			<div className="whitespace-pre-wrap text-sm text-gray-800">{section.body}</div>
+			<div className="whitespace-pre-wrap text-sm text-ink">{section.body}</div>
 			{(section.neighbours?.length ?? 0) > 0 && (
-				<p className="text-xs text-gray-500">
+				<p className="text-xs text-slate">
 					Nearby: {section.neighbours?.map((n) => `§${n.sectionId} ${n.heading}`).join(" · ")}
 				</p>
 			)}
@@ -106,31 +109,34 @@ export function PolicySectionDrawer({
 
 	return (
 		<div className="fixed inset-0 z-50">
-			<div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
+			<div className="absolute inset-0 bg-ink/60" onClick={onClose} aria-hidden="true" />
 			<dialog
 				open
 				aria-label={`Policy ${citation.policyKey} section ${citation.sectionId}`}
-				className="absolute top-0 right-0 m-0 h-full max-h-none w-full max-w-md overflow-y-auto border-0 bg-white p-4 shadow-xl sm:p-5"
+				className="absolute top-0 right-0 m-0 h-full max-h-none w-full max-w-md overflow-y-auto border-0 bg-card p-4 sm:p-5"
 			>
 				<div className="mb-3 flex items-start justify-between gap-2">
 					<div>
-						<p className="text-xs text-gray-500">
+						<p className="text-xs text-slate">
 							{citation.policyKey} · {citation.version}
 						</p>
 						<h2 className="text-base font-semibold">
 							§{citation.sectionId} — {citation.heading}
 						</h2>
-						<p className="mt-0.5 text-xs text-gray-500">Effective {citation.effectiveFrom}</p>
+						<p className="mt-0.5 text-xs text-slate">
+							Effective {formatDateOnly(citation.effectiveFrom)}
+						</p>
 					</div>
-					<button
+					<Button
 						ref={closeRef}
 						type="button"
+						variant="outline"
+						size="sm"
 						onClick={onClose}
 						aria-label={`Close policy section ${citation.sectionId}`}
-						className="rounded border border-gray-300 px-2 py-1 text-sm text-gray-700"
 					>
 						✕
-					</button>
+					</Button>
 				</div>
 				<DrawerBody key={`${citation.policyVersionId}/${citation.sectionId}`} citation={citation} />
 			</dialog>
@@ -152,7 +158,7 @@ export function CitedSegments({
 			<div className="space-y-2">
 				{segments.map((s) => (
 					// Positional: the server sends segments in order with no ids.
-					<p key={`${s.citationIndexes.join(",")}-${s.text}`} className="text-sm text-gray-800">
+					<p key={`${s.citationIndexes.join(",")}-${s.text}`} className="text-sm text-ink">
 						{s.text}{" "}
 						{s.citationIndexes.map(
 							(ci) =>
@@ -181,14 +187,14 @@ export function PolicySources({ citations }: { citations: PolicyCitation[] }) {
 		<>
 			<div>
 				<h4 className="text-sm font-semibold">Sources</h4>
-				<ol className="mt-1 space-y-1 text-sm text-gray-700">
+				<ol className="mt-1 space-y-1 text-sm text-slate">
 					{citations.map((c, i) => (
 						<li key={`${c.policyVersionId}/${c.sectionId}`}>
 							<PolicyCitationButton citation={c} index={i} onSelect={setSelected} />{" "}
 							<span className="font-mono text-xs">
 								{c.policyKey} §{c.sectionId}
 							</span>{" "}
-							— {c.heading} <span className="text-xs text-gray-500">({c.version})</span>
+							— {c.heading} <span className="text-xs text-slate">({c.version})</span>
 						</li>
 					))}
 				</ol>

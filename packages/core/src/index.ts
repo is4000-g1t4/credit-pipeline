@@ -23,6 +23,7 @@ export * from "./policy-registry.js";
 export * from "./pricing.js";
 export * from "./reasons.js";
 export * from "./reference.js";
+export * from "./reporting.js";
 export * from "./schemas.js";
 export * from "./scoring.js";
 export * from "./signals.js";

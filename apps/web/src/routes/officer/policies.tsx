@@ -1,16 +1,35 @@
 // Officer credit-policy Q&A (advisory only): one question at a time, cited
 // answer, no chat history or persistence — state resets on navigation.
+import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
-import { CitedSegments, PolicySources } from "../../components/PolicyCitations";
-import { Card, ErrorBox, Page } from "../../components/ui";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { CitedSegments, PolicySources } from "../../components/policy-citations";
 import {
+	CodeTag,
+	EmptyState,
+	ErrorBox,
+	Page,
+	PageHead,
+	Panel,
+	SectionHead,
+	Skeleton,
+	Tag,
+	inputCls,
+} from "../../components/ubs";
+import {
+	api,
 	apiErrorMessage,
 	askPolicy,
+	formatDateOnly,
+	valueLabel,
 	type PolicyAskResponse,
 	type PolicyProduct,
 } from "../../lib/api";
 import { RequireAuth } from "../../lib/auth";
+import { clean } from "../../lib/format";
 
 export const Route = createFileRoute("/officer/policies")({
 	validateSearch: (search: Record<string, unknown>): { question?: string } => ({
@@ -51,6 +70,54 @@ function statusCopy(status: PolicyAskResponse["status"]): string {
 	}
 }
 
+interface PolicyRegisterItem {
+	policyKey: string;
+	title: string;
+	version: string;
+	versionId: string;
+	effectiveFrom: string;
+	effectiveTo: string | null;
+	productScope: string;
+	jurisdiction: string;
+	sectionCount: number;
+}
+
+function PolicyRegister() {
+	const register = useQuery({
+		queryKey: ["policy-register"],
+		queryFn: () => api<{ items: PolicyRegisterItem[] }>("/api/policy/register"),
+		retry: false,
+	});
+
+	if (register.isPending) return <Skeleton label="Loading policy register" />;
+	if (register.isError)
+		return (
+			<ErrorBox message={apiErrorMessage(register.error)} onRetry={() => void register.refetch()} />
+		);
+	if (register.data.items.length === 0)
+		return <EmptyState title="No approved policies" hint="The register is empty." />;
+
+	return (
+		<ul className="divide-y divide-rule">
+			{register.data.items.map((item) => (
+				<li key={item.policyKey} className="py-4 first:pt-0 last:pb-0">
+					<div className="flex flex-wrap items-center gap-2">
+						<CodeTag code={item.policyKey} />
+						<Tag tone="info">{clean(item.version)}</Tag>
+					</div>
+					<p className="mt-2 text-lg leading-7 text-ink">{clean(item.title)}</p>
+					<p className="mt-1 text-sm text-slate tabular">
+						Effective {formatDateOnly(item.effectiveFrom)} →{" "}
+						{item.effectiveTo ? formatDateOnly(item.effectiveTo) : "current"} ·{" "}
+						{valueLabel("productScope", clean(item.productScope))} · {clean(item.jurisdiction)} ·{" "}
+						{item.sectionCount} sections
+					</p>
+				</li>
+			))}
+		</ul>
+	);
+}
+
 function PolicyAsk() {
 	const { question: prefill } = Route.useSearch();
 	const [question, setQuestion] = useState(prefill ?? "");
@@ -76,121 +143,125 @@ function PolicyAsk() {
 
 	return (
 		<Page>
-			<h1 className="mb-1 text-xl font-bold">Credit policy</h1>
-			<p className="mb-4 text-xs text-gray-500">
-				Advisory only — cited policy sections for context. It never decides a case.
-			</p>
-			<div className="space-y-4">
-				<Card title="Ask a policy question">
-					<div className="space-y-3">
-						<div>
-							<label
-								htmlFor="policy-question"
-								className="mb-1 block text-sm font-medium text-gray-700"
-							>
-								Question
-							</label>
-							<textarea
-								id="policy-question"
-								value={question}
-								maxLength={2000}
-								rows={3}
-								onChange={(e) => setQuestion(e.target.value)}
-								placeholder="e.g. What is the maximum loan amount for a personal loan?"
-								className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-							/>
-						</div>
-						<div className="flex flex-wrap gap-3">
-							<div>
-								<label
-									htmlFor="policy-product"
-									className="mb-1 block text-sm font-medium text-gray-700"
-								>
-									Product
-								</label>
-								<select
-									id="policy-product"
-									value={product}
-									onChange={(e) => setProduct(e.target.value as PolicyProduct)}
-									className="rounded border border-gray-300 px-3 py-2 text-sm"
-								>
-									<option value="personal_loan">Personal loan</option>
-									<option value="sme_term_loan">SME term loan</option>
-								</select>
-							</div>
-							<div>
-								<label
-									htmlFor="policy-jurisdiction"
-									className="mb-1 block text-sm font-medium text-gray-700"
-								>
-									Jurisdiction
-								</label>
-								<input
-									id="policy-jurisdiction"
-									type="text"
-									value={jurisdiction}
-									maxLength={10}
-									onChange={(e) => setJurisdiction(e.target.value)}
-									className="w-24 rounded border border-gray-300 px-3 py-2 text-sm"
+			<PageHead
+				title="Credit policy"
+				subtitle="Advisory only — cited policy sections for context. It never decides a case."
+			/>
+			<div className="grid gap-8 lg:grid-cols-3">
+				<div className="space-y-8 lg:col-span-2">
+					<Panel title="Ask a policy question" outline>
+						<div className="space-y-4">
+							<div className="space-y-2">
+								<Label htmlFor="policy-question">Question</Label>
+								<Textarea
+									id="policy-question"
+									value={question}
+									maxLength={2000}
+									rows={3}
+									onChange={(e) => setQuestion(e.target.value)}
+									placeholder="e.g. What is the maximum loan amount for a personal loan?"
 								/>
 							</div>
-						</div>
-						<button
-							type="button"
-							onClick={() => void ask()}
-							disabled={asking || !question.trim()}
-							className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-						>
-							{asking ? "Asking…" : "Ask"}
-						</button>
-						<div className="flex flex-wrap gap-2">
-							{SUGGESTED.map((s) => (
-								<button
-									key={s}
-									type="button"
-									onClick={() => setQuestion(s)}
-									className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
-								>
-									{s}
-								</button>
-							))}
-						</div>
-					</div>
-				</Card>
-
-				{asking && (
-					<output className="block text-sm text-gray-600" aria-live="polite">
-						Checking cited policy sections… This panel updates automatically.
-					</output>
-				)}
-				{error && <ErrorBox message={error} onRetry={() => void ask()} />}
-
-				{!asking && !error && answer && answer.status === "succeeded" && (
-					<Card title="Answer">
-						<div className="space-y-3">
-							<CitedSegments segments={answer.segments} citations={answer.citations} />
-							<PolicySources citations={answer.citations} />
-							{answer.limitations.length > 0 && (
-								<div>
-									<h4 className="text-sm font-semibold">Limitations</h4>
-									<ul className="mt-1 list-disc pl-5 text-sm text-gray-700">
-										{answer.limitations.map((l) => (
-											<li key={l}>{l}</li>
-										))}
-									</ul>
+							<div className="flex flex-wrap gap-4">
+								<div className="space-y-2">
+									<Label htmlFor="policy-product">Product</Label>
+									<select
+										id="policy-product"
+										value={product}
+										onChange={(e) => setProduct(e.target.value as PolicyProduct)}
+										className={inputCls}
+									>
+										<option value="personal_loan">Personal loan</option>
+										<option value="sme_term_loan">SME term loan</option>
+									</select>
 								</div>
-							)}
-							{answer.usage?.costUsd !== undefined && (
-								<p className="text-xs text-gray-500">Cost ${answer.usage.costUsd.toFixed(4)}</p>
-							)}
+								<div className="space-y-2">
+									<Label htmlFor="policy-jurisdiction">Jurisdiction</Label>
+									<input
+										id="policy-jurisdiction"
+										type="text"
+										value={jurisdiction}
+										maxLength={10}
+										onChange={(e) => setJurisdiction(e.target.value)}
+										className={inputCls}
+									/>
+								</div>
+							</div>
+							<Button
+								type="button"
+								onClick={() => void ask()}
+								disabled={asking || !question.trim()}
+							>
+								{asking ? "Asking…" : "Ask"}
+							</Button>
+							<div className="flex flex-wrap gap-2">
+								{SUGGESTED.map((s) => (
+									<Button
+										key={s}
+										type="button"
+										variant="outline"
+										size="sm"
+										onClick={() => setQuestion(s)}
+									>
+										{s}
+									</Button>
+								))}
+							</div>
 						</div>
-					</Card>
-				)}
-				{!asking && !error && answer && answer.status !== "succeeded" && (
-					<p className="text-sm text-gray-600" aria-live="polite">
-						{statusCopy(answer.status)}
-					</p>
-				)}
+					</Panel>
+
+					{asking && (
+						<output className="block text-sm text-slate" aria-live="polite">
+							Checking cited policy sections… This panel updates automatically.
+						</output>
+					)}
+					{error && <ErrorBox message={error} onRetry={() => void ask()} />}
+
+					{!asking && !error && answer && answer.status === "succeeded" && (
+						<Panel title="Answer" outline>
+							<div className="space-y-4">
+								<CitedSegments segments={answer.segments} citations={answer.citations} />
+								<PolicySources citations={answer.citations} />
+								{answer.limitations.length > 0 && (
+									<div>
+										<h4 className="text-sm font-medium text-ink">Limitations</h4>
+										<ul className="mt-1 list-disc pl-5 text-sm text-slate">
+											{answer.limitations.map((l) => (
+												<li key={l}>{clean(l)}</li>
+											))}
+										</ul>
+									</div>
+								)}
+								{answer.usage?.costUsd !== undefined && (
+									<p className="text-xs text-slate tabular">
+										Cost ${answer.usage.costUsd.toFixed(4)}
+									</p>
+								)}
+							</div>
+						</Panel>
+					)}
+					{!asking && !error && answer && answer.status !== "succeeded" && (
+						<p className="text-sm text-slate" aria-live="polite">
+							{statusCopy(answer.status)}
+						</p>
+					)}
+				</div>
+
+				<aside>
+					<Panel title="Policy register" tone="warm">
+						<p className="mb-4 text-sm text-slate">
+							Current approved documents. Answers cite exact sections; sections outside this
+							register are not shown.
+						</p>
+						<PolicyRegister />
+					</Panel>
+					<div className="mt-8">
+						<SectionHead title="Advisory only" tight />
+						<p className="text-sm text-slate">
+							The register explains the rule and leaves the decision to an officer.
+						</p>
+					</div>
+				</aside>
 			</div>
 		</Page>
 	);

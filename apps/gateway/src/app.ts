@@ -140,6 +140,13 @@ export function createApp(deps: GatewayDeps): Hono<{ Variables: Variables }> {
 		return proxyTo(c, deps, c.var.user, { baseUrl: deps.env.applicationsUrl, path });
 	});
 
+	// Draft edit (spec §4): owner-only optimistic PATCH. Same normal bound —
+	// no workflow starts.
+	app.patch("/api/applications/:id/draft", user, async (c) => {
+		const path = c.req.path;
+		return proxyTo(c, deps, c.var.user, { baseUrl: deps.env.applicationsUrl, path });
+	});
+
 	app.patch("/api/applications/:id/context-consent", user, async (c) => {
 		const path = c.req.path;
 		return proxyTo(c, deps, c.var.user, { baseUrl: deps.env.applicationsUrl, path });
@@ -250,10 +257,15 @@ export function createApp(deps: GatewayDeps): Hono<{ Variables: Variables }> {
 		return proxyTo(c, deps, c.var.user, { baseUrl: deps.env.portfolioUrl, path });
 	});
 
-	// Policy console (officer only): every /api/policy/* path proxies
-	// unchanged to the policy service with the long ask timeout. No
-	// per-route logic — auth, the per-actor limit, and the timeout only.
-	app.all("/api/policy/*", officer, async (c) => {
+	app.all("/api/portfolio/*", officer, async (c) => {
+		const path = c.req.path;
+		return proxyTo(c, deps, c.var.user, { baseUrl: deps.env.portfolioUrl, path });
+	});
+
+	// Policy console (officer only). The 10/min per-actor AI limiter applies
+	// only to asks; register/section reads and version writes are not AI
+	// calls and keep their own paths.
+	app.post("/api/policy/ask", officer, async (c) => {
 		const me = c.var.user;
 		if (!deps.policyLimiter.check(me.id)) {
 			throw new HttpError(429, "RATE_LIMITED", "too many policy requests");
@@ -263,6 +275,17 @@ export function createApp(deps: GatewayDeps): Hono<{ Variables: Variables }> {
 			c,
 			deps,
 			me,
+			{ baseUrl: deps.env.policyUrl, path },
+			deps.env.policyUpstreamTimeoutMs,
+		);
+	});
+
+	app.all("/api/policy/*", officer, async (c) => {
+		const path = c.req.path;
+		return proxyTo(
+			c,
+			deps,
+			c.var.user,
 			{ baseUrl: deps.env.policyUrl, path },
 			deps.env.policyUpstreamTimeoutMs,
 		);

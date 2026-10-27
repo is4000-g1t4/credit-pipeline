@@ -5,7 +5,20 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
-import { EmptyState, ErrorBox, Page, Skeleton, StatusBadge } from "../../../components/ui";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+	EmptyState,
+	ErrorBox,
+	Page,
+	PageHead,
+	Panel,
+	SectionHead,
+	Skeleton,
+	StatusBadge,
+	inputCls,
+} from "../../../components/ubs";
 import {
 	ApiError,
 	explainDuplicateDocument,
@@ -75,19 +88,14 @@ function DuplicateLookup() {
 	}
 
 	return (
-		<section
-			aria-label="Duplicate lookup"
-			className="mt-6 rounded-lg border border-gray-200 bg-white p-4"
-		>
-			<h2 className="text-base font-semibold">Duplicate lookup</h2>
-			<p className="mt-0.5 text-xs text-gray-500">
+		<section aria-label="Duplicate lookup">
+			<SectionHead title="Duplicate lookup" tight />
+			<p className="mb-4 text-sm text-slate">
 				Hash-only: rows carry references and kinds, never document text or applicant details.
 			</p>
-			<div className="mt-3 grid gap-3 sm:grid-cols-2">
-				<div>
-					<label htmlFor="dup-sha" className="mb-1 block text-sm font-medium text-gray-700">
-						SHA-256
-					</label>
+			<div className="grid gap-4 sm:grid-cols-2">
+				<div className="space-y-2">
+					<Label htmlFor="dup-sha">SHA-256</Label>
 					<input
 						id="dup-sha"
 						type="text"
@@ -95,43 +103,41 @@ function DuplicateLookup() {
 						onChange={(e) => setSha256(e.target.value)}
 						placeholder="64 hex characters"
 						spellCheck={false}
-						className="w-full rounded border border-gray-300 px-3 py-2 font-mono text-sm focus:border-blue-500 focus:outline-none"
+						className={inputCls}
 					/>
 				</div>
-				<div>
-					<label htmlFor="dup-app" className="mb-1 block text-sm font-medium text-gray-700">
-						Application id (required for case-scoped counts)
-					</label>
+				<div className="space-y-2">
+					<Label htmlFor="dup-app">Application id (required for case-scoped counts)</Label>
 					<input
 						id="dup-app"
 						type="text"
 						value={applicationId}
 						onChange={(e) => setApplicationId(e.target.value)}
 						spellCheck={false}
-						className="w-full rounded border border-gray-300 px-3 py-2 font-mono text-sm focus:border-blue-500 focus:outline-none"
+						className={inputCls}
 					/>
 				</div>
 			</div>
 			{error && (
-				<div className="mt-3">
+				<div className="mt-4">
 					<ErrorBox message={error} />
 				</div>
 			)}
-			<button
+			<Button
 				type="button"
 				onClick={() => void lookup()}
 				disabled={busy || !shaValid || appId === ""}
-				className="mt-3 rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+				className="mt-4"
 			>
 				{busy ? "Looking up…" : "Look up hash"}
-			</button>
+			</Button>
 			{result !== null && (
-				<div className="mt-3" aria-live="polite">
-					<p className="text-sm text-gray-700">
-						<span className="font-mono">{result.sha256Prefix}…</span> · {result.count} match
+				<div className="mt-4" aria-live="polite">
+					<p className="text-sm text-ink tabular">
+						<span>{clean(result.sha256Prefix)}…</span> · {result.count} match
 						{result.count === 1 ? "" : "es"}
 						{result.counts !== null && (
-							<span className="text-gray-500">
+							<span className="text-slate">
 								{" "}
 								(same case: {result.counts.sameApplication} · same applicant:{" "}
 								{result.counts.sameApplicantOther} · cross-applicant: {result.counts.crossApplicant}
@@ -140,29 +146,32 @@ function DuplicateLookup() {
 						)}
 					</p>
 					{result.rows.length === 0 ? (
-						<p className="mt-1 text-sm text-gray-500">No matching documents.</p>
+						<p className="mt-1 text-sm text-slate">No matching documents.</p>
 					) : (
-						<div className="mt-2 overflow-x-auto rounded border border-gray-200">
-							<table className="w-full min-w-[560px] text-left text-sm">
-								<thead className="border-b border-gray-200 text-gray-500">
-									<tr>
-										<th className="px-3 py-2">Application</th>
-										<th className="px-3 py-2">Document</th>
-										<th className="px-3 py-2">Kind</th>
-										<th className="px-3 py-2">Uploaded</th>
-										<th className="px-3 py-2">Note</th>
+						<div className="mt-2 overflow-x-auto">
+							<table className="w-full min-w-140 text-left text-sm">
+								<thead>
+									<tr className="border-b border-rule-illustrative">
+										<th className="overline px-3 py-2">Application</th>
+										<th className="overline px-3 py-2">Document</th>
+										<th className="overline px-3 py-2">Kind</th>
+										<th className="overline px-3 py-2">Uploaded</th>
+										<th className="overline px-3 py-2">Note</th>
 									</tr>
 								</thead>
 								<tbody>
 									{result.rows.map((row) => (
-										<tr key={row.documentFileId} className="border-b border-gray-100 last:border-0">
-											<td className="px-3 py-2 font-mono">{clean(row.applicationReference)}</td>
-											<td className="px-3 py-2 font-mono text-xs">
+										<tr
+											key={row.documentFileId}
+											className="border-b border-rule-illustrative last:border-0 hover:bg-raised"
+										>
+											<td className="px-3 py-2">{clean(row.applicationReference)}</td>
+											<td className="px-3 py-2 text-xs tabular">
 												{row.documentFileId.slice(0, 8)}
 											</td>
 											<td className="px-3 py-2">{clean(row.kind)}</td>
-											<td className="px-3 py-2 tabular-nums">{formatDateTime(row.uploadedAt)}</td>
-											<td className="px-3 py-2 text-xs text-gray-600">
+											<td className="px-3 py-2 tabular">{formatDateTime(row.uploadedAt)}</td>
+											<td className="px-3 py-2 text-xs text-slate">
 												{row.explanationNote ? clean(row.explanationNote) : "—"}
 											</td>
 										</tr>
@@ -171,40 +180,39 @@ function DuplicateLookup() {
 							</table>
 						</div>
 					)}
-					<div className="mt-3 rounded border border-gray-200 p-3">
-						<h3 className="text-sm font-semibold">Attach explanation</h3>
-						<p className="mt-0.5 text-xs text-gray-500">
+					<Panel title="Attach explanation" tone="warm" className="mt-4">
+						<p className="text-sm text-slate">
 							Records a note against this hash for the application below.
 						</p>
-						<label htmlFor="dup-note" className="mt-2 mb-1 block text-sm font-medium text-gray-700">
-							Note (≥5 characters)
-						</label>
-						<textarea
-							id="dup-note"
-							value={note}
-							onChange={(e) => setNote(e.target.value)}
-							rows={2}
-							className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-						/>
+						<div className="mt-3 space-y-2">
+							<Label htmlFor="dup-note">Note (≥5 characters)</Label>
+							<Textarea
+								id="dup-note"
+								value={note}
+								onChange={(e) => setNote(e.target.value)}
+								rows={2}
+							/>
+						</div>
 						{appId === "" && (
-							<p className="mt-1 text-xs text-amber-800">
+							<p className="mt-1 text-xs text-warning-ink">
 								Enter an application id above to attach the note.
 							</p>
 						)}
 						{explained && (
-							<p className="mt-1 text-sm text-green-800" aria-live="polite">
+							<p className="mt-1 text-sm text-success-ink" aria-live="polite">
 								Explanation recorded.
 							</p>
 						)}
-						<button
+						<Button
 							type="button"
+							variant="outline"
 							onClick={() => void explain()}
 							disabled={explaining || appId === "" || note.trim().length < 5}
-							className="mt-2 rounded border border-gray-300 px-4 py-2 text-sm disabled:opacity-50"
+							className="mt-3"
 						>
 							{explaining ? "Recording…" : "Explain duplicate"}
-						</button>
-					</div>
+						</Button>
+					</Panel>
 				</div>
 			)}
 		</section>
@@ -227,18 +235,22 @@ function FraudQueue() {
 
 	return (
 		<Page>
-			<div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-				<h1 className="text-xl font-bold">Fraud review</h1>
-				<button
-					type="button"
-					onClick={() => void queryClient.invalidateQueries({ queryKey: ["fraud-queue"] })}
-					className="rounded border border-gray-300 px-3 py-1 text-sm"
-				>
-					Refresh
-				</button>
-			</div>
+			<PageHead
+				title="Fraud review"
+				subtitle="Escalated integrity findings. A human decides whether the case returns to the queue."
+				actions={
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						onClick={() => void queryClient.invalidateQueries({ queryKey: ["fraud-queue"] })}
+					>
+						Refresh
+					</Button>
+				}
+			/>
 			{queue.isPending ? (
-				<Skeleton />
+				<Skeleton label="Loading fraud reviews" />
 			) : queue.isError ? (
 				<ErrorBox message={friendlyMessage(queue.error)} onRetry={() => void queue.refetch()} />
 			) : queue.data.items.length === 0 ? (
@@ -247,62 +259,55 @@ function FraudQueue() {
 					hint="Escalated integrity findings will appear here."
 				/>
 			) : (
-				<div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
-					<table className="w-full min-w-[760px] text-left text-sm">
-						<thead className="border-b border-gray-200 text-gray-500">
-							<tr>
-								<th className="px-3 py-2">Application</th>
-								<th className="px-3 py-2">Status</th>
-								<th className="px-3 py-2">Severity</th>
-								<th className="px-3 py-2">Reason</th>
-								<th className="px-3 py-2">Brief</th>
-								<th className="px-3 py-2">Updated</th>
+				<div className="overflow-x-auto">
+					<table className="w-full min-w-190 text-left text-base">
+						<thead>
+							<tr className="border-b border-rule-illustrative">
+								<th className="overline px-3 py-2">Case</th>
+								<th className="overline px-3 py-2">Status</th>
+								<th className="overline px-3 py-2">Severity</th>
+								<th className="overline px-3 py-2">Reason</th>
+								<th className="overline px-3 py-2">Brief</th>
+								<th className="overline px-3 py-2 text-right">Created</th>
 							</tr>
 						</thead>
 						<tbody>
 							{queue.data.items.map((item) => (
-								<tr key={item.id} className="border-b border-gray-100 last:border-0">
-									<td className="px-3 py-2">
+								<tr
+									key={item.id}
+									className="border-b border-rule-illustrative last:border-0 hover:bg-raised"
+								>
+									<td className="px-3 py-3">
 										<Link
 											to="/officer/fraud-review/$id"
 											params={{ id: item.id }}
-											className="font-mono text-blue-700 hover:underline"
+											className="text-red-link hover:underline"
 										>
 											{clean(item.applicationReference)}
 										</Link>
 									</td>
-									<td className="px-3 py-2">
+									<td className="px-3 py-3">
 										<StatusBadge status={item.status} />
 									</td>
-									<td className="px-3 py-2">
+									<td className="px-3 py-3">
 										<StatusBadge status={item.severity} />
 									</td>
-									<td className="px-3 py-2 font-mono text-xs text-gray-600">
-										{clean(item.reasonCode)}
+									<td className="px-3 py-3 text-xs text-slate tabular">{clean(item.reasonCode)}</td>
+									<td className="px-3 py-3">
+										<StatusBadge status={item.briefState} />
 									</td>
-									<td className="px-3 py-2 text-xs text-gray-600">
-										<span
-											className={
-												item.briefState === "ready"
-													? "rounded bg-green-100 px-1.5 py-0.5 text-green-800"
-													: item.briefState === "pending"
-														? "rounded bg-blue-100 px-1.5 py-0.5 text-blue-800"
-														: item.briefState === "failed"
-															? "rounded bg-red-100 px-1.5 py-0.5 text-red-800"
-															: "rounded bg-amber-100 px-1.5 py-0.5 text-amber-800"
-											}
-										>
-											{item.briefState}
-										</span>
+									<td className="px-3 py-3 text-right text-sm text-slate tabular">
+										{formatDateTime(item.createdAt)}
 									</td>
-									<td className="px-3 py-2 tabular-nums">{formatDateTime(item.updatedAt)}</td>
 								</tr>
 							))}
 						</tbody>
 					</table>
 				</div>
 			)}
-			<DuplicateLookup />
+			<div className="mt-12">
+				<DuplicateLookup />
+			</div>
 		</Page>
 	);
 }

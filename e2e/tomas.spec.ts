@@ -49,13 +49,11 @@ test("Tomás refer path: SME submit → queue → approve $50k → booked", asyn
 		}),
 	);
 
-	// Referred, with amount + SECTOR_REVIEW reasons (API state proof).
+	// Referred: pending_review holds (API + UI proof; the applicant
+	// projection no longer exposes policy internals).
 	const pending = await waitStatus(applicant, appId, "pending_review");
 	expect(pending.application.status).toBe("pending_review");
-	const reasonCodes = (pending.policyEvaluation?.reasons ?? []).map((r) => r.code);
-	expect(reasonCodes).toContain("AMOUNT_ABOVE_AUTO_LIMIT");
-	expect(reasonCodes).toContain("SECTOR_REVIEW");
-	await expect(page.getByText("AMOUNT_ABOVE_AUTO_LIMIT")).toBeVisible({
+	await expect(page.getByText("pending_review").first()).toBeVisible({
 		timeout: 60_000,
 	});
 	const reference = pending.application.reference;

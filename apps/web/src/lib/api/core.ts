@@ -26,6 +26,7 @@ export interface AppSummary {
 	// T17: null for drafts; submitted rows stay non-null.
 	submittedAt: string | null;
 	decidedAt: string | null;
+	updatedAt: string;
 }
 
 export interface Factor {
@@ -36,13 +37,13 @@ export interface Factor {
 }
 export interface TimelineEntry {
 	at: string;
-	kind: "audit" | "feed";
+	kind?: "audit" | "feed";
 	action?: string;
 	actor?: string;
 	entity?: string;
 	type?: string;
 	message?: string;
-	payload: unknown;
+	payload?: unknown;
 }
 export interface CaseDetail {
 	application: AppSummary & {
@@ -56,21 +57,24 @@ export interface CaseDetail {
 		documentProcessingConsent: boolean;
 		documentConsentAt: string | null;
 		documentConsentVersion: string | null;
+		contextAnalysisConsent: boolean;
+		contextConsentAt: string | null;
+		contextConsentVersion: string | null;
 		/** T01 feature flag (SPEC-t01-t02 §10): false hides DocumentPanel. */
 		documentsEnabled: boolean;
 		purpose: string;
 		workflowStartedAt: string | null;
 		failedReason: string | null;
 	};
-	checks: Array<{ type: string; status: string; details: unknown }>;
-	externalReports: Array<{
+	checks: Array<{ type: string; status: string; details?: unknown }>;
+	externalReports?: Array<{
 		provider: string;
 		kind: string;
 		version: string;
 		payload: Record<string, unknown>;
 	}>;
 	documents: Array<{ kind: string; status: string; note: string | null }>;
-	score: {
+	score?: {
 		score: number;
 		grade: string;
 		modelVersion: string;
@@ -83,7 +87,7 @@ export interface CaseDetail {
 			dscr?: number;
 		};
 	} | null;
-	policyEvaluation: {
+	policyEvaluation?: {
 		outcome: string;
 		reasons: Array<{ code: string; text?: string }>;
 		maxAmountCents: number;
@@ -97,8 +101,8 @@ export interface CaseDetail {
 		termMonths: number | null;
 		rateBps: number | null;
 		reasons: Array<string | { code: string }>;
-		notes: string | null;
-		snapshot: { kind?: string } & Record<string, unknown>;
+		notes?: string | null;
+		snapshot?: { kind?: string } & Record<string, unknown>;
 		decidedAt: string;
 	} | null;
 	loan: {
@@ -114,11 +118,15 @@ export interface CaseDetail {
 		installments: { total: number; paid: number; overdue: number };
 	} | null;
 	timeline: TimelineEntry[];
+	failure?: { code: string; message: string } | null;
+	fraudReview?: { id: string; status: string; severity: string; reasonCode: string } | null;
 }
 
 export interface QueueItem {
 	id: string;
 	reference: string;
+	clientName: string;
+	city: string | null;
 	type: string;
 	product: string;
 	amountCents: number;
@@ -127,8 +135,21 @@ export interface QueueItem {
 	waitMs: number;
 	score: number | null;
 	grade: string | null;
+	risk: "low" | "medium" | "high";
+	flags: { referred: boolean; aboveAutoLimit: boolean };
 	reasons: string[];
 	topReasons: string[];
+}
+
+export interface QueueSummary {
+	total: number;
+	shown: number;
+	truncated: boolean;
+	medianWaitMs: number;
+	over24hCount: number;
+	referredCount: number;
+	aboveAutoLimitCount: number;
+	oldestCaseId: string | null;
 }
 
 export interface LoanSummary {
@@ -179,6 +200,7 @@ export interface DashboardSummary {
 	loans: Record<string, number>;
 	avgDecisionSeconds: number | null;
 	decidedApplications: number;
+	decisionsToday: number | null;
 	recentFeed: Array<{
 		id: string;
 		type: string;
@@ -203,6 +225,6 @@ export function fetchLoan(id: string): Promise<LoanDetail> {
 	return api<LoanDetail>(`/api/loans/${id}`);
 }
 
-export function fetchReviewQueue(): Promise<{ items: QueueItem[] }> {
-	return api<{ items: QueueItem[] }>("/api/review/queue");
+export function fetchReviewQueue(): Promise<{ items: QueueItem[]; summary: QueueSummary }> {
+	return api<{ items: QueueItem[]; summary: QueueSummary }>("/api/review/queue");
 }

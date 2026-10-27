@@ -5,15 +5,22 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import {
+	CodeTag,
 	EmptyState,
 	ErrorBox,
 	Field,
 	Page,
+	PageHead,
+	Panel,
+	SectionHead,
 	Skeleton,
 	StatusBadge,
+	Tag,
 	inputCls,
-} from "../../../components/ui";
+} from "../../../components/ubs";
 import {
 	ApiError,
 	fetchFraudReview,
@@ -70,11 +77,11 @@ function asBriefContent(content: unknown): FraudBriefContent | null {
 
 function CitationChip({ citation }: { citation: FraudBriefCitation }) {
 	return (
-		<li className="rounded border border-gray-200 bg-gray-50 px-2 py-1">
-			<p className="font-mono text-xs text-gray-700" title={clean(citation.ref)}>
+		<li className="border border-rule bg-raised px-2 py-1">
+			<p className="text-xs text-slate tabular" title={clean(citation.ref)}>
 				{clean(citation.ref)}
 			</p>
-			<blockquote className="mt-0.5 border-l-2 border-gray-300 pl-2 text-xs text-gray-600 italic">
+			<blockquote className="mt-0.5 border-l-2 border-rule-strong pl-2 text-xs text-slate italic">
 				“{clean(citation.quote)}”
 			</blockquote>
 		</li>
@@ -83,7 +90,7 @@ function CitationChip({ citation }: { citation: FraudBriefCitation }) {
 
 function ClaimBlock({ claim }: { claim: FraudBriefClaim }) {
 	return (
-		<div className="text-sm text-gray-800">
+		<div className="text-sm text-ink">
 			<p>{clean(claim.text)}</p>
 			{claim.citations.length > 0 && (
 				<ul className="mt-1 space-y-1">
@@ -103,9 +110,9 @@ function BriefSection({ review, onRetry }: { review: FraudReview; onRetry: () =>
 		review.briefState === "running";
 	if (pending) {
 		return (
-			<div className="mt-3 rounded border border-blue-200 bg-blue-50 p-3" aria-live="polite">
-				<p className="text-sm font-medium text-blue-900">Integrity brief in progress</p>
-				<p className="mt-0.5 text-xs text-blue-800">
+			<div className="mt-3 border border-rule bg-tag-blue px-4 py-3" aria-live="polite">
+				<p className="text-sm font-medium text-ink">Integrity brief in progress</p>
+				<p className="mt-0.5 text-xs text-slate">
 					The agent is gathering evidence, drafting the brief, and validating citations. The
 					deterministic signals below are already available.
 				</p>
@@ -114,59 +121,51 @@ function BriefSection({ review, onRetry }: { review: FraudReview; onRetry: () =>
 	}
 	if (review.briefUnavailable === "stale" || review.briefStale === true) {
 		return (
-			<div className="mt-3 rounded border border-amber-200 bg-amber-50 p-3">
-				<p className="text-sm font-medium text-amber-900">Brief stale - re-running</p>
-				<p className="mt-0.5 text-xs text-amber-800">
+			<div className="mt-3 border border-rule bg-tag-amber px-4 py-3">
+				<p className="text-sm font-medium text-warning-ink">Brief stale - re-running</p>
+				<p className="mt-0.5 text-xs text-warning-ink">
 					The evidence changed after this brief was written. Signals below still apply.
 				</p>
-				<button
-					type="button"
-					onClick={onRetry}
-					className="mt-2 rounded border border-amber-400 px-3 py-1 text-xs text-amber-900"
-				>
+				<Button type="button" variant="outline" size="sm" onClick={onRetry} className="mt-2">
 					Retry brief
-				</button>
+				</Button>
 			</div>
 		);
 	}
 	if (review.briefUnavailable === "failed") {
 		return (
-			<div className="mt-3 rounded border border-red-200 bg-red-50 p-3">
-				<p className="text-sm font-medium text-red-900">Brief unavailable</p>
-				<p className="mt-0.5 text-xs text-red-800">
+			<div className="mt-3 border border-rule bg-tag-red px-4 py-3">
+				<p className="text-sm font-medium text-danger-ink">Brief unavailable</p>
+				<p className="mt-0.5 text-xs text-danger-ink">
 					The agent failed or timed out. The review stays open; resolve manually or retry.
 				</p>
-				<button
-					type="button"
-					onClick={onRetry}
-					className="mt-2 rounded border border-red-300 px-3 py-1 text-xs text-red-900"
-				>
+				<Button type="button" variant="outline" size="sm" onClick={onRetry} className="mt-2">
 					Retry brief
-				</button>
+				</Button>
 			</div>
 		);
 	}
 	if (!review.brief) {
-		return <p className="mt-2 text-sm text-gray-500">No brief for this review.</p>;
+		return <p className="mt-2 text-sm text-slate">No brief for this review.</p>;
 	}
 	const content = asBriefContent(review.brief.content);
 	if (!content) {
-		return <p className="mt-2 text-sm text-gray-500">Brief unavailable.</p>;
+		return <p className="mt-2 text-sm text-slate">Brief unavailable.</p>;
 	}
 	return (
 		<div className="mt-2 space-y-4">
 			<div className="flex flex-wrap items-baseline justify-between gap-2">
-				<h3 className="text-sm font-semibold">{clean(content.title || review.brief.id)}</h3>
-				<p className="text-xs text-gray-500">
+				<h3 className="text-base font-light text-ink">{clean(content.title || review.brief.id)}</h3>
+				<p className="text-xs text-slate">
 					<StatusBadge status={review.brief.status} /> ·{" "}
-					<span className="font-mono">{clean(review.brief.model)}</span> ·{" "}
-					<span className="font-mono">{clean(review.brief.promptVersion)}</span> ·{" "}
+					<span className="tabular">{clean(review.brief.model)}</span> ·{" "}
+					<span className="tabular">{clean(review.brief.promptVersion)}</span> ·{" "}
 					{formatDateTime(review.brief.createdAt)}
 				</p>
 			</div>
 			{content.summary.text !== "" && (
 				<section aria-label="Summary">
-					<h4 className="text-sm font-semibold">Summary</h4>
+					<h4 className="text-sm font-medium text-ink">Summary</h4>
 					<div className="mt-1">
 						<ClaimBlock claim={content.summary} />
 					</div>
@@ -174,7 +173,7 @@ function BriefSection({ review, onRetry }: { review: FraudReview; onRetry: () =>
 			)}
 			{content.candidateContradictions.length > 0 && (
 				<section aria-label="Candidate contradictions">
-					<h4 className="text-sm font-semibold">Candidate contradictions</h4>
+					<h4 className="text-sm font-medium text-ink">Candidate contradictions</h4>
 					<ul className="mt-1 space-y-2">
 						{content.candidateContradictions.map((claim, i) => (
 							<li key={i}>
@@ -186,7 +185,7 @@ function BriefSection({ review, onRetry }: { review: FraudReview; onRetry: () =>
 			)}
 			{content.alternativeExplanations.length > 0 && (
 				<section aria-label="Alternative explanations">
-					<h4 className="text-sm font-semibold">Alternative explanations</h4>
+					<h4 className="text-sm font-medium text-ink">Alternative explanations</h4>
 					<ul className="mt-1 space-y-2">
 						{content.alternativeExplanations.map((claim, i) => (
 							<li key={i}>
@@ -198,14 +197,14 @@ function BriefSection({ review, onRetry }: { review: FraudReview; onRetry: () =>
 			)}
 			{content.missingEvidence.length > 0 && (
 				<section aria-label="Missing evidence">
-					<h4 className="text-sm font-semibold">Missing evidence</h4>
-					<ul className="mt-1 list-disc pl-5 text-sm text-gray-700">
+					<h4 className="text-sm font-medium text-ink">Missing evidence</h4>
+					<ul className="mt-1 list-disc pl-5 text-sm text-ink">
 						{content.missingEvidence.map((m, i) => (
 							<li key={i}>
 								{clean(m.text)}{" "}
-								<span className="font-mono text-xs text-gray-500">[{clean(m.code)}]</span>
+								<span className="text-xs text-slate tabular">[{clean(m.code)}]</span>
 								{m.sourceRef && (
-									<span className="font-mono text-xs text-gray-500"> {clean(m.sourceRef)}</span>
+									<span className="text-xs text-slate tabular"> {clean(m.sourceRef)}</span>
 								)}
 							</li>
 						))}
@@ -214,15 +213,15 @@ function BriefSection({ review, onRetry }: { review: FraudReview; onRetry: () =>
 			)}
 			{content.questionsForReviewer.length > 0 && (
 				<section aria-label="Questions for reviewer">
-					<h4 className="text-sm font-semibold">Questions for reviewer</h4>
-					<ul className="mt-1 list-disc pl-5 text-sm text-gray-700">
+					<h4 className="text-sm font-medium text-ink">Questions for reviewer</h4>
+					<ul className="mt-1 list-disc pl-5 text-sm text-ink">
 						{content.questionsForReviewer.map((q) => (
 							<li key={q}>{clean(q)}</li>
 						))}
 					</ul>
 				</section>
 			)}
-			<p className="text-xs text-gray-500">
+			<p className="text-xs text-slate">
 				Suggested priority: <StatusBadge status={content.suggestedPriority} />
 			</p>
 		</div>
@@ -270,16 +269,15 @@ function ResolveForm({ review }: { review: FraudReview }) {
 	const terminal = review.status === "cleared" || review.status === "confirmed";
 
 	return (
-		<div className="mt-4 rounded border border-gray-200 p-3">
-			<h3 className="text-sm font-semibold">Resolve</h3>
+		<Panel title="Resolve" tone="cream" className="mt-6" outline>
 			{terminal ? (
-				<p className="mt-1 text-sm text-gray-600">
+				<p className="text-sm text-slate">
 					Resolved{review.resolvedAt ? ` · ${formatDateTime(review.resolvedAt)}` : ""}
-					{review.resolutionNote ? `: ${clean(review.resolutionNote)}` : "."}
+					{review.resolutionNote ? `: ${clean(review.resolutionNote)}.` : "."}
 				</p>
 			) : (
 				<>
-					<div className="mt-2 grid gap-3 sm:grid-cols-2">
+					<div className="grid gap-4 sm:grid-cols-2">
 						<Field label="Outcome">
 							<select
 								id="field-outcome"
@@ -295,43 +293,41 @@ function ResolveForm({ review }: { review: FraudReview }) {
 							</select>
 						</Field>
 					</div>
-					<div className="mt-3">
-						<Field label="Resolution note (≥10 characters)">
-							<textarea
-								id="field-resolution-note-≥10-characters"
+					<div className="mt-4">
+						<Field label="Resolution note" hint="At least 10 characters.">
+							<Textarea
+								id="field-resolution-note"
 								value={note}
 								onChange={(e) => setNote(e.target.value)}
 								rows={4}
-								className={inputCls}
 							/>
 						</Field>
 					</div>
 					{error && (
-						<div className="mt-2">
+						<div className="mt-3">
 							<ErrorBox message={error} />
 						</div>
 					)}
-					<div className="mt-2 flex flex-wrap gap-2">
-						<button
+					<div className="mt-3 flex flex-wrap gap-2">
+						<Button
 							type="button"
+							variant="outline"
 							onClick={() => void draft()}
 							disabled={busy !== null}
-							className="rounded border border-gray-300 px-4 py-2 text-sm disabled:opacity-50"
 						>
 							{busy === "draft" ? "Drafting…" : "Draft resolution note"}
-						</button>
-						<button
+						</Button>
+						<Button
 							type="button"
 							onClick={() => void resolve()}
 							disabled={busy !== null || note.trim().length < 10}
-							className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
 						>
 							{busy === "resolve" ? "Resolving…" : "Resolve review"}
-						</button>
+						</Button>
 					</div>
 				</>
 			)}
-		</div>
+		</Panel>
 	);
 }
 
@@ -355,8 +351,8 @@ function FraudDetail() {
 
 	return (
 		<Page>
-			<p className="mb-3">
-				<Link to="/officer/fraud-review" className="text-sm text-blue-700 hover:underline">
+			<p className="mb-4">
+				<Link to="/officer/fraud-review" className="text-sm text-red-link hover:underline">
 					← Fraud review queue
 				</Link>
 			</p>
@@ -367,7 +363,7 @@ function FraudDetail() {
 					<EmptyState
 						title="Review not found"
 						action={
-							<Link to="/officer/fraud-review" className="text-sm text-blue-700 hover:underline">
+							<Link to="/officer/fraud-review" className="text-sm text-red-link hover:underline">
 								Back to queue
 							</Link>
 						}
@@ -392,105 +388,106 @@ function ReviewBody({ review, onRefresh }: { review: FraudReview; onRefresh: () 
 	}
 
 	return (
-		<div className="space-y-4">
-			<section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm sm:p-5">
-				<div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-					<h1 className="text-base font-semibold">Fraud review</h1>
-					<button
-						type="button"
-						onClick={onRefresh}
-						className="rounded border border-gray-300 px-3 py-1 text-sm"
-					>
+		<div className="space-y-8">
+			<PageHead
+				title="Fraud review"
+				subtitle="Signal, not proof — the officer reads the evidence and records the decision."
+				actions={
+					<Button type="button" variant="outline" size="sm" onClick={onRefresh}>
 						Refresh
-					</button>
-				</div>
-				<div className="flex flex-wrap items-center gap-2 text-sm">
-					<StatusBadge status={review.status} />
-					<StatusBadge status={review.severity} />
-					<span className="font-mono text-xs text-gray-600">{clean(review.reasonCode)}</span>
-				</div>
-				<dl className="mt-2 grid gap-x-4 gap-y-0.5 text-xs text-gray-600 sm:grid-cols-2">
+					</Button>
+				}
+			/>
+			<div className="flex flex-wrap items-center gap-2">
+				<StatusBadge status={review.status} />
+				<StatusBadge status={review.severity} />
+				<CodeTag code={review.reasonCode} />
+			</div>
+
+			<Panel title="Case" outline>
+				<dl className="grid gap-x-4 gap-y-1 text-sm text-slate sm:grid-cols-2">
 					<div>
-						<dt className="inline font-medium">Application: </dt>
+						<dt className="inline font-medium text-ink">Application: </dt>
 						<dd className="inline">
 							<Link
 								to="/officer/review/$id"
 								params={{ id: review.applicationId }}
-								className="font-mono text-blue-700 hover:underline"
+								className="text-red-link hover:underline"
 							>
-								case
+								Open case file
 							</Link>
 						</dd>
 					</div>
 					<div>
-						<dt className="inline font-medium">Version: </dt>
-						<dd className="inline tabular-nums">{review.version}</dd>
+						<dt className="inline font-medium text-ink">Version: </dt>
+						<dd className="inline tabular">{review.version}</dd>
 					</div>
 					<div>
-						<dt className="inline font-medium">Created: </dt>
-						<dd className="inline">{formatDateTime(review.createdAt)}</dd>
+						<dt className="inline font-medium text-ink">Created: </dt>
+						<dd className="inline tabular">{formatDateTime(review.createdAt)}</dd>
 					</div>
 					<div>
-						<dt className="inline font-medium">Updated: </dt>
-						<dd className="inline">{formatDateTime(review.updatedAt)}</dd>
+						<dt className="inline font-medium text-ink">Updated: </dt>
+						<dd className="inline tabular">{formatDateTime(review.updatedAt)}</dd>
 					</div>
 				</dl>
+			</Panel>
 
-				{(review.signalCodes?.length ?? 0) > 0 && (
-					<div className="mt-3">
-						<h2 className="text-sm font-semibold">Signals</h2>
-						<ul className="mt-1 flex flex-wrap gap-1.5">
-							{review.signalCodes?.map((code) => (
-								<li
-									key={code}
-									className="rounded border border-gray-200 bg-gray-50 px-2 py-1 font-mono text-xs"
-								>
-									{clean(code)}
-								</li>
-							))}
-						</ul>
-					</div>
-				)}
-				{(review.documentRefs?.length ?? 0) > 0 && (
-					<div className="mt-3">
-						<h2 className="text-sm font-semibold">Documents</h2>
-						<ul className="mt-1 flex flex-wrap gap-1.5">
-							{review.documentRefs?.map((ref) => (
-								<li
-									key={ref}
-									className="rounded border border-gray-200 bg-gray-50 px-2 py-1 font-mono text-xs"
-									title={ref}
-								>
-									{ref.slice(0, 8)}
-								</li>
-							))}
-						</ul>
-					</div>
-				)}
-				{review.note !== null && review.note !== undefined && review.note !== "" && (
-					<p className="mt-3 text-sm text-gray-700">{clean(review.note)}</p>
-				)}
+			{(review.signalCodes?.length ?? 0) > 0 && (
+				<Panel title="Signals" tone="warm">
+					<ul className="flex flex-wrap gap-2">
+						{review.signalCodes?.map((code) => (
+							<li key={code}>
+								<CodeTag code={code} />
+							</li>
+						))}
+					</ul>
+				</Panel>
+			)}
+			{(review.documentRefs?.length ?? 0) > 0 && (
+				<Panel title="Documents" tone="warm">
+					<ul className="flex flex-wrap gap-2">
+						{review.documentRefs?.map((ref) => (
+							<li key={ref} title={ref}>
+								<Tag tone="neutral">
+									<span className="tabular">{ref.slice(0, 8)}</span>
+								</Tag>
+							</li>
+						))}
+					</ul>
+				</Panel>
+			)}
+			{review.note !== null && review.note !== undefined && review.note !== "" && (
+				<p className="text-base text-ink">{clean(review.note)}</p>
+			)}
+
+			<Panel title="Integrity brief" outline>
 				<BriefSection review={review} onRetry={() => void retryBrief()} />
 				{(review.model || review.agentVersion) && (
-					<p className="mt-3 text-xs text-gray-500">
-						Agent: <span className="font-mono">{clean(review.model ?? "—")}</span> ·{" "}
-						<span className="font-mono">{clean(review.promptVersion ?? "—")}</span> ·{" "}
-						<span className="font-mono">{clean(review.agentVersion ?? "—")}</span>
+					<p className="mt-3 text-xs text-slate">
+						Agent: <span className="tabular">{clean(review.model ?? "—")}</span> ·{" "}
+						<span className="tabular">{clean(review.promptVersion ?? "—")}</span> ·{" "}
+						<span className="tabular">{clean(review.agentVersion ?? "—")}</span>
 					</p>
 				)}
-				<ResolveForm review={review} />
-				{review.status === "confirmed" && (
-					<p className="mt-3 text-sm">
-						<Link
-							to="/officer/review/$id"
-							params={{ id: review.applicationId }}
-							className="text-blue-700 hover:underline"
-						>
-							Open the case decision path
-						</Link>
-					</p>
-				)}
-			</section>
+			</Panel>
+
+			<ResolveForm review={review} />
+			{review.status === "confirmed" && (
+				<p>
+					<Link
+						to="/officer/review/$id"
+						params={{ id: review.applicationId }}
+						className="text-red-link hover:underline"
+					>
+						Open the case decision path
+					</Link>
+				</p>
+			)}
+			<SectionHead title="Signal, not proof" tight />
+			<p className="max-w-2xl text-sm text-slate">
+				Integrity signals mark evidence for a human to read. Nothing here establishes fraud.
+			</p>
 		</div>
 	);
 }

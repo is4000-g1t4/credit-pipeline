@@ -1,6 +1,24 @@
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { EmptyState, ErrorBox, Page, Skeleton, StatusBadge } from "../../components/ui";
+import { ChevronRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+	Table,
+	TableBody,
+	TableCell,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from "@/components/ui/table";
+import {
+	EmptyState,
+	ErrorBox,
+	Money,
+	Page,
+	PageHead,
+	Skeleton,
+	StatusBadge,
+} from "../../components/ubs";
 import { api, apiErrorMessage, formatDate, formatMoney, type LoanSummary } from "../../lib/api";
 import { RequireAuth } from "../../lib/auth";
 
@@ -12,57 +30,143 @@ export const Route = createFileRoute("/loans/")({
 	),
 });
 
+interface LoansPage {
+	items: LoanSummary[];
+	total: number;
+	limit: number;
+	offset: number;
+	nextOffset: number | null;
+	truncated: boolean;
+}
+
+const PAGE_SIZE = 50;
+
 function Loans() {
-	const loans = useQuery({
+	const loans = useInfiniteQuery({
 		queryKey: ["loans"],
-		queryFn: () => api<{ items: LoanSummary[] }>("/api/loans"),
+		queryFn: ({ pageParam }) => api<LoansPage>(`/api/loans?limit=${PAGE_SIZE}&offset=${pageParam}`),
+		initialPageParam: 0,
+		getNextPageParam: (lastPage) => lastPage.nextOffset,
 	});
+	const pages = loans.data?.pages ?? [];
+	const items = pages.flatMap((p) => p.items);
+	const last = pages[pages.length - 1];
+	const total = last?.total ?? null;
+	const activeCount = items.filter((l) => l.status === "active").length;
+	const overdueCount = items.filter((l) => l.status === "overdue").length;
+	const outstanding = items
+		.filter((l) => l.status !== "closed")
+		.reduce((sum, l) => sum + l.outstandingCents, 0);
 	return (
 		<Page>
-			<h1 className="mb-4 text-xl font-bold">Loans</h1>
+			<PageHead
+				title="Loans"
+				subtitle={
+					items.length > 0
+						? `${activeCount} active · ${overdueCount} overdue · ${formatMoney(outstanding)} outstanding.`
+						: "Booked facilities, balances and the next payment."
+				}
+			/>
 			{loans.isPending ? (
 				<Skeleton />
 			) : loans.isError ? (
 				<ErrorBox message={apiErrorMessage(loans.error)} onRetry={() => void loans.refetch()} />
-			) : loans.data.items.length === 0 ? (
+			) : items.length === 0 ? (
 				<EmptyState title="No loans yet" hint="Booked loans will appear here." />
 			) : (
-				<div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
-					<table className="w-full min-w-[720px] text-left text-sm">
-						<thead className="border-b border-gray-200 text-gray-500">
-							<tr>
-								<th className="px-3 py-2">Reference</th>
-								<th className="px-3 py-2">Principal</th>
-								<th className="px-3 py-2">Rate</th>
-								<th className="px-3 py-2">Status</th>
-								<th className="px-3 py-2">Next due</th>
-								<th className="px-3 py-2">Outstanding</th>
-							</tr>
-						</thead>
-						<tbody>
-							{loans.data.items.map((l) => (
-								<tr key={l.id} className="border-b border-gray-100 last:border-0">
-									<td className="px-3 py-2">
+				<>
+					{total !== null && (
+						<p className="mb-2 text-sm text-slate">
+							Showing {items.length} of {total}
+						</p>
+					)}
+					<Table>
+						<TableHeader>
+							<TableRow>
+								<TableHead>Reference</TableHead>
+								<TableHead>
+									<span className="block text-right">Principal</span>
+								</TableHead>
+								<TableHead>
+									<span className="block text-right">Rate</span>
+								</TableHead>
+								<TableHead>Status</TableHead>
+								<TableHead>
+									<span className="block text-right">Next due</span>
+								</TableHead>
+								<TableHead>
+									<span className="block text-right">Outstanding</span>
+								</TableHead>
+								<TableHead>
+									<span className="sr-only">Open</span>
+								</TableHead>
+							</TableRow>
+						</TableHeader>
+						<TableBody>
+							{items.map((l) => (
+								<TableRow key={l.id}>
+									<TableCell>
 										<Link
 											to="/loans/$id"
 											params={{ id: l.id }}
-											className="font-mono text-blue-700 hover:underline"
+											className="tabular text-ink underline-offset-4 hover:underline"
 										>
 											{l.reference}
 										</Link>
-									</td>
-									<td className="px-3 py-2 tabular-nums">{formatMoney(l.principalCents)}</td>
-									<td className="px-3 py-2 tabular-nums">{(l.rateBps / 100).toFixed(2)}%</td>
-									<td className="px-3 py-2">
+									</TableCell>
+									<TableCell>
+										<span className="block text-right">
+											<Money cents={l.principalCents} />
+										</span>
+									</TableCell>
+									<TableCell>
+										<span className="block text-right tabular">
+											{(l.rateBps / 100).toFixed(2)}%
+										</span>
+									</TableCell>
+									<TableCell>
 										<StatusBadge status={l.status} />
-									</td>
-									<td className="px-3 py-2 tabular-nums">{formatDate(l.nextDueDate)}</td>
-									<td className="px-3 py-2 tabular-nums">{formatMoney(l.outstandingCents)}</td>
-								</tr>
+									</TableCell>
+									<TableCell>
+										<span className="block text-right text-slate">{formatDate(l.nextDueDate)}</span>
+									</TableCell>
+									<TableCell>
+										<span className="block text-right">
+											<Money cents={l.outstandingCents} />
+										</span>
+									</TableCell>
+									<TableCell>
+										<Link
+											to="/loans/$id"
+											params={{ id: l.id }}
+											className="inline-flex items-center text-red-link hover:underline"
+											aria-label={`Open ${l.reference}`}
+										>
+											<ChevronRight className="size-4" strokeWidth={1.5} aria-hidden="true" />
+										</Link>
+									</TableCell>
+								</TableRow>
 							))}
-						</tbody>
-					</table>
-				</div>
+						</TableBody>
+					</Table>
+					{last && last.nextOffset !== null && (
+						<div className="mt-4">
+							<Button
+								type="button"
+								variant="outline"
+								disabled={loans.isFetchingNextPage}
+								onClick={() => void loans.fetchNextPage()}
+							>
+								{loans.isFetchingNextPage ? "Loading…" : "Load more"}
+							</Button>
+						</div>
+					)}
+					{last && last.truncated && last.nextOffset === null && (
+						<p className="mt-3 text-sm text-slate">
+							Showing {items.length} of {last.total} loans (paging limit reached).
+						</p>
+					)}
+				</>
 			)}
 		</Page>
 	);

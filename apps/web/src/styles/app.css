@@ -1,1 +1,221 @@
 @import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+/* UBS Credit Desk tokens — see docs/DESIGN.md. */
+:root {
+	--font-sans: "Frutiger", "Segoe UI", Helvetica, Arial, sans-serif;
+
+	--background: #ffffff;
+	--foreground: #1c1c1c;
+	--card: #ffffff;
+	--card-foreground: #1c1c1c;
+	--popover: #ffffff;
+	--popover-foreground: #1c1c1c;
+	--primary: #e60000;
+	--primary-foreground: #ffffff;
+	--secondary: #f4f3ee;
+	--secondary-foreground: #1c1c1c;
+	--muted: #f4f3ee;
+	--muted-foreground: #5a5d5c;
+	--accent: #f9f9f7;
+	--accent-foreground: #1c1c1c;
+	--destructive: #da0000;
+	--destructive-foreground: #ffffff;
+	--border: #e0dfd7;
+	--input: #8e8d83;
+	--ring: #0769a6;
+
+	--chart-1: #00759e;
+	--chart-2: #879420;
+	--chart-3: #4b2d58;
+	--chart-4: #af8626;
+	--chart-5: #469a6c;
+	--chart-6: #ad3e4a;
+
+	--radius: 2px;
+
+	/* UBS semantic tokens used by bespoke components. */
+	--ink: #1c1c1c;
+	--slate: #5a5d5c;
+	--slate-light: #8e8d83;
+	--red: #e60000;
+	--red-deep: #8a000a;
+	--red-link: #da0000;
+	--paper: #ffffff;
+	--warm: #f4f3ee;
+	--raised: #f9f9f7;
+	--cream: #fbf9ee;
+	--rule: #e0dfd7;
+	--rule-strong: #8e8d83;
+	--rule-illustrative: #cccabc;
+	--disabled: #b8b3a2;
+	--success: #cad67a;
+	--success-ink: #295b40;
+	--warning: #e4a911;
+	--warning-ink: #654d16;
+	--danger: #da0000;
+	--danger-ink: #78212b;
+	--focus: #0769a6;
+	--tag-sand: #f4f3ee;
+	--tag-amber: #f3e8c3;
+	--tag-red: #f2cfd4;
+	--tag-blue: #d7d9ee;
+	--tag-green: #bde5cd;
+	--container: 1290px;
+	--gutter: 40px;
+}
+
+@theme inline {
+	--color-background: var(--background);
+	--color-foreground: var(--foreground);
+	--color-card: var(--card);
+	--color-card-foreground: var(--card-foreground);
+	--color-popover: var(--popover);
+	--color-popover-foreground: var(--popover-foreground);
+	--color-primary: var(--primary);
+	--color-primary-foreground: var(--primary-foreground);
+	--color-secondary: var(--secondary);
+	--color-secondary-foreground: var(--secondary-foreground);
+	--color-muted: var(--muted);
+	--color-muted-foreground: var(--muted-foreground);
+	--color-accent: var(--accent);
+	--color-accent-foreground: var(--accent-foreground);
+	--color-destructive: var(--destructive);
+	--color-destructive-foreground: var(--destructive-foreground);
+	--color-border: var(--border);
+	--color-input: var(--input);
+	--color-ring: var(--ring);
+	--color-chart-1: var(--chart-1);
+	--color-chart-2: var(--chart-2);
+	--color-chart-3: var(--chart-3);
+	--color-chart-4: var(--chart-4);
+	--color-chart-5: var(--chart-5);
+	--color-chart-6: var(--chart-6);
+	--color-ink: var(--ink);
+	--color-slate: var(--slate);
+	--color-slate-light: var(--slate-light);
+	--color-red: var(--red);
+	--color-red-deep: var(--red-deep);
+	--color-red-link: var(--red-link);
+	--color-warm: var(--warm);
+	--color-raised: var(--raised);
+	--color-cream: var(--cream);
+	--color-rule: var(--rule);
+	--color-rule-strong: var(--rule-strong);
+	--color-rule-illustrative: var(--rule-illustrative);
+	--color-disabled: var(--disabled);
+	--color-success: var(--success);
+	--color-success-ink: var(--success-ink);
+	--color-warning: var(--warning);
+	--color-warning-ink: var(--warning-ink);
+	--color-danger: var(--danger);
+	--color-danger-ink: var(--danger-ink);
+	--color-tag-sand: var(--tag-sand);
+	--color-tag-amber: var(--tag-amber);
+	--color-tag-red: var(--tag-red);
+	--color-tag-blue: var(--tag-blue);
+	--color-tag-green: var(--tag-green);
+	--font-sans: var(--font-sans);
+	--radius-xs: 2px;
+	--radius-sm: 2px;
+	--radius-md: 2px;
+	--radius-lg: 4px;
+	--radius-xl: 4px;
+	--shadow-soft: 0 2px 12px rgba(28, 28, 28, 0.06);
+	--shadow-float: 0 8px 24px rgba(28, 28, 28, 0.1);
+}
+
+@layer base {
+	* {
+		@apply border-border outline-ring/50;
+	}
+
+	html {
+		scroll-behavior: smooth;
+		-webkit-text-size-adjust: 100%;
+	}
+
+	body {
+		@apply bg-background text-foreground antialiased;
+		font-family: var(--font-sans);
+		font-weight: 300;
+		font-size: 16px;
+		line-height: 24px;
+		text-rendering: optimizeLegibility;
+	}
+
+	input[type="checkbox"],
+	input[type="radio"] {
+		accent-color: var(--ink);
+	}
+
+	h1,
+	h2,
+	h3,
+	h4,
+	h5,
+	h6 {
+		font-weight: 300;
+		letter-spacing: 0;
+	}
+
+	::selection {
+		background: var(--red);
+		color: #fff;
+	}
+
+	:focus-visible {
+		outline: 2px solid var(--focus);
+		outline-offset: 2px;
+	}
+}
+
+@layer components {
+	.container-ubs {
+		width: 100%;
+		max-width: calc(var(--container) + var(--gutter) * 2);
+		margin-inline: auto;
+		padding-inline: var(--gutter);
+	}
+
+	@media (max-width: 1023px) {
+		.container-ubs {
+			padding-inline: 24px;
+		}
+	}
+
+	@media (max-width: 767px) {
+		.container-ubs {
+			padding-inline: 20px;
+		}
+	}
+
+	.rule-red {
+		display: block;
+		width: 60px;
+		height: 4px;
+		background: var(--red);
+	}
+
+	.overline {
+		font-size: 12px;
+		line-height: 16px;
+		font-weight: 500;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		color: var(--slate);
+	}
+
+	.tabular {
+		font-variant-numeric: tabular-nums;
+	}
+
+	.shadow-soft {
+		box-shadow: 0 2px 12px rgba(28, 28, 28, 0.06);
+	}
+
+	.shadow-float {
+		box-shadow: 0 8px 24px rgba(28, 28, 28, 0.1);
+	}
+}

@@ -16,7 +16,8 @@ import {
 	toast,
 	type ResearchSelection,
 } from "../lib/api";
-import { ErrorBox, Field, inputCls, Money } from "./ui";
+import { Button } from "./ui/button";
+import { ErrorBox, Field, inputCls, Money, Panel } from "./ui";
 
 const DECLINE_CODES = ["OFFICER_JUDGEMENT", "INSUFFICIENT_EVIDENCE", "POLICY_EXCEPTION"] as const;
 
@@ -151,150 +152,156 @@ export function DecisionPanel({
 	}
 
 	return (
-		<section
-			aria-label="Officer decision"
-			className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm sm:p-5"
-		>
-			<h2 className="mb-3 text-base font-semibold">Officer decision</h2>
-			<fieldset className="mb-4 flex gap-2">
-				<legend className="sr-only">Decision outcome</legend>
-				{(["approve", "decline"] as const).map((m) => (
-					<label
-						key={m}
-						className={`rounded border px-4 py-2 text-sm font-medium ${mode === m ? "border-blue-600 bg-blue-50 text-blue-800" : "border-gray-300 text-gray-600"}`}
-					>
-						<input
-							type="radio"
-							name="decision-outcome"
-							value={m}
-							checked={mode === m}
-							onChange={() => setMode(m)}
-							className="mr-2"
-						/>
-						{m === "approve" ? "Approve" : "Decline"}
-					</label>
-				))}
-			</fieldset>
-			{mode === "approve" ? (
-				<div className="grid gap-3 sm:grid-cols-2">
-					<Field label="Amount (USD)" error={errors.approvedAmountCents ?? errors.amount}>
-						<input
-							id="field-amount-usd"
-							inputMode="decimal"
-							value={amount}
-							onChange={(e) => setAmount(e.target.value)}
-							className={inputCls}
-						/>
-					</Field>
-					<Field label="Term (months)" error={errors.termMonths ?? errors.term}>
-						<input
-							id="field-term-months"
-							inputMode="numeric"
-							value={term}
-							onChange={(e) => setTerm(e.target.value)}
-							className={inputCls}
-						/>
-					</Field>
-					<p className="text-xs text-gray-500 sm:col-span-2">
-						Requested <Money cents={requestedAmountCents} /> / {requestedTermMonths}m · policy max{" "}
-						<Money cents={maxAmountCents} /> · product min <Money cents={minCents} />
-					</p>
-				</div>
-			) : (
-				<div className="grid gap-3">
-					<Field label="Reason code" error={errors.reasonCode}>
-						<select
-							id="field-reason-code"
-							value={reasonCode}
-							onChange={(e) => setReasonCode(e.target.value)}
-							className={inputCls}
+		<section aria-label="Officer decision">
+			<Panel title="Officer decision" outline>
+				<fieldset className="mb-4 flex gap-2">
+					<legend className="sr-only">Decision outcome</legend>
+					{(["approve", "decline"] as const).map((m) => (
+						<label
+							key={m}
+							className={
+								mode === m
+									? "rounded-sm border border-ink bg-ink px-4 py-2 text-sm font-medium text-white"
+									: "rounded-sm border border-rule-strong bg-card px-4 py-2 text-sm font-medium text-slate"
+							}
 						>
-							{DECLINE_CODES.map((c) => (
-								<option key={c} value={c}>
-									{c}
-								</option>
-							))}
-						</select>
-					</Field>
-				</div>
-			)}
-			<div className="mt-3">
-				<Field
-					label={mode === "approve" ? "Note (optional)" : "Notes (required)"}
-					error={errors.notes}
-				>
-					<textarea
-						id={mode === "approve" ? "field-note-optional" : "field-notes-required"}
-						value={notes}
-						onChange={(e) => setNotes(e.target.value)}
-						rows={3}
-						className={inputCls}
-					/>
-				</Field>
-			</div>
-			{serverError && (
+							<input
+								type="radio"
+								name="decision-outcome"
+								value={m}
+								checked={mode === m}
+								onChange={() => setMode(m)}
+								className="mr-2"
+							/>
+							{m === "approve" ? "Approve" : "Decline"}
+						</label>
+					))}
+				</fieldset>
+				{mode === "approve" ? (
+					<div className="grid gap-3 sm:grid-cols-2">
+						<Field label="Amount (USD)" error={errors.approvedAmountCents ?? errors.amount}>
+							<input
+								id="field-amount-usd"
+								inputMode="decimal"
+								value={amount}
+								onChange={(e) => setAmount(e.target.value)}
+								className={inputCls}
+							/>
+						</Field>
+						<Field label="Term (months)" error={errors.termMonths ?? errors.term}>
+							<input
+								id="field-term-months"
+								inputMode="numeric"
+								value={term}
+								onChange={(e) => setTerm(e.target.value)}
+								className={inputCls}
+							/>
+						</Field>
+						<p className="text-xs text-slate sm:col-span-2">
+							Requested <Money cents={requestedAmountCents} /> / {requestedTermMonths}m · policy max{" "}
+							<Money cents={maxAmountCents} /> · product min <Money cents={minCents} />
+						</p>
+					</div>
+				) : (
+					<div className="grid gap-3">
+						<Field label="Reason code" error={errors.reasonCode}>
+							<select
+								id="field-reason-code"
+								value={reasonCode}
+								onChange={(e) => setReasonCode(e.target.value)}
+								className={inputCls}
+							>
+								{DECLINE_CODES.map((c) => (
+									<option key={c} value={c}>
+										{c}
+									</option>
+								))}
+							</select>
+						</Field>
+					</div>
+				)}
 				<div className="mt-3">
-					<ErrorBox message={serverError} />
+					<Field
+						label={mode === "approve" ? "Note (optional)" : "Notes (required)"}
+						error={errors.notes}
+					>
+						<textarea
+							id={mode === "approve" ? "field-note-optional" : "field-notes-required"}
+							value={notes}
+							onChange={(e) => setNotes(e.target.value)}
+							rows={3}
+							className={inputCls}
+						/>
+					</Field>
 				</div>
-			)}
-			{researchSelection && researchSelection.acceptedFindingIds.length > 0 && (
-				<p className="mt-3 text-xs text-gray-600">
-					Using research: {researchSelection.acceptedFindingIds.length} accepted finding
-					{researchSelection.acceptedFindingIds.length === 1 ? "" : "s"} (run{" "}
-					{researchSelection.agentRunId.slice(0, 8)}…). Advisory only — the decision is yours, and
-					the cited evidence is frozen into the audit.
-				</p>
-			)}
-			{researchStale && (
-				<div className="mt-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-					<p>
-						The accepted research no longer matches the frozen brief (the run was superseded or the
-						findings were re-reviewed). The selection was cleared — re-review the brief, or decide
-						without research.
+				{serverError && (
+					<div className="mt-3">
+						<ErrorBox message={serverError} />
+					</div>
+				)}
+				{researchSelection && researchSelection.acceptedFindingIds.length > 0 && (
+					<p className="mt-3 text-xs text-slate">
+						Using research: {researchSelection.acceptedFindingIds.length} accepted finding
+						{researchSelection.acceptedFindingIds.length === 1 ? "" : "s"} (run{" "}
+						{researchSelection.agentRunId.slice(0, 8)}…). Advisory only — the decision is yours, and
+						the cited evidence is frozen into the audit.
 					</p>
-					<div className="mt-2 flex gap-2">
-						<button
-							type="button"
-							onClick={() => void submit(false)}
-							disabled={busy}
-							className="rounded bg-amber-700 px-3 py-1 text-sm font-medium text-white disabled:opacity-50"
-						>
-							Decide without research
-						</button>
+				)}
+				{researchStale && (
+					<div className="mt-3 rounded-sm border border-warning bg-tag-amber p-3 text-sm text-warning-ink">
+						<p>
+							The accepted research no longer matches the frozen brief (the run was superseded or
+							the findings were re-reviewed). The selection was cleared — re-review the brief, or
+							decide without research.
+						</p>
+						<div className="mt-2 flex gap-2">
+							<Button
+								type="button"
+								variant="secondary"
+								size="sm"
+								onClick={() => void submit(false)}
+								disabled={busy}
+							>
+								Decide without research
+							</Button>
+						</div>
 					</div>
-				</div>
-			)}
-			{researchDown && (
-				<div className="mt-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-					<p>Research is temporarily unavailable. You can retry, or decide without research.</p>
-					<div className="mt-2 flex gap-2">
-						<button
-							type="button"
-							onClick={() => void submit(true)}
-							disabled={busy}
-							className="rounded border border-amber-600 px-3 py-1 text-sm disabled:opacity-50"
-						>
-							Retry with research
-						</button>
-						<button
-							type="button"
-							onClick={() => void submit(false)}
-							disabled={busy}
-							className="rounded bg-amber-700 px-3 py-1 text-sm font-medium text-white disabled:opacity-50"
-						>
-							Decide without research
-						</button>
+				)}
+				{researchDown && (
+					<div className="mt-3 rounded-sm border border-warning bg-tag-amber p-3 text-sm text-warning-ink">
+						<p>Research is temporarily unavailable. You can retry, or decide without research.</p>
+						<div className="mt-2 flex gap-2">
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								onClick={() => void submit(true)}
+								disabled={busy}
+							>
+								Retry with research
+							</Button>
+							<Button
+								type="button"
+								variant="secondary"
+								size="sm"
+								onClick={() => void submit(false)}
+								disabled={busy}
+							>
+								Decide without research
+							</Button>
+						</div>
 					</div>
-				</div>
-			)}
-			<button
-				type="button"
-				onClick={() => void submit(true)}
-				disabled={busy}
-				className="mt-4 rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-			>
-				{busy ? "Submitting…" : mode === "approve" ? "Approve" : "Decline"}
-			</button>
+				)}
+				<Button
+					type="button"
+					size="sm"
+					onClick={() => void submit(true)}
+					disabled={busy}
+					className="mt-4"
+				>
+					{busy ? "Submitting…" : mode === "approve" ? "Approve" : "Decline"}
+				</Button>
+			</Panel>
 		</section>
 	);
 }

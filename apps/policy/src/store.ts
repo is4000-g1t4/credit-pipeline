@@ -42,6 +42,19 @@ export interface PolicySectionDetail {
 	neighbours: Array<{ sectionId: string; heading: string }>;
 }
 
+export interface ApprovedPolicyDocument {
+	policyId: string;
+	policyKey: string;
+	title: string;
+	version: string;
+	versionId: string;
+	effectiveFrom: string;
+	effectiveTo: string | null;
+	productScope: string;
+	jurisdiction: string;
+	sectionCount: number;
+}
+
 export interface PolicyQueryRecord {
 	id: string;
 	actorId: string;
@@ -88,6 +101,7 @@ export interface PolicyStore {
 	listApprovedCorpusSections(): Promise<
 		Array<{ policyKey: string; sectionId: string; productScope: "individual" | "sme" | "all" }>
 	>;
+	listApprovedPolicyDocuments(asOf: string): Promise<ApprovedPolicyDocument[]>;
 	hasVersionChunks(versionId: string): Promise<boolean>;
 	insertQuery(record: PolicyQueryRecord): Promise<void>;
 	insertCitations(

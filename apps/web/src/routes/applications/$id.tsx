@@ -1,10 +1,25 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { CaseView } from "../../components/CaseView";
-import { CustomerSnapshot, RequirementsPanel } from "../../components/RequirementsPanel";
-import { DocumentPanel } from "../../components/DocumentPanel";
-import { EmptyState, ErrorBox, Page, Skeleton } from "../../components/ui";
-import { ApiError, apiErrorMessage, fetchCase, isTerminal, queryKeys } from "../../lib/api";
+import { ApplicantCaseView } from "../../components/case/applicant-case-view";
+import {
+	ButtonLink,
+	CodeTag,
+	EmptyState,
+	ErrorBox,
+	Page,
+	PageHead,
+	Skeleton,
+	StatusBadge,
+} from "../../components/ubs";
+import {
+	ApiError,
+	apiErrorMessage,
+	fetchCase,
+	formatMoney,
+	isTerminal,
+	productLabel,
+	queryKeys,
+} from "../../lib/api";
 import { RequireAuth } from "../../lib/auth";
 
 export const Route = createFileRoute("/applications/$id")({
@@ -37,7 +52,7 @@ function Detail() {
 						title="Application not found"
 						hint="It may belong to another applicant."
 						action={
-							<Link to="/applications" className="text-sm text-blue-700 hover:underline">
+							<Link to="/applications" className="text-sm text-red-link hover:underline">
 								Back to applications
 							</Link>
 						}
@@ -46,27 +61,37 @@ function Detail() {
 					<ErrorBox message={apiErrorMessage(detail.error)} onRetry={() => void detail.refetch()} />
 				)
 			) : (
-				<>
+				<div className="space-y-8">
+					<PageHead
+						title={detail.data.application.purpose || "Application"}
+						subtitle={`${detail.data.application.reference} · ${formatMoney(detail.data.application.amountCents)} · ${detail.data.application.termMonths} months · ${productLabel(detail.data.application.product)}`}
+						actions={
+							<>
+								{detail.data.application.status === "booked" ? (
+									<ButtonLink to={detail.data.loan ? `/loans/${detail.data.loan.id}` : "/loans"}>
+										View loan
+									</ButtonLink>
+								) : (
+									<>
+										<StatusBadge status={detail.data.application.status} />
+										{detail.data.application.status === "pending_review" && (
+											<CodeTag code={detail.data.application.status} />
+										)}
+									</>
+								)}
+								<Link to="/applications" className="text-sm text-red-link hover:underline">
+									Back to applications
+								</Link>
+							</>
+						}
+					/>
 					{!isTerminal(detail.data.application.status) && (
-						<p className="mb-3 text-xs text-gray-500" aria-live="polite">
+						<p className="text-xs text-slate" aria-live="polite">
 							Updating automatically…
 						</p>
 					)}
-					<CaseView data={detail.data} />
-					{(detail.data.application.status === "draft" ||
-						detail.data.application.status === "submitted") && (
-						<>
-							<RequirementsPanel applicationId={id} status={detail.data.application.status} />
-							<CustomerSnapshot />
-						</>
-					)}
-					<DocumentPanel
-						applicationId={id}
-						mode="applicant"
-						documentsEnabled={detail.data.application.documentsEnabled ?? false}
-						documentProcessingConsent={detail.data.application.documentProcessingConsent}
-					/>
-				</>
+					<ApplicantCaseView data={detail.data} />
+				</div>
 			)}
 		</Page>
 	);

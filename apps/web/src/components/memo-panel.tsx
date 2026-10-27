@@ -16,8 +16,9 @@ import {
 	type CreditMemoContent,
 	type MemoCitation,
 } from "../lib/api";
-import { asMemoContent } from "./MemoContent";
-import { TraceDetails } from "./TraceDetails";
+import { asMemoContent } from "./memo-content";
+import { TraceDetails } from "./trace-details";
+import { Button } from "./ui/button";
 import { Card, EmptyState, ErrorBox, Skeleton, StatusBadge } from "./ui";
 
 /** `case_fact:…` → `case fact`; unknown refs render raw. */
@@ -28,14 +29,14 @@ function sourceLabel(ref: string): string {
 
 function CitationChip({ citation }: { citation: MemoCitation }) {
 	return (
-		<li className="rounded border border-gray-200 bg-gray-50 px-2 py-1">
-			<p className="font-mono text-xs text-gray-700" title={citation.ref}>
-				<span className="mr-1 rounded bg-gray-200 px-1 py-0.5 font-sans font-medium">
+		<li className="rounded border border-rule bg-raised px-2 py-1">
+			<p className="font-mono text-xs text-slate" title={citation.ref}>
+				<span className="mr-1 rounded bg-warm px-1 py-0.5 font-sans font-medium">
 					{sourceLabel(citation.ref)}
 				</span>
 				{citation.ref}
 			</p>
-			<blockquote className="mt-0.5 border-l-2 border-gray-300 pl-2 text-xs text-gray-600 italic">
+			<blockquote className="mt-0.5 border-l-2 border-rule-strong pl-2 text-xs text-slate italic">
 				“{citation.quote}”
 			</blockquote>
 		</li>
@@ -154,14 +155,15 @@ export function MemoPanel({
 					}
 					action={
 						canDraft ? (
-							<button
+							<Button
 								type="button"
+								variant="outline"
+								size="sm"
 								onClick={() => void draft()}
 								disabled={drafting}
-								className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
 							>
 								{drafting ? "Drafting…" : "Draft memo"}
-							</button>
+							</Button>
 						) : undefined
 					}
 				/>
@@ -169,7 +171,7 @@ export function MemoPanel({
 				<div>
 					<div className="flex flex-wrap items-baseline justify-between gap-2">
 						<h3 className="text-sm font-semibold">{content.title}</h3>
-						<p className="text-xs text-gray-500">
+						<p className="text-xs text-slate">
 							v{artifact.version} · r{artifact.revision}
 						</p>
 					</div>
@@ -178,18 +180,18 @@ export function MemoPanel({
 							<section key={section.key} aria-label={section.title}>
 								<h4 className="text-sm font-semibold">{section.title}</h4>
 								{section.notAvailable || section.claims.length === 0 ? (
-									<p className="mt-1 text-sm text-gray-500">Not available.</p>
+									<p className="mt-1 text-sm text-slate">Not available.</p>
 								) : (
 									<ul className="mt-1 space-y-2">
 										{section.claims.map((claim, ci) => (
-											<li key={`${section.key}-${ci}`} className="text-sm text-gray-800">
+											<li key={`${section.key}-${ci}`} className="text-sm text-ink">
 												{editing ? (
 													<textarea
 														aria-label={`Edit claim ${ci + 1} in ${section.title}`}
 														value={claim.text}
 														onChange={(event) => updateClaim(si, ci, event.target.value)}
 														rows={3}
-														className="w-full rounded border border-gray-300 px-2 py-1 text-sm"
+														className="w-full rounded border border-rule-strong px-2 py-1 text-sm"
 													/>
 												) : (
 													<p>{claim.text}</p>
@@ -211,11 +213,10 @@ export function MemoPanel({
 					{content.openItems.length > 0 && (
 						<div className="mt-4">
 							<h4 className="text-sm font-semibold">Open items</h4>
-							<ul className="mt-1 list-disc pl-5 text-sm text-gray-700">
+							<ul className="mt-1 list-disc pl-5 text-sm text-slate">
 								{content.openItems.map((item, i) => (
 									<li key={i}>
-										{item.text}{" "}
-										<span className="font-mono text-xs text-gray-500">[{item.code}]</span>
+										{item.text} <span className="font-mono text-xs text-slate">[{item.code}]</span>
 									</li>
 								))}
 							</ul>
@@ -224,7 +225,7 @@ export function MemoPanel({
 					{content.officerQuestions.length > 0 && (
 						<div className="mt-4">
 							<h4 className="text-sm font-semibold">Officer questions</h4>
-							<ul className="mt-1 list-disc pl-5 text-sm text-gray-700">
+							<ul className="mt-1 list-disc pl-5 text-sm text-slate">
 								{content.officerQuestions.map((q) => (
 									<li key={q}>{q}</li>
 								))}
@@ -255,84 +256,86 @@ export function MemoPanel({
 						}
 					/>
 					{artifact.status === "approved" ? (
-						<p className="mt-4 text-sm text-gray-600">
+						<p className="mt-4 text-sm text-slate">
 							Approved{artifact.approvedBy ? ` by ${artifact.approvedBy}` : ""}
 							{artifact.approvedAt ? ` · ${formatDateTime(artifact.approvedAt)}` : ""}.
 						</p>
 					) : editing ? (
 						<div className="mt-4 flex flex-wrap gap-2">
-							<button
+							<Button
 								type="button"
+								variant="outline"
+								size="sm"
 								onClick={() => void saveEdit()}
 								disabled={acting}
-								className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
 							>
 								{acting ? "Saving…" : "Save changes"}
-							</button>
-							<button
+							</Button>
+							<Button
 								type="button"
+								variant="outline"
+								size="sm"
 								onClick={() => {
 									setEditing(null);
 									setActionError("");
 								}}
 								disabled={acting}
-								className="rounded border border-gray-300 px-4 py-2 text-sm disabled:opacity-50"
 							>
 								Cancel edit
-							</button>
+							</Button>
 						</div>
 					) : (
 						<div className="mt-4 flex flex-wrap gap-2">
 							{canDraft && (
-								<button
+								<Button
 									type="button"
+									variant="outline"
+									size="sm"
 									onClick={() => void draft()}
 									disabled={drafting}
-									className="rounded border border-gray-300 px-4 py-2 text-sm disabled:opacity-50"
 								>
 									{drafting ? "Drafting…" : "Re-draft memo"}
-								</button>
+								</Button>
 							)}
 							{isDraft && (
-								<button
-									type="button"
-									onClick={startEdit}
-									className="rounded border border-gray-300 px-4 py-2 text-sm"
-								>
+								<Button type="button" variant="outline" size="sm" onClick={startEdit}>
 									Edit memo
-								</button>
+								</Button>
 							)}
 							{confirming ? (
 								<>
-									<button
+									<Button
 										type="button"
+										variant="outline"
+										size="sm"
 										onClick={() => void approve()}
 										disabled={acting || !isDraft}
-										className="rounded bg-green-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
 									>
 										{acting ? "Approving…" : "Confirm approval"}
-									</button>
-									<button
+									</Button>
+									<Button
 										type="button"
+										variant="outline"
+										size="sm"
 										onClick={() => {
 											setConfirming(false);
 											setActionError("");
 										}}
 										disabled={acting}
-										className="rounded border border-gray-300 px-4 py-2 text-sm disabled:opacity-50"
 									>
 										Cancel
-									</button>
+									</Button>
 								</>
 							) : (
-								<button
+								<Button
 									type="button"
+									variant="outline"
+									size="sm"
 									onClick={() => setConfirming(true)}
 									disabled={!isDraft}
-									className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
 								>
 									Approve memo
-								</button>
+								</Button>
 							)}
 						</div>
 					)}

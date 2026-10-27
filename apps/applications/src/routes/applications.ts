@@ -18,6 +18,7 @@ import {
 import {
 	applications,
 	auditLog,
+	caseAccessGrants,
 	customerProfiles,
 	decisions,
 	documentFiles,
@@ -41,7 +42,7 @@ import {
 	type ServiceApp,
 	type WorkflowGateway,
 } from "@credit/service-kit";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { isUniqueViolation } from "../documents/pipeline.js";
@@ -61,6 +62,8 @@ function summarize(row: typeof applications.$inferSelect): Record<string, unknow
 		// T17: drafts carry submittedAt=null; direct-create rows stay non-null.
 		submittedAt: row.submittedAt?.toISOString() ?? null,
 		decidedAt: row.decidedAt?.toISOString() ?? null,
+		// Draft-update concurrency token (list + detail).
+		updatedAt: row.updatedAt.toISOString(),
 	};
 }
 
@@ -89,11 +92,38 @@ export interface ApplicationsRouteDeps {
 	/** T01 feature flag (SPEC-t01-t02 §10): exposed as `documentsEnabled`
 	 * in the case detail so the UI can hide the panel when off. */
 	documentsEnabled: boolean;
+	/** UBS §3: assignment-gated officer `fraudReview` summary. */
+	fraudReviewEnabled: boolean;
+}
+
+const CLIENT_TIMELINE_ACTIONS = new Set([
+	"application.submitted",
+	"decision.made",
+	"application.booked",
+	"application.failed",
+	"review.expired",
+]);
+
+function failureFor(status: string): { code: string; message: string } | null {
+	if (status === "failed") {
+		return {
+			code: "PROCESSING_FAILED",
+			message: "We could not complete the checks. Please try again or contact us.",
+		};
+	}
+	if (status === "expired") {
+		return {
+			code: "REVIEW_EXPIRED",
+			message:
+				"The review window expired before a decision. Start a new application or contact us.",
+		};
+	}
+	return null;
 }
 
 export function applicationsRoutes(deps: ApplicationsRouteDeps): ServiceApp {
 	const app: ServiceApp = new Hono();
-	const { db, gateway, logger, documentsEnabled } = deps;
+	const { db, gateway, logger, documentsEnabled, fraudReviewEnabled } = deps;
 
 	app.post("/api/applications", async (c) => {
 		const me = c.var.user;
@@ -329,6 +359,56 @@ export function applicationsRoutes(deps: ApplicationsRouteDeps): ServiceApp {
 		if (row.status === "draft" && me.role === "officer") {
 			throw new HttpError(404, "NOT_FOUND", "not found");
 		}
+		if (me.role !== "officer") {
+			const view = c.req.query("view");
+			if (view !== undefined && view !== "" && view !== "client") {
+				throw new HttpError(400, "VALIDATION_ERROR", "invalid view");
+			}
+			const [checkRows, docRows, decisionRows, auditRows] = await Promise.all([
+				db.select().from(kycChecks).where(eq(kycChecks.applicationId, id)),
+				db.select().from(documents).where(eq(documents.applicationId, id)),
+				db.select().from(decisions).where(eq(decisions.applicationId, id)),
+				db.select().from(auditLog).where(eq(auditLog.applicationId, id)),
+			]);
+			const timeline = auditRows
+				.filter((a) => CLIENT_TIMELINE_ACTIONS.has(a.action))
+				.map((a) => ({ at: a.createdAt.toISOString(), action: a.action }))
+				.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
+			return c.json({
+				application: {
+					id: row.id,
+					reference: row.reference,
+					type: row.type,
+					product: row.product,
+					status: row.status,
+					amountCents: row.amountCents,
+					termMonths: row.termMonths,
+					purpose: row.purpose,
+					identity: row.identity,
+					financial: row.financial,
+					business: row.business,
+					consents: row.consents,
+					aiResearchConsent: row.aiResearchConsent,
+					documentProcessingConsent: row.documentProcessingConsent,
+					documentConsentAt: row.documentConsentAt?.toISOString() ?? null,
+					documentConsentVersion: row.documentConsentVersion,
+					contextAnalysisConsent: row.contextAnalysisConsent,
+					contextConsentAt: row.contextConsentAt?.toISOString() ?? null,
+					contextConsentVersion: row.contextConsentVersion,
+					documentsEnabled,
+					submittedAt: row.submittedAt?.toISOString() ?? null,
+					decidedAt: row.decidedAt?.toISOString() ?? null,
+					updatedAt: row.updatedAt.toISOString(),
+					failedReason: null,
+					workflowStartedAt: null,
+				},
+				checks: checkRows.map((check) => ({ type: check.type, status: check.status })),
+				documents: docRows.map((doc) => ({ kind: doc.kind, status: doc.status, note: doc.note })),
+				decision: decisionRows[0] ? presentDecision(decisionRows[0], "applicant") : null,
+				timeline,
+				failure: failureFor(row.status),
+			});
+		}
 		const [checks, reports, docs, scoreRows, policyRows, decisionRows] = await Promise.all([
 			db.select().from(kycChecks).where(eq(kycChecks.applicationId, id)),
 			db.select().from(externalReports).where(eq(externalReports.applicationId, id)),
@@ -378,6 +458,37 @@ export function applicationsRoutes(deps: ApplicationsRouteDeps): ServiceApp {
 			policyEvaluation: policyRows[0] ?? null,
 			decision: decisionRows[0] ? presentDecision(decisionRows[0], me.role) : null,
 			timeline,
+			fraudReview: await (async () => {
+				if (!fraudReviewEnabled) return null;
+				// Same boundary as the fraud-review routes: any active grant
+				// (not only assigned_officer) may see the review summary.
+				const grants = await db
+					.select({ id: caseAccessGrants.id })
+					.from(caseAccessGrants)
+					.where(
+						and(
+							eq(caseAccessGrants.applicationId, id),
+							eq(caseAccessGrants.userId, me.id),
+							isNull(caseAccessGrants.revokedAt),
+						),
+					)
+					.limit(1);
+				if (grants.length === 0) return null;
+				const frRows = await db
+					.select()
+					.from(fraudReviews)
+					.where(
+						and(
+							eq(fraudReviews.applicationId, id),
+							inArray(fraudReviews.status, ["open", "needs_info"]),
+						),
+					)
+					.orderBy(desc(fraudReviews.createdAt), desc(fraudReviews.id))
+					.limit(1);
+				const fr = frRows[0];
+				if (!fr) return null;
+				return { id: fr.id, status: fr.status, severity: fr.severity, reasonCode: fr.reasonCode };
+			})(),
 		});
 	});
 

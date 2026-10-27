@@ -6,6 +6,8 @@
 // display; nothing document-derived reaches console, logs, or URLs.
 import { useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import {
 	ApiError,
 	claimDocuments,
@@ -14,6 +16,7 @@ import {
 	fetchCrosscheck,
 	fetchDocumentFiles,
 	fetchDocumentPages,
+	fieldLabel,
 	formatDate,
 	queryKeys,
 	retryDocumentOcr,
@@ -28,7 +31,7 @@ import {
 	type DocumentsList,
 } from "../lib/api";
 import { clean, friendlyMessage, shortId } from "../lib/format";
-import { Card, ErrorBox, StatusBadge } from "./ui";
+import { ErrorBox, Panel, StatusBadge, inputCls } from "./ubs";
 
 const KINDS: DocumentKind[] = [
 	"business_registration",
@@ -117,21 +120,21 @@ function FileRow({
 	}
 
 	return (
-		<li className="rounded border border-gray-200 p-3">
+		<li className="rounded-sm border border-rule p-3">
 			<div className="flex flex-wrap items-center gap-2 text-sm">
 				<StatusBadge status={file.status} />
-				<span className="font-medium">{clean(file.kind)}</span>
-				<span className="text-xs text-gray-500" aria-live="polite">
+				<span className="font-medium text-ink">{fieldLabel(file.kind)}</span>
+				<span className="text-xs text-slate" aria-live="polite">
 					OCR: {clean(ocrLabel(file))}
 					{file.textLayerRisk ? " · hidden-text risk" : ""}
 				</span>
 				{inspected?.has(file.id) && (
-					<span className="rounded bg-green-100 px-1.5 py-0.5 text-xs text-green-800">
+					<span className="rounded-sm bg-tag-green px-1.5 py-0.5 text-xs text-success-ink">
 						original opened
 					</span>
 				)}
 			</div>
-			<dl className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-gray-600">
+			<dl className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate">
 				<div>
 					<dt className="inline font-medium">Pages: </dt>
 					<dd className="inline">{file.pageCount}</dd>
@@ -157,64 +160,68 @@ function FileRow({
 				</div>
 			)}
 			<div className="mt-2 flex flex-wrap gap-2">
-				<button
+				<Button
 					type="button"
+					variant="outline"
+					size="sm"
 					onClick={() => void save(false)}
 					disabled={busy !== null}
 					aria-label={`Download document ${shortId(file.id)}`}
-					className="rounded border border-gray-300 px-3 py-1 text-sm disabled:opacity-50"
 				>
 					{busy === "download" ? "Preparing…" : "Download"}
-				</button>
-				<button
+				</Button>
+				<Button
 					type="button"
+					variant="outline"
+					size="sm"
 					onClick={() => void save(true)}
 					disabled={busy !== null}
 					aria-label={`Open original document ${shortId(file.id)}`}
-					className="rounded border border-gray-300 px-3 py-1 text-sm disabled:opacity-50"
 				>
 					{busy === "open" ? "Opening…" : "Open original"}
-				</button>
+				</Button>
 				{showPages === true && file.kind !== "id" && (
-					<button
+					<Button
 						type="button"
+						variant="outline"
+						size="sm"
 						onClick={() => setPagesOpen((v) => !v)}
 						aria-expanded={pagesOpen}
 						aria-label={`View page text for document ${shortId(file.id)}`}
-						className="rounded border border-gray-300 px-3 py-1 text-sm"
 					>
 						{pagesOpen ? "Hide pages" : "View pages"}
-					</button>
+					</Button>
 				)}
 				{retryable && (
-					<button
+					<Button
 						type="button"
+						variant="outline"
+						size="sm"
 						onClick={() => void retry()}
 						disabled={busy !== null}
 						aria-label={`Retry text extraction for document ${shortId(file.id)}`}
-						className="rounded border border-gray-300 px-3 py-1 text-sm disabled:opacity-50"
 					>
 						{busy === "retry" ? "Retrying…" : "Retry OCR"}
-					</button>
+					</Button>
 				)}
 			</div>
 			{showPages === true && pagesOpen && (
 				<div className="mt-2" aria-live="polite">
 					{pages.isPending ? (
-						<p className="text-sm text-gray-500">Loading pages…</p>
+						<p className="text-sm text-slate">Loading pages…</p>
 					) : pages.isError ? (
 						<ErrorBox message={friendlyMessage(pages.error)} onRetry={() => void pages.refetch()} />
 					) : pages.data.pages.length === 0 ? (
-						<p className="text-sm text-gray-500">No page text — this file needs a manual check.</p>
+						<p className="text-sm text-slate">No page text — this file needs a manual check.</p>
 					) : (
 						<ol className="space-y-2">
 							{pages.data.pages.map((p) => (
-								<li key={p.pageNumber} className="rounded bg-gray-50 p-2 text-sm">
-									<p className="text-xs text-gray-500">
+								<li key={p.pageNumber} className="rounded-sm bg-raised p-2 text-sm">
+									<p className="text-xs text-slate">
 										Page {p.pageNumber} · {clean(p.source)} · confidence{" "}
 										{Number(p.confidence).toFixed(2)}
 									</p>
-									<p className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words text-gray-800">
+									<p className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words text-ink">
 										{clean(p.text)}
 									</p>
 								</li>
@@ -265,54 +272,52 @@ function UploadForm({
 	}
 
 	return (
-		<div className="rounded border border-gray-200 p-3">
-			<div className="grid gap-3 sm:grid-cols-2">
-				<div>
-					<label htmlFor="document-kind" className="mb-1 block text-sm font-medium text-gray-700">
-						Document kind
-					</label>
+		<div className="rounded-sm border border-rule p-4">
+			<div className="grid gap-4 sm:grid-cols-2">
+				<div className="space-y-2">
+					<Label htmlFor="document-kind">Document kind</Label>
 					<select
 						id="document-kind"
 						value={kind}
 						onChange={(e) => setKind(e.target.value as DocumentKind)}
 						disabled={disabled || busy}
-						className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none disabled:opacity-50"
+						className={inputCls}
 					>
 						{KINDS.map((k) => (
 							<option key={k} value={k}>
-								{k}
+								{fieldLabel(k)}
 							</option>
 						))}
 					</select>
 				</div>
-				<div>
-					<label htmlFor="document-file" className="mb-1 block text-sm font-medium text-gray-700">
-						File (PDF, PNG, JPEG · ≤10 MB)
-					</label>
+				<div className="space-y-2">
+					<Label htmlFor="document-file">File (PDF, PNG, JPEG · ≤10 MB)</Label>
 					<input
 						ref={inputRef}
 						id="document-file"
 						type="file"
 						accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
 						disabled={disabled || busy}
-						className="w-full text-sm disabled:opacity-50"
+						className="w-full text-sm text-ink disabled:opacity-50"
 					/>
 				</div>
 			</div>
-			{disabledHint && <p className="mt-2 text-sm text-gray-600">{disabledHint}</p>}
+			{disabledHint && <p className="mt-2 text-sm text-slate">{disabledHint}</p>}
 			{error && (
 				<div className="mt-2">
 					<ErrorBox message={error} />
 				</div>
 			)}
-			<button
-				type="button"
-				onClick={() => void upload()}
-				disabled={disabled || busy}
-				className="mt-3 rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-			>
-				{busy ? "Uploading…" : "Upload document"}
-			</button>
+			<div className="mt-3">
+				<Button
+					type="button"
+					variant="outline"
+					onClick={() => void upload()}
+					disabled={disabled || busy}
+				>
+					{busy ? "Uploading…" : "Upload document"}
+				</Button>
+			</div>
 		</div>
 	);
 }
@@ -335,11 +340,11 @@ function DocumentFileList({
 	return (
 		<div className="mt-3" aria-live="polite">
 			{files.isPending ? (
-				<p className="text-sm text-gray-500">Loading documents…</p>
+				<p className="text-sm text-slate">Loading documents…</p>
 			) : files.isError ? (
 				<ErrorBox message={friendlyMessage(files.error)} onRetry={() => void files.refetch()} />
 			) : files.data.files.length === 0 ? (
-				<p className="text-sm text-gray-500">No documents uploaded yet.</p>
+				<p className="text-sm text-slate">No documents uploaded yet.</p>
 			) : (
 				<ul className="space-y-2">
 					{files.data.files.map((f) => (
@@ -374,6 +379,7 @@ function ApplicantDocuments({
 		queryKey: ["documents", applicationId],
 		queryFn: () => fetchDocumentFiles(applicationId),
 		retry: false,
+		enabled: consent,
 	});
 	const refresh = (): void => {
 		void queryClient.invalidateQueries({ queryKey: ["documents", applicationId] });
@@ -395,29 +401,31 @@ function ApplicantDocuments({
 	}
 
 	return (
-		<Card title="Documents">
-			<p className="mb-3 text-xs text-gray-500">
+		<Panel title="Documents" outline>
+			<p className="mb-3 text-xs text-slate">
 				Your files are scanned, encrypted, and kept for 90 days. Withdrawing consent blocks future
 				uploads and schedules deletion.
 			</p>
 			<div className="mb-3 flex flex-wrap items-center gap-3">
-				<label className="flex items-center gap-2 text-sm">
+				<label className="flex items-center gap-2 text-sm text-ink">
 					<input
 						type="checkbox"
 						checked={checked}
 						onChange={(e) => setChecked(e.target.checked)}
 						aria-label="Consent to document processing"
+						className="size-5"
 					/>
 					I consent to document processing
 				</label>
-				<button
+				<Button
 					type="button"
+					variant="outline"
+					size="sm"
 					onClick={() => void saveConsent()}
 					disabled={saving || checked === consent}
-					className="rounded border border-gray-300 px-3 py-1 text-sm disabled:opacity-50"
 				>
 					{saving ? "Saving…" : "Update consent"}
-				</button>
+				</Button>
 			</div>
 			{consentError && (
 				<div className="mb-3">
@@ -434,8 +442,14 @@ function ApplicantDocuments({
 				}
 				onUploaded={refresh}
 			/>
-			<DocumentFileList applicationId={applicationId} files={files} onChanged={refresh} />
-		</Card>
+			{consent ? (
+				<DocumentFileList applicationId={applicationId} files={files} onChanged={refresh} />
+			) : (
+				<p className="text-sm text-slate">
+					Consent to document processing to view uploaded documents.
+				</p>
+			)}
+		</Panel>
 	);
 }
 
@@ -451,22 +465,22 @@ function FindingItem({
 	onToggle: () => void;
 }) {
 	return (
-		<li className="rounded border border-gray-200 p-3">
-			<label className="flex cursor-pointer items-start gap-2 text-sm">
+		<li className="rounded-sm border border-rule p-3">
+			<label className="flex cursor-pointer items-start gap-2 text-sm text-ink">
 				<input
 					type="checkbox"
 					checked={selected}
 					onChange={onToggle}
 					aria-label={`Select finding ${finding.field} for chase draft`}
-					className="mt-1"
+					className="mt-1 size-4"
 				/>
 				<span>
 					<span className="font-medium">{clean(finding.field)}</span>{" "}
 					<StatusBadge status={finding.status} />
-					<span className="ml-2 text-xs text-gray-500">{clean(finding.reason)}</span>
+					<span className="ml-2 text-xs text-slate">{clean(finding.reason)}</span>
 				</span>
 			</label>
-			<dl className="mt-1 grid gap-x-4 gap-y-0.5 text-xs text-gray-600 sm:grid-cols-2">
+			<dl className="mt-1 grid gap-x-4 gap-y-0.5 text-xs text-slate sm:grid-cols-2">
 				<div>
 					<dt className="inline font-medium">Expected: </dt>
 					<dd className="inline break-words">{clean(finding.expected ?? "not available")}</dd>
@@ -489,11 +503,11 @@ function FindingItem({
 				</div>
 			</dl>
 			{finding.quote !== null ? (
-				<blockquote className="mt-2 border-l-2 border-gray-300 pl-2 text-sm text-gray-700 italic">
+				<blockquote className="mt-2 border-l-2 border-rule-strong pl-2 text-sm text-ink italic">
 					{clean(finding.quote)}
 				</blockquote>
 			) : (
-				<p className="mt-1 text-xs text-gray-500">No citable quote — needs a manual check.</p>
+				<p className="mt-1 text-xs text-slate">No citable quote — needs a manual check.</p>
 			)}
 		</li>
 	);
@@ -565,16 +579,16 @@ function OfficerDocuments({ applicationId }: { applicationId: string }) {
 
 	if (claimConflict) {
 		return (
-			<Card title="Documents">
-				<p className="text-sm text-gray-600">Documents are not available for this case.</p>
-			</Card>
+			<Panel title="Documents" outline>
+				<p className="text-sm text-slate">Documents are not available for this case.</p>
+			</Panel>
 		);
 	}
 
 	if (unassigned) {
 		return (
-			<Card title="Documents">
-				<p className="mb-3 text-sm text-gray-600">
+			<Panel title="Documents" outline>
+				<p className="mb-3 text-sm text-slate">
 					This case is not assigned yet. Claim it to work with its documents.
 				</p>
 				{claimError && (
@@ -582,15 +596,10 @@ function OfficerDocuments({ applicationId }: { applicationId: string }) {
 						<ErrorBox message={claimError} />
 					</div>
 				)}
-				<button
-					type="button"
-					onClick={() => void claim()}
-					disabled={claiming}
-					className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-				>
+				<Button type="button" variant="outline" onClick={() => void claim()} disabled={claiming}>
 					{claiming ? "Claiming…" : "Assign to me"}
-				</button>
-			</Card>
+				</Button>
+			</Panel>
 		);
 	}
 
@@ -630,9 +639,9 @@ function OfficerDocuments({ applicationId }: { applicationId: string }) {
 	}
 
 	return (
-		<Card title="Documents">
+		<Panel title="Documents" outline>
 			{consentBlocked && (
-				<p className="mb-3 text-sm text-gray-600" aria-live="polite">
+				<p className="mb-3 text-sm text-slate" aria-live="polite">
 					Document processing consent is required before documents can be used — the applicant has
 					not granted it.
 				</p>
@@ -652,10 +661,10 @@ function OfficerDocuments({ applicationId }: { applicationId: string }) {
 				showPages
 			/>
 
-			<div className="mt-4 border-t border-gray-100 pt-3">
-				<h3 className="text-sm font-semibold">Cross-check</h3>
+			<div className="mt-4 border-t border-rule pt-3">
+				<h3 className="text-sm font-medium text-ink">Cross-check</h3>
 				{crosscheck.isPending ? (
-					<p className="mt-1 text-sm text-gray-500">Loading cross-check…</p>
+					<p className="mt-1 text-sm text-slate">Loading cross-check…</p>
 				) : crosscheck.isError ? (
 					<div className="mt-1">
 						<ErrorBox
@@ -664,9 +673,9 @@ function OfficerDocuments({ applicationId }: { applicationId: string }) {
 						/>
 					</div>
 				) : data === null || data === undefined ? (
-					<p className="mt-1 text-sm text-gray-600">No cross-check run yet.</p>
+					<p className="mt-1 text-sm text-slate">No cross-check run yet.</p>
 				) : (
-					<div className="mt-1 text-xs text-gray-500">
+					<div className="mt-1 text-xs text-slate">
 						<p>
 							Run {shortId((data.crosscheck as { id: string }).id)} ·{" "}
 							{(data.crosscheck as { status: string }).status} ·{" "}
@@ -694,31 +703,26 @@ function OfficerDocuments({ applicationId }: { applicationId: string }) {
 					</div>
 				)}
 				<div className="mt-2 flex flex-wrap gap-2">
-					<button
-						type="button"
-						onClick={() => void run()}
-						disabled={crossBusy}
-						className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-					>
+					<Button type="button" variant="outline" onClick={() => void run()} disabled={crossBusy}>
 						{crossBusy ? "Checking…" : "Run cross-check"}
-					</button>
+					</Button>
 				</div>
 
 				{findings.length > 0 && (
 					<div className="mt-3">
-						<h4 className="text-sm font-semibold">Draft chase</h4>
-						<p className="mt-0.5 text-xs text-gray-500">
+						<h4 className="text-sm font-medium text-ink">Draft chase</h4>
+						<p className="mt-0.5 text-xs text-slate">
 							Select findings above, open the cited original{citedIds.length > 1 ? "s" : ""}, then
 							draft. Drafts are never sent from here.
 						</p>
 						{chosen.length > 0 && unopened.length > 0 && (
-							<p className="mt-1 text-sm text-amber-800" aria-live="polite">
+							<p className="mt-1 text-sm text-warning-ink" aria-live="polite">
 								Open the original{unopened.length > 1 ? "s" : ""} for the selected cited file
 								{unopened.length > 1 ? "s" : ""} before drafting.
 							</p>
 						)}
 						{chosen.length > 0 && citedIds.length === 0 && (
-							<p className="mt-1 text-sm text-amber-800" aria-live="polite">
+							<p className="mt-1 text-sm text-warning-ink" aria-live="polite">
 								The selected findings cite no openable document — a draft needs at least one cited
 								file.
 							</p>
@@ -728,22 +732,24 @@ function OfficerDocuments({ applicationId }: { applicationId: string }) {
 								<ErrorBox message={chaseError} />
 							</div>
 						)}
-						<button
-							type="button"
-							onClick={() => void createDraft()}
-							disabled={!chaseReady || chaseBusy}
-							aria-label="Create draft chase request"
-							className="mt-2 rounded border border-gray-400 px-4 py-2 text-sm disabled:opacity-50"
-						>
-							{chaseBusy ? "Drafting…" : "Create draft chase"}
-						</button>
+						<div className="mt-2">
+							<Button
+								type="button"
+								variant="outline"
+								onClick={() => void createDraft()}
+								disabled={!chaseReady || chaseBusy}
+								aria-label="Create draft chase request"
+							>
+								{chaseBusy ? "Drafting…" : "Create draft chase"}
+							</Button>
+						</div>
 						{draft && (
 							<div
-								className="mt-2 rounded border border-green-200 bg-green-50 p-3"
+								className="mt-2 rounded-sm border border-rule bg-tag-green p-3"
 								aria-live="polite"
 							>
-								<p className="text-sm font-medium text-green-900">Draft created — not sent</p>
-								<p className="mt-1 whitespace-pre-wrap break-words text-sm text-green-900">
+								<p className="text-sm font-medium text-success-ink">Draft created — not sent</p>
+								<p className="mt-1 whitespace-pre-wrap break-words text-sm text-success-ink">
 									{clean((draft.chase as { body: string | null }).body ?? "")}
 								</p>
 							</div>
@@ -751,7 +757,7 @@ function OfficerDocuments({ applicationId }: { applicationId: string }) {
 					</div>
 				)}
 			</div>
-		</Card>
+		</Panel>
 	);
 }
 

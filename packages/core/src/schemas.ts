@@ -113,6 +113,9 @@ export const DOCUMENT_CONSENT_VERSION = "document-consent-v1";
 /** Context-analysis policy version recorded with consent (T17/D0). */
 export const CONTEXT_CONSENT_VERSION = "context-consent-v1";
 
+/** AI-research consent version recorded in the draft-update audit (UBS §4). */
+export const AI_RESEARCH_CONSENT_VERSION = "ai-research-consent-v1";
+
 // T17 prefill confirmations: client hashes are advisory only — the server
 // derives reused vs edited by comparing canonical values (D1). Strict, max
 // 20; unknown fields fail at the allowlist (D1).
@@ -181,6 +184,16 @@ export const applicationCreateSchema = z
 			});
 		}
 	});
+
+/** Draft PATCH (spec §4): the full create payload plus the optimistic token.
+ * The handler merges stored consent values before parsing (absent = unchanged)
+ * and compares the token under an advisory lock in the same transaction. */
+export const applicationDraftUpdateSchema = z
+	.object({
+		expectedUpdatedAt: z.iso.datetime(),
+		application: applicationCreateSchema,
+	})
+	.strict();
 
 const officerDecisionBase = z
 	.object({

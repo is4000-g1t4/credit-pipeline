@@ -1,6 +1,13 @@
 {
 	"$schema": "./node_modules/oxlint/configuration_schema.json",
 	"plugins": ["typescript", "react", "jsx-a11y", "import", "unicorn", "node", "promise"],
+	"jsPlugins": ["@shadcn/lint"],
+	"settings": {
+		"shadcn": {
+			"ui": "@/components/ui",
+			"note": "Follow docs/DESIGN.md: UBS ink/warm paper, one red action per view, 2px radii, 1px rules, no shadows or raw palette colors."
+		}
+	},
 	"categories": {
 		"correctness": "error",
 		"suspicious": "warn",
@@ -23,7 +30,23 @@
 		"react/react-in-jsx-scope": "off",
 		"no-await-in-loop": "off",
 		"unicorn/no-array-sort": "off",
-		"unicorn/prefer-set-has": "off"
+		"unicorn/prefer-set-has": "off",
+		"shadcn/no-restyle": [
+			"error",
+			{
+				"allow": ["layout"],
+				"contracts": [
+					{ "pattern": "^Button$", "allow": ["layout", "w-full", "mt-*", "mb-*"] },
+					{ "pattern": "^CardTitle$", "allow": ["layout", "typography"] },
+					{ "pattern": "^CardContent$", "allow": ["layout", "spacing"] }
+				]
+			}
+		],
+		"shadcn/no-raw-colors": "error",
+		"shadcn/no-arbitrary-values": "error",
+		"shadcn/no-inline-styles": "error",
+		"shadcn/no-unknown-classes": "warn",
+		"shadcn/require-static-classes": "warn"
 	},
 	"overrides": [
 		{
@@ -42,6 +65,23 @@
 			"files": ["apps/web/src/routes/__root.tsx"],
 			"rules": {
 				"import/no-unassigned-import": "off"
+			}
+		},
+		{
+			"files": ["apps/web/src/components/ui/**"],
+			"rules": {
+				"shadcn/no-restyle": "off",
+				"shadcn/no-raw-colors": "off",
+				"shadcn/no-arbitrary-values": "off",
+				"shadcn/no-inline-styles": "off",
+				"shadcn/no-unknown-classes": "off",
+				"shadcn/require-static-classes": "off"
+			}
+		},
+		{
+			"files": ["apps/web/src/components/ubs/chart.tsx", "apps/web/src/components/ubs/meter.tsx"],
+			"rules": {
+				"shadcn/no-inline-styles": "off"
 			}
 		}
 	],

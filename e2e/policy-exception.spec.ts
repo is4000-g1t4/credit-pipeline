@@ -102,6 +102,7 @@ test("officer sees the deterministic policy/exception view and the case is uncha
 
 	await uiLogin(page, "officer@example.com");
 	await gotoHydrated(page, `/officer/review/${submitted.id}`);
+	await page.getByRole("button", { name: "Policy" }).click();
 	await expect(page.getByText("Policy & exception navigator")).toBeVisible({
 		timeout: 60_000,
 	});

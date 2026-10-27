@@ -33,8 +33,9 @@ import {
 	type ResearchPolicy,
 	type ResearchSelection,
 } from "../lib/api";
-import { CitedSegments } from "./PolicyCitations";
+import { CitedSegments } from "./policy-citations";
 import { shortId } from "../lib/format";
+import { Button } from "./ui/button";
 import { EmptyState, ErrorBox, Skeleton } from "./ui";
 
 function hostOf(url: string): string {
@@ -49,13 +50,13 @@ function hostOf(url: string): string {
 function SourceLink({ url }: { url: string }) {
 	const [confirm, setConfirm] = useState(false);
 	const host = hostOf(url);
-	if (!/^https?:\/\//i.test(url)) return <span className="text-gray-500">{host}</span>;
+	if (!/^https?:\/\//i.test(url)) return <span className="text-slate">{host}</span>;
 	if (!confirm) {
 		return (
 			<button
 				type="button"
 				onClick={() => setConfirm(true)}
-				className="text-sm text-blue-700 hover:underline"
+				className="text-sm text-red-link hover:underline"
 			>
 				Open source · {host}
 			</button>
@@ -68,14 +69,14 @@ function SourceLink({ url }: { url: string }) {
 				href={url}
 				target="_blank"
 				rel="noopener noreferrer"
-				className="text-blue-700 hover:underline"
+				className="text-red-link hover:underline"
 			>
 				Open {host}
 			</a>{" "}
 			<button
 				type="button"
 				onClick={() => setConfirm(false)}
-				className="text-gray-500 hover:underline"
+				className="text-slate hover:underline"
 			>
 				Cancel
 			</button>
@@ -85,9 +86,9 @@ function SourceLink({ url }: { url: string }) {
 
 function SourceCard({ evidence, support }: { evidence: ResearchEvidenceItem; support: string }) {
 	return (
-		<li className="rounded border border-gray-200 bg-gray-50 p-3">
-			<p className="text-sm font-medium text-gray-800">{evidence.title || hostOf(evidence.url)}</p>
-			<dl className="mt-1 grid gap-x-4 gap-y-0.5 text-xs text-gray-600 sm:grid-cols-2">
+		<li className="rounded border border-rule bg-raised p-3">
+			<p className="text-sm font-medium text-ink">{evidence.title || hostOf(evidence.url)}</p>
+			<dl className="mt-1 grid gap-x-4 gap-y-0.5 text-xs text-slate sm:grid-cols-2">
 				<div>
 					<dt className="inline font-medium">Publisher: </dt>
 					<dd className="inline">{evidence.publisher}</dd>
@@ -117,7 +118,7 @@ function SourceCard({ evidence, support }: { evidence: ResearchEvidenceItem; sup
 					<dd className="inline break-all">{hostOf(evidence.finalUrl || evidence.url)}</dd>
 				</div>
 			</dl>
-			<blockquote className="mt-2 border-l-2 border-gray-300 pl-2 text-sm text-gray-700 italic">
+			<blockquote className="mt-2 border-l-2 border-rule-strong pl-2 text-sm text-slate italic">
 				“{evidence.quote}”
 			</blockquote>
 			<div className="mt-1">
@@ -182,7 +183,7 @@ function auditActionLabel(action: string): string {
 /** Auto-trigger history: ids and codes only, never case facts or quotes. */
 function AuditEntries({ entries }: { entries: ResearchAuditEntry[] }) {
 	if (entries.length === 0) {
-		return <p className="text-sm text-gray-600">No automatic-research history for this case.</p>;
+		return <p className="text-sm text-slate">No automatic-research history for this case.</p>;
 	}
 	return (
 		<ul className="space-y-1.5">
@@ -196,7 +197,7 @@ function AuditEntries({ entries }: { entries: ResearchAuditEntry[] }) {
 				return (
 					<li
 						key={`${e.action}-${e.createdAt}-${e.runId ?? "no-run"}-${eventId ?? "no-event"}`}
-						className="text-sm text-gray-700"
+						className="text-sm text-slate"
 					>
 						{" "}
 						<span className="font-medium">{auditActionLabel(e.action)}</span>
@@ -204,7 +205,7 @@ function AuditEntries({ entries }: { entries: ResearchAuditEntry[] }) {
 							? ` — ${skipReasonLabel(reason)}`
 							: ""}
 						{e.runId ? ` · run ${shortId(e.runId)}` : ""}{" "}
-						<span className="text-xs text-gray-500">· {formatDateTime(e.createdAt)}</span>
+						<span className="text-xs text-slate">· {formatDateTime(e.createdAt)}</span>
 					</li>
 				);
 			})}
@@ -238,9 +239,9 @@ function FindingCard({
 	}
 
 	return (
-		<li className="rounded border border-gray-200 p-3">
-			<p className="text-sm font-medium text-gray-900">{finding.claim}</p>
-			<dl className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-gray-600">
+		<li className="rounded border border-rule p-3">
+			<p className="text-sm font-medium text-ink">{finding.claim}</p>
+			<dl className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate">
 				<div>
 					<dt className="inline font-medium">Category: </dt>
 					<dd className="inline">{finding.category}</dd>
@@ -258,7 +259,7 @@ function FindingCard({
 					<dd className="inline">
 						{finding.confidence ?? "?"}{" "}
 						<details className="inline">
-							<summary className="inline cursor-pointer text-blue-700 hover:underline">
+							<summary className="inline cursor-pointer text-red-link hover:underline">
 								why?
 							</summary>
 							<p className="mt-1 max-w-full overflow-auto whitespace-pre-wrap break-words">
@@ -273,14 +274,14 @@ function FindingCard({
 					<dt className="inline font-medium">Review: </dt>
 					<dd className="inline" aria-live="polite">
 						<span
-							className={`rounded px-1.5 py-0.5 font-medium ${status === "accepted" ? "bg-green-100 text-green-800" : status === "rejected" ? "bg-gray-200 text-gray-700" : "bg-yellow-100 text-yellow-800"}`}
+							className={`rounded px-1.5 py-0.5 font-medium ${status === "accepted" ? "bg-tag-green text-success-ink" : status === "rejected" ? "bg-warm text-slate" : "bg-tag-amber text-warning-ink"}`}
 						>
 							{status}
 						</span>
 					</dd>
 				</div>
 			</dl>
-			{finding.whyItMatters && <p className="mt-1 text-sm text-gray-600">{finding.whyItMatters}</p>}
+			{finding.whyItMatters && <p className="mt-1 text-sm text-slate">{finding.whyItMatters}</p>}
 			{finding.evidence.length > 0 && (
 				<ul className="mt-2 space-y-2">
 					{finding.evidence.map((e) => (
@@ -294,24 +295,26 @@ function FindingCard({
 				</div>
 			)}
 			<div className="mt-2 flex gap-2">
-				<button
+				<Button
 					type="button"
+					variant="outline"
+					size="sm"
 					onClick={() => void review("accepted")}
 					disabled={busy !== null}
 					aria-label={`Accept finding: ${finding.claim}`}
-					className="rounded border border-green-600 px-3 py-1 text-sm text-green-800 disabled:opacity-50"
 				>
 					{busy === "accepted" ? "Accepting…" : "Accept"}
-				</button>
-				<button
+				</Button>
+				<Button
 					type="button"
+					variant="outline"
+					size="sm"
 					onClick={() => void review("rejected")}
 					disabled={busy !== null}
 					aria-label={`Reject finding: ${finding.claim}`}
-					className="rounded border border-gray-400 px-3 py-1 text-sm text-gray-700 disabled:opacity-50"
 				>
 					{busy === "rejected" ? "Rejecting…" : "Reject"}
-				</button>
+				</Button>
 			</div>
 		</li>
 	);
@@ -328,7 +331,7 @@ function FindingCard({
 
 function SignalEvidence({ signal }: { signal: ResearchContextSignal }) {
 	const items = Array.isArray(signal.evidence) ? signal.evidence : [];
-	if (items.length === 0) return <span className="text-gray-400">none listed</span>;
+	if (items.length === 0) return <span className="text-slate-light">none listed</span>;
 	return (
 		<span>
 			{items.map((e, i) => (
@@ -371,14 +374,14 @@ function SignalCard({
 	}
 
 	return (
-		<li className="rounded border border-gray-200 p-3">
-			<p className="text-sm font-medium text-gray-900">
+		<li className="rounded border border-rule p-3">
+			<p className="text-sm font-medium text-ink">
 				{signal.type}{" "}
-				<span className="font-normal text-gray-500">
+				<span className="font-normal text-slate">
 					· {signal.metric} · observed {signal.observed ?? "—"} · expected {signal.expected ?? "—"}
 				</span>
 			</p>
-			<dl className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-gray-600">
+			<dl className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate">
 				<div>
 					<dt className="inline font-medium">Period: </dt>
 					<dd className="inline">
@@ -413,14 +416,14 @@ function SignalCard({
 					<dt className="inline font-medium">Review: </dt>
 					<dd className="inline" aria-live="polite">
 						<span
-							className={`rounded px-1.5 py-0.5 font-medium ${status === "accepted" ? "bg-green-100 text-green-800" : status === "rejected" ? "bg-gray-200 text-gray-700" : "bg-yellow-100 text-yellow-800"}`}
+							className={`rounded px-1.5 py-0.5 font-medium ${status === "accepted" ? "bg-tag-green text-success-ink" : status === "rejected" ? "bg-warm text-slate" : "bg-tag-amber text-warning-ink"}`}
 						>
 							{status}
 						</span>
 					</dd>
 				</div>
 			</dl>
-			{signal.explanation && <p className="mt-1 text-sm text-gray-600">{signal.explanation}</p>}
+			{signal.explanation && <p className="mt-1 text-sm text-slate">{signal.explanation}</p>}
 			{error && (
 				<div className="mt-2">
 					<ErrorBox message={error} />
@@ -437,26 +440,28 @@ function SignalCard({
 					maxLength={1000}
 					onChange={(e) => setNote(e.target.value)}
 					placeholder="Note (optional)"
-					className="min-w-0 flex-1 rounded border border-gray-300 px-2 py-1 text-sm"
+					className="h-8 min-w-0 flex-1 rounded-sm border border-rule-strong bg-card px-2 text-sm text-ink"
 				/>
-				<button
+				<Button
 					type="button"
+					variant="outline"
+					size="sm"
 					onClick={() => void review("accepted")}
 					disabled={busy !== null}
 					aria-label={`Accept signal: ${signal.type}`}
-					className="rounded border border-green-600 px-3 py-1 text-sm text-green-800 disabled:opacity-50"
 				>
 					{busy === "accepted" ? "Accepting…" : "Accept"}
-				</button>
-				<button
+				</Button>
+				<Button
 					type="button"
+					variant="outline"
+					size="sm"
 					onClick={() => void review("rejected")}
 					disabled={busy !== null}
 					aria-label={`Dismiss signal: ${signal.type}`}
-					className="rounded border border-gray-400 px-3 py-1 text-sm text-gray-700 disabled:opacity-50"
 				>
 					{busy === "rejected" ? "Dismissing…" : "Dismiss"}
-				</button>
+				</Button>
 			</div>
 		</li>
 	);
@@ -500,14 +505,14 @@ function ContextSection({
 			body = (
 				<div className="space-y-3">
 					{context.brief?.summary ? (
-						<p className="text-sm text-gray-800">{context.brief.summary}</p>
+						<p className="text-sm text-ink">{context.brief.summary}</p>
 					) : (
-						<p className="text-sm text-gray-600">No summary — nothing supported was found.</p>
+						<p className="text-sm text-slate">No summary — nothing supported was found.</p>
 					)}
 					{claims.length > 0 && (
 						<div>
 							<h4 className="text-sm font-semibold">Claims</h4>
-							<ul className="mt-1 list-disc pl-5 text-sm text-gray-700">
+							<ul className="mt-1 list-disc pl-5 text-sm text-slate">
 								{claims.map((claim) => (
 									<li key={claim.text}>{claim.text}</li>
 								))}
@@ -515,7 +520,7 @@ function ContextSection({
 						</div>
 					)}
 					{context.signals.length === 0 ? (
-						<p className="text-sm text-gray-600">
+						<p className="text-sm text-slate">
 							No signals met the evidence bar — this is not an all-clear; see gaps below.
 						</p>
 					) : (
@@ -528,7 +533,7 @@ function ContextSection({
 					{gaps.length > 0 && (
 						<div>
 							<h4 className="text-sm font-semibold">Data gaps</h4>
-							<ul className="mt-1 list-disc pl-5 text-sm text-gray-700">
+							<ul className="mt-1 list-disc pl-5 text-sm text-slate">
 								{gaps.map((g) => (
 									<li key={g}>{g}</li>
 								))}
@@ -538,7 +543,7 @@ function ContextSection({
 					{limitations.length > 0 && (
 						<div>
 							<h4 className="text-sm font-semibold">Limitations</h4>
-							<ul className="mt-1 list-disc pl-5 text-sm text-gray-700">
+							<ul className="mt-1 list-disc pl-5 text-sm text-slate">
 								{limitations.map((l) => (
 									<li key={l}>{l}</li>
 								))}
@@ -555,16 +560,17 @@ function ContextSection({
 						message={`Internal context ${context.errorCode ? `failed (${context.errorCode})` : "failed"}. The case remains fully decidable without it.`}
 					/>
 					{canRetry ? (
-						<button
+						<Button
 							type="button"
+							variant="outline"
+							size="sm"
 							onClick={() => void retry()}
 							disabled={retrying}
-							className="rounded border border-gray-300 px-4 py-2 text-sm disabled:opacity-50"
 						>
 							{retrying ? "Retrying…" : "Retry internal context"}
-						</button>
+						</Button>
 					) : (
-						<p className="text-sm text-gray-600">
+						<p className="text-sm text-slate">
 							Retry is unavailable — context analysis consent was not given or the case no longer
 							awaits review.
 						</p>
@@ -576,14 +582,14 @@ function ContextSection({
 		case "queued":
 		case "running":
 			body = (
-				<output className="block text-sm text-gray-600" aria-live="polite">
+				<output className="block text-sm text-slate" aria-live="polite">
 					Internal context is being analysed… This section updates automatically.
 				</output>
 			);
 			break;
 		case "skipped":
 			body = (
-				<p className="text-sm text-gray-600">
+				<p className="text-sm text-slate">
 					Internal context was skipped — context analysis consent was not given or the stage is
 					disabled. External research above is unaffected.
 				</p>
@@ -591,7 +597,7 @@ function ContextSection({
 			break;
 		default:
 			body = (
-				<p className="text-sm text-gray-600">
+				<p className="text-sm text-slate">
 					Internal context did not run for this case. This is not an all-clear.
 				</p>
 			);
@@ -600,10 +606,10 @@ function ContextSection({
 	return (
 		<section
 			aria-label="Internal context"
-			className="rounded-lg border border-gray-200 bg-gray-50 p-4 sm:p-5"
+			className="rounded-sm border border-rule bg-raised p-4 sm:p-5"
 		>
 			<h3 className="text-base font-semibold">Internal context</h3>
-			<p className="mt-0.5 text-xs text-gray-500">
+			<p className="mt-0.5 text-xs text-slate">
 				Advisory only — evidence-backed cashflow and behaviour signals. It never decides the case,
 				requests documents, or changes any status.
 			</p>
@@ -639,23 +645,23 @@ function PolicyReviewSection({
 			body = (
 				<div className="space-y-3">
 					{policy.brief?.summary ? (
-						<p className="text-sm text-gray-800">{policy.brief.summary}</p>
+						<p className="text-sm text-ink">{policy.brief.summary}</p>
 					) : (
 						items.length === 0 && (
-							<p className="text-sm text-gray-600">No summary — nothing supported was found.</p>
+							<p className="text-sm text-slate">No summary — nothing supported was found.</p>
 						)
 					)}
 					{items.length === 0 ? (
-						<p className="text-sm text-gray-600">
+						<p className="text-sm text-slate">
 							No policy items met the citation bar — this is not an all-clear.
 						</p>
 					) : (
 						<ul className="space-y-3">
 							{items.map((item) => (
-								<li key={item.ref} className="rounded border border-gray-200 bg-white p-3">
-									<p className="text-sm font-medium text-gray-900">
+								<li key={item.ref} className="rounded border border-rule bg-card p-3">
+									<p className="text-sm font-medium text-ink">
 										<span className="font-mono text-xs">{item.ref}</span>{" "}
-										<span className="rounded bg-blue-100 px-1.5 py-0.5 text-xs font-medium text-blue-800">
+										<span className="rounded bg-tag-blue px-1.5 py-0.5 text-xs font-medium text-ink">
 											{item.confidence} confidence
 										</span>
 									</p>
@@ -665,7 +671,7 @@ function PolicyReviewSection({
 									<Link
 										to="/officer/policies"
 										search={{ question: followUpQuestion(item, policy.brief?.summary) }}
-										className="mt-1 inline-block text-sm text-blue-700 hover:underline"
+										className="mt-1 inline-block text-sm text-red-link hover:underline"
 									>
 										Ask follow-up
 									</Link>
@@ -676,7 +682,7 @@ function PolicyReviewSection({
 					{limitations.length > 0 && (
 						<div>
 							<h4 className="text-sm font-semibold">Limitations</h4>
-							<ul className="mt-1 list-disc pl-5 text-sm text-gray-700">
+							<ul className="mt-1 list-disc pl-5 text-sm text-slate">
 								{limitations.map((l) => (
 									<li key={l}>{l}</li>
 								))}
@@ -696,45 +702,45 @@ function PolicyReviewSection({
 			break;
 		case "running":
 			body = (
-				<output className="block text-sm text-gray-600" aria-live="polite">
+				<output className="block text-sm text-slate" aria-live="polite">
 					Policy review is running… This section updates automatically.
 				</output>
 			);
 			break;
 		case "no_match":
 			body = (
-				<p className="text-sm text-gray-600">
+				<p className="text-sm text-slate">
 					No matching policy section found for this case — this is not an all-clear.
 				</p>
 			);
 			break;
 		case "needs_policy_owner":
 			body = (
-				<p className="text-sm text-gray-600">
+				<p className="text-sm text-slate">
 					Policy review needs a policy owner to answer — escalate through the usual review route.
 				</p>
 			);
 			break;
 		case "budget_exceeded":
 			body = (
-				<p className="text-sm text-gray-600">
+				<p className="text-sm text-slate">
 					Policy review hit its budget — the case remains fully decidable without it.
 				</p>
 			);
 			break;
 		case "skipped":
 			body = (
-				<p className="text-sm text-gray-600">
+				<p className="text-sm text-slate">
 					Policy review was skipped — AI research consent was not given or the stage is disabled.
 				</p>
 			);
 			break;
 		case "not_applicable":
-			body = <p className="text-sm text-gray-600">Policy review did not apply to this case.</p>;
+			body = <p className="text-sm text-slate">Policy review did not apply to this case.</p>;
 			break;
 		default:
 			body = (
-				<p className="text-sm text-gray-600">
+				<p className="text-sm text-slate">
 					Policy review did not run for this case. This is not an all-clear.
 				</p>
 			);
@@ -743,15 +749,15 @@ function PolicyReviewSection({
 	return (
 		<section
 			aria-label="Policy review"
-			className="rounded-lg border border-gray-200 bg-gray-50 p-4 sm:p-5"
+			className="rounded-sm border border-rule bg-raised p-4 sm:p-5"
 		>
 			<h3 className="text-base font-semibold">
 				Policy review{" "}
-				<span className="rounded bg-gray-200 px-1.5 py-0.5 align-middle text-xs font-medium text-gray-700">
+				<span className="rounded bg-warm px-1.5 py-0.5 align-middle text-xs font-medium text-slate">
 					Advisory only
 				</span>
 			</h3>
-			<p className="mt-0.5 text-xs text-gray-500">
+			<p className="mt-0.5 text-xs text-slate">
 				Advisory only — cited credit-policy sections for context. It never decides the case.
 			</p>
 			<div className="mt-3">{body}</div>
@@ -921,10 +927,10 @@ export function ResearchPanel({
 	return (
 		<section
 			aria-label="Agent research"
-			className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm sm:p-5"
+			className="rounded-sm border border-rule bg-card p-4 sm:p-5"
 		>
 			<h2 className="text-base font-semibold">Agent research brief</h2>
-			<p className="mt-0.5 text-xs text-gray-500">
+			<p className="mt-0.5 text-xs text-slate">
 				Advisory only — cited public sources for context. It never decides the case.
 			</p>
 
@@ -939,39 +945,41 @@ export function ResearchPanel({
 							// Non-leaking: identical copy whether the case is
 							// unknown or owned by another officer — never a raw
 							// error, code, or id.
-							<p className="mt-3 text-sm text-gray-600" aria-live="polite">
+							<p className="mt-3 text-sm text-slate" aria-live="polite">
 								Research is not available for this case — it may be assigned to another officer.
 							</p>
 						) : audit.data && audit.data.entries.length > 0 ? (
 							<div className="space-y-3">
-								<output className="block text-sm text-gray-600" aria-live="polite">
+								<output className="block text-sm text-slate" aria-live="polite">
 									No research run yet — automatic research did not start one.
 								</output>
 								<AuditEntries entries={audit.data.entries} />
 								<div className="flex flex-wrap gap-2">
 									{runAllowed && (
-										<button
+										<Button
 											type="button"
+											variant="outline"
+											size="sm"
 											onClick={() => void run()}
 											disabled={running}
-											className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
 										>
 											{running ? "Starting…" : "Run research"}
-										</button>
+										</Button>
 									)}
-									<button
+									<Button
 										type="button"
+										variant="outline"
+										size="sm"
 										onClick={() => void audit.refetch()}
 										disabled={audit.isFetching}
 										aria-label="Refresh automatic-research status"
-										className="rounded border border-gray-300 px-4 py-2 text-sm disabled:opacity-50"
 									>
 										{audit.isFetching ? "Refreshing…" : "Refresh status"}
-									</button>
+									</Button>
 								</div>
 							</div>
 						) : audit.isPending || audit.isFetching ? (
-							<p className="text-sm text-gray-600" aria-live="polite">
+							<p className="text-sm text-slate" aria-live="polite">
 								Checking automatic-research status…
 							</p>
 						) : audit.isError ? (
@@ -981,24 +989,25 @@ export function ResearchPanel({
 									onRetry={() => void audit.refetch()}
 								/>
 								{!runAllowed ? (
-									<p className="text-sm text-gray-600">
+									<p className="text-sm text-slate">
 										{consentMissing
 											? "Research is unavailable — AI research consent was not given for this case."
 											: `This case is ${caseStatus} — research runs only while a case awaits review.`}
 									</p>
 								) : (
-									<button
+									<Button
 										type="button"
+										variant="outline"
+										size="sm"
 										onClick={() => void run()}
 										disabled={running}
-										className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
 									>
 										{running ? "Starting…" : "Run research"}
-									</button>
+									</Button>
 								)}
 							</div>
 						) : !runAllowed ? (
-							<p className="mt-3 text-sm text-gray-600">
+							<p className="mt-3 text-sm text-slate">
 								{consentMissing
 									? "Research is unavailable — AI research consent was not given for this case."
 									: `This case is ${caseStatus} — research runs only while a case awaits review.`}
@@ -1008,14 +1017,15 @@ export function ResearchPanel({
 								title="No research run yet"
 								hint="Run an advisory brief on cited public sources."
 								action={
-									<button
+									<Button
 										type="button"
+										variant="outline"
+										size="sm"
 										onClick={() => void run()}
 										disabled={running}
-										className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
 									>
 										{running ? "Starting…" : "Run research"}
-									</button>
+									</Button>
 								}
 							/>
 						)
@@ -1046,14 +1056,12 @@ export function ResearchPanel({
 				</div>
 			) : status === "queued" || status === "running" ? (
 				<div className="mt-3">
-					<output className="block text-sm text-gray-600" aria-live="polite">
+					<output className="block text-sm text-slate" aria-live="polite">
 						Research {status}… checking cited public sources. This panel updates automatically.
 					</output>
 					{data?.run.trigger === "auto" && (
-						<p className="mt-1 text-xs text-gray-500">
-							<span className="rounded bg-blue-100 px-1.5 py-0.5 font-medium text-blue-800">
-								auto
-							</span>{" "}
+						<p className="mt-1 text-xs text-slate">
+							<span className="rounded bg-tag-blue px-1.5 py-0.5 font-medium text-ink">auto</span>{" "}
 							Started automatically on referral.
 						</p>
 					)}
@@ -1064,16 +1072,17 @@ export function ResearchPanel({
 						message={`Research ${data?.run.errorCode ? `failed (${data.run.errorCode})` : "failed"}. The case remains fully decidable without it.`}
 					/>
 					{runAllowed ? (
-						<button
+						<Button
 							type="button"
+							variant="outline"
+							size="sm"
 							onClick={() => void run()}
 							disabled={running}
-							className="rounded border border-gray-300 px-4 py-2 text-sm disabled:opacity-50"
 						>
 							{running ? "Retrying…" : "Retry research"}
-						</button>
+						</Button>
 					) : (
-						<p className="text-sm text-gray-600">
+						<p className="text-sm text-slate">
 							{consentMissing || consentBlocked
 								? "Research is unavailable — AI research consent was not given for this case."
 								: `This case is ${caseStatus} — research runs only while a case awaits review.`}
@@ -1091,9 +1100,9 @@ export function ResearchPanel({
 			) : (
 				<div className="mt-3 space-y-4">
 					{data?.brief?.summary ? (
-						<p className="text-sm text-gray-800">{data.brief.summary}</p>
+						<p className="text-sm text-ink">{data.brief.summary}</p>
 					) : (
-						<p className="text-sm text-gray-600">No summary — nothing supported was found.</p>
+						<p className="text-sm text-slate">No summary — nothing supported was found.</p>
 					)}
 
 					{(() => {
@@ -1115,7 +1124,7 @@ export function ResearchPanel({
 					{(data?.brief?.contradictions?.length ?? 0) > 0 && (
 						<div>
 							<h3 className="text-sm font-semibold">Contradictions</h3>
-							<ul className="mt-1 list-disc pl-5 text-sm text-gray-700">
+							<ul className="mt-1 list-disc pl-5 text-sm text-slate">
 								{data?.brief?.contradictions?.map((c) => (
 									<li key={c.description}>{c.description}</li>
 								))}
@@ -1125,7 +1134,7 @@ export function ResearchPanel({
 					{(data?.brief?.unknowns?.length ?? 0) > 0 && (
 						<div>
 							<h3 className="text-sm font-semibold">Unknowns</h3>
-							<ul className="mt-1 list-disc pl-5 text-sm text-gray-700">
+							<ul className="mt-1 list-disc pl-5 text-sm text-slate">
 								{data?.brief?.unknowns?.map((u) => (
 									<li key={u}>{u}</li>
 								))}
@@ -1135,7 +1144,7 @@ export function ResearchPanel({
 					{(data?.brief?.questionsForOfficer?.length ?? 0) > 0 && (
 						<div>
 							<h3 className="text-sm font-semibold">Questions for the officer</h3>
-							<ul className="mt-1 list-disc pl-5 text-sm text-gray-700">
+							<ul className="mt-1 list-disc pl-5 text-sm text-slate">
 								{data?.brief?.questionsForOfficer?.map((q) => (
 									<li key={q}>{q}</li>
 								))}
@@ -1151,18 +1160,16 @@ export function ResearchPanel({
 					/>
 					<PolicyReviewSection applicationId={applicationId} policy={data?.policy} />
 
-					<p className="text-xs text-gray-500">
+					<p className="text-xs text-slate">
 						What was searched: {data?.usage?.searches ?? 0} queries · {data?.usage?.extracts ?? 0}{" "}
 						sources read · model {data?.run.model ?? "?"} · as of {formatDateOnly(data?.run.asOf)} ·
 						run {shortId(data?.run.id ?? "")}
 						{data?.run.observability === "degraded" ? " · observability degraded" : ""}.
 					</p>
-					<p className="text-xs text-gray-500" aria-live="polite">
+					<p className="text-xs text-slate" aria-live="polite">
 						{data?.run.trigger === "auto" ? (
 							<span>
-								<span className="rounded bg-blue-100 px-1.5 py-0.5 font-medium text-blue-800">
-									auto
-								</span>{" "}
+								<span className="rounded bg-tag-blue px-1.5 py-0.5 font-medium text-ink">auto</span>{" "}
 								Started automatically on referral · requested by{" "}
 								{data?.run.requestedByRole ?? "service"}.
 							</span>
@@ -1178,12 +1185,12 @@ export function ResearchPanel({
 							if (e.currentTarget.open) setAuditOpen(true);
 						}}
 					>
-						<summary className="cursor-pointer text-sm text-blue-700 hover:underline">
+						<summary className="cursor-pointer text-sm text-red-link hover:underline">
 							View auto-trigger audit
 						</summary>
 						<div className="mt-2 space-y-2">
 							{audit.isPending || audit.isFetching ? (
-								<p className="text-sm text-gray-600">Loading automatic-research status…</p>
+								<p className="text-sm text-slate">Loading automatic-research status…</p>
 							) : audit.isError ? (
 								<ErrorBox
 									message={apiErrorMessage(audit.error)}
@@ -1197,7 +1204,7 @@ export function ResearchPanel({
 										onClick={() => void audit.refetch()}
 										disabled={audit.isFetching}
 										aria-label="Refresh automatic-research status"
-										className="text-sm text-blue-700 hover:underline disabled:opacity-50"
+										className="text-sm text-red-link hover:underline disabled:opacity-50"
 									>
 										{audit.isFetching ? "Refreshing…" : "Refresh status"}
 									</button>
@@ -1206,13 +1213,13 @@ export function ResearchPanel({
 						</div>
 					</details>
 					{viewError && (
-						<p className="text-xs text-gray-500">
+						<p className="text-xs text-slate">
 							{viewError}{" "}
 							<button
 								type="button"
 								onClick={() => void retryView()}
 								disabled={viewRetrying}
-								className="text-blue-700 hover:underline disabled:opacity-50"
+								className="text-red-link hover:underline disabled:opacity-50"
 							>
 								{viewRetrying ? "Retrying…" : "Retry now"}
 							</button>

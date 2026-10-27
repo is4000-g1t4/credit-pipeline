@@ -16,15 +16,21 @@ import {
 	requireService,
 	zodFields,
 	type ServiceApp,
-	type ServiceVariables,
 } from "@credit/service-kit";
-import { caseFactsSchema, type CaseFacts } from "@credit/core";
+import { caseFactsSchema, reportingDay, type CaseFacts } from "@credit/core";
 import { asc, count, eq, inArray, ne } from "drizzle-orm";
 import { Hono } from "hono";
-import { createMiddleware } from "hono/factory";
 import type { Sql } from "postgres";
 import { z } from "zod";
 import { isUuid, UUID_RE } from "../ids.js";
+import {
+	clientNameFor,
+	flagsForQueueItem,
+	riskForScore,
+	summarizeQueue,
+	topFactorCodes,
+	QUEUE_CAP,
+} from "./queue-summary.js";
 import {
 	createLegalHold,
 	grantAssignedOfficer,
@@ -120,15 +126,19 @@ export function internalRoutes(deps: InternalRouteDeps): ServiceApp {
 
 	// Shared review queue (SPEC FR-7.1): pending oldest first, with
 	// score/grade + top reasons. Shape matches the former review-service
-	// queue so the UI contract is unchanged.
+	// queue so the UI contract is unchanged. UBS §1 adds clientName, city,
+	// risk, flags and a bounded summary (max 100 items, id tiebreaker).
 	app.get("/internal/review/queue", officer, async (c) => {
 		const now = Date.now();
-		const pending = await db
-			.select()
-			.from(applications)
-			.where(eq(applications.status, "pending_review"))
-			.orderBy(asc(applications.submittedAt))
-			.limit(100);
+		const [pending, pendingCountRows] = await Promise.all([
+			db
+				.select()
+				.from(applications)
+				.where(eq(applications.status, "pending_review"))
+				.orderBy(asc(applications.submittedAt), asc(applications.id))
+				.limit(QUEUE_CAP),
+			db.select({ n: count() }).from(applications).where(eq(applications.status, "pending_review")),
+		]);
 		const ids = pending.map((a) => a.id);
 		const [scoreRows, policyRows] =
 			ids.length === 0
@@ -142,36 +152,43 @@ export function internalRoutes(deps: InternalRouteDeps): ServiceApp {
 					]);
 		const scoreByApp = new Map(scoreRows.map((s) => [s.applicationId, s]));
 		const policyByApp = new Map(policyRows.map((p) => [p.applicationId, p]));
-		return c.json({
-			items: pending.map((a) => {
-				const score = scoreByApp.get(a.id);
-				const policy = policyByApp.get(a.id);
-				const reasons = Array.isArray(policy?.reasons)
-					? (policy.reasons as Array<{ code: string }>).map((r) => r.code)
-					: [];
-				const factors = Array.isArray(score?.factors)
-					? (score.factors as Array<{ code: string; points: number }>)
-					: [];
-				const topReasons = [...factors]
-					.sort((x, y) => Math.abs(y.points) - Math.abs(x.points))
-					.slice(0, 5)
-					.map((f) => f.code);
-				return {
-					id: a.id,
-					reference: a.reference,
-					type: a.type,
-					product: a.product,
-					amountCents: a.amountCents,
-					termMonths: a.termMonths,
-					// T17: drafts carry null; queue rows are submitted (non-null).
-					submittedAt: a.submittedAt?.toISOString() ?? null,
-					waitMs: a.submittedAt ? now - a.submittedAt.getTime() : 0,
-					score: score?.score ?? null,
-					grade: score?.grade ?? null,
+		const items = pending.map((a) => {
+			const score = scoreByApp.get(a.id);
+			const policy = policyByApp.get(a.id);
+			const reasons = Array.isArray(policy?.reasons)
+				? (policy.reasons as Array<{ code: string }>).map((r) => r.code)
+				: [];
+			const factors = Array.isArray(score?.factors)
+				? (score.factors as Array<{ code: string; points: number }>)
+				: [];
+			const identity = a.identity as { fullName?: string; city?: string };
+			const business = a.business as { companyName?: string } | null;
+			return {
+				id: a.id,
+				reference: a.reference,
+				clientName: clientNameFor(a.type, identity, business),
+				city: identity.city ?? null,
+				type: a.type,
+				product: a.product,
+				amountCents: a.amountCents,
+				termMonths: a.termMonths,
+				// T17: drafts carry null; queue rows are submitted (non-null).
+				submittedAt: a.submittedAt?.toISOString() ?? null,
+				waitMs: a.submittedAt ? now - a.submittedAt.getTime() : 0,
+				score: score?.score ?? null,
+				grade: score?.grade ?? null,
+				risk: riskForScore(score?.score ?? null),
+				flags: flagsForQueueItem(
+					typeof policy?.outcome === "string" ? policy.outcome : null,
 					reasons,
-					topReasons,
-				};
-			}),
+				),
+				reasons,
+				topReasons: topFactorCodes(factors),
+			};
+		});
+		return c.json({
+			items,
+			summary: summarizeQueue(items, pendingCountRows[0]?.n ?? items.length),
 		});
 	});
 
@@ -245,6 +262,15 @@ export function internalRoutes(deps: InternalRouteDeps): ServiceApp {
 			       count(*)::int AS decided
 			FROM applications WHERE decided_at IS NOT NULL
 		`) as Array<{ avg_seconds: string | null; decided: number }>;
+		// UBS §2: decisions recorded today in the Asia/Singapore reporting
+		// day (bounded both sides). Booking inserts the row, so this is the
+		// decision-record day, not an officer-click timestamp.
+		const day = reportingDay(new Date());
+		const decidedToday = (await sql`
+			SELECT count(*)::int AS n FROM decisions
+			WHERE created_at >= (${day}::date::timestamp AT TIME ZONE 'Asia/Singapore')
+			  AND created_at < ((${day}::date + 1)::timestamp AT TIME ZONE 'Asia/Singapore')
+		`) as Array<{ n: number }>;
 		return c.json({
 			applications: Object.fromEntries(appCounts.map((r) => [r.status, r.n])),
 			avgDecisionSeconds:
@@ -252,6 +278,7 @@ export function internalRoutes(deps: InternalRouteDeps): ServiceApp {
 					? null
 					: Number(timing[0].avg_seconds),
 			decidedApplications: timing[0]?.decided ?? 0,
+			decisionsToday: decidedToday[0]?.n ?? 0,
 		});
 	});
 

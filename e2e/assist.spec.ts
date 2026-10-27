@@ -203,6 +203,7 @@ test("officer sees the drafted memo and its trace in the review UI", async ({ pa
 
 	await uiLogin(page, "officer@example.com");
 	await gotoHydrated(page, `/officer/review/${appId}`);
+	await page.getByRole("button", { name: "Memo" }).click();
 	await expect(page.getByRole("heading", { name: "Credit memo" })).toBeVisible();
 	await expect(page.getByText("Agent trace (metadata)")).toBeVisible();
 });

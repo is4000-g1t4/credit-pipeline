@@ -11,11 +11,7 @@ import {
 } from "@credit/service-kit";
 import type { ApplicationsEnv } from "./env.js";
 import { assistRoutes, type AssistConfig, type MemoAgentRunner } from "./assist/index.js";
-import {
-	buildDocumentService,
-	configFromEnv,
-	type DocumentAdapters,
-} from "./documents/index.js";
+import { buildDocumentService, configFromEnv, type DocumentAdapters } from "./documents/index.js";
 import { documentRoutes } from "./documents/routes.js";
 import {
 	createDocumentMutationHandler,
@@ -90,6 +86,8 @@ export function createApp(deps: ApplicationsDeps): ServiceApp {
 		gateway: deps.gateway,
 		logger: deps.logger,
 		documentsEnabled: documentConfig.featureEnabled,
+		fraudReviewEnabled:
+			deps.integrity?.config?.fraudReviewEnabled ?? deps.env.integrity.fraudReviewEnabled,
 	});
 	routes.route(
 		"/",

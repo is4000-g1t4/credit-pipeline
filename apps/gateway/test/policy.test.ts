@@ -110,6 +110,30 @@ describe("policy gateway routes", () => {
 		expect(captured).toHaveLength(3);
 	});
 
+	it("does not throttle policy reads or version writes", async () => {
+		const captured: StubRequest[] = [];
+		const { app, officers, cookieFor } = setupStubApp(captured, { policyLimit: 1 });
+		const cookie = cookieFor(officers[0].id);
+		// Spend the ask budget.
+		await app.request("/api/policy/ask", {
+			method: "POST",
+			headers: { cookie, "content-type": "application/json" },
+			body: "{}",
+		});
+		// Register/section reads keep working past the ask budget.
+		for (const path of ["/api/policy/register", "/api/policy/sections/v1/s1"]) {
+			const res = await app.request(path, { headers: { cookie } });
+			expect(res.status).toBe(200);
+		}
+		const write = await app.request("/api/policy/versions/abc/approve", {
+			method: "POST",
+			headers: { cookie, "content-type": "application/json" },
+			body: "{}",
+		});
+		expect(write.status).toBe(200);
+		expect(captured).toHaveLength(4);
+	});
+
 	it("preserves policy paths verbatim and leaves other services on their hosts", async () => {
 		const captured: StubRequest[] = [];
 		const { app, officers, cookieFor } = setupStubApp(captured);

@@ -12,7 +12,7 @@ For ports, base URLs, and secrets, see `../reference/configuration.md`. For requ
 - Error envelope for every 4xx/5xx: `{ "error": { "code", "message", "fields?" } }`. `fields` maps a field path to messages. No stack traces.
 - Session: cookie `session`, HMAC-signed, 7-day expiry, `HttpOnly`, `SameSite=Lax`, `Path=/`. The `Secure` flag applies in production only. There is no signup route.
 - Body limit: 100,000 bytes (`JSON_BODY_LIMIT` in `packages/service-kit/src/service.ts`) on `/api/*`. Larger bodies return 413 `BODY_TOO_LARGE`. The only exception is the `POST /api/applications/:id/documents` upload route, which allows `MAX_UPLOAD_BYTES` / `DOCUMENT_UPLOAD_MAX_BYTES` (11,000,000 bytes multipart envelope for the 10 MB `DOCUMENT_MAX_BYTES` file cap).
-- Rate limits are in-memory per gateway process: login 10/min per email plus 30/min per IP (the web proxy shares one peer IP, so the per-email cap is the real guard); application submit 5/min per user. Excess returns 429 `RATE_LIMITED`.
+- Rate limits are in-memory per gateway process: login 10/min per email plus 30/min per IP (the web proxy shares one peer IP, so the per-email cap is the real guard); application submit 5/min per user; policy ask 10/min per officer. Excess returns 429 `RATE_LIMITED`.
 - In production (`NODE_ENV=production`), non-GET/HEAD/OPTIONS requests need `Origin` exactly equal to `WEB_ORIGIN`. Other origins return 403 `ORIGIN_FORBIDDEN`.
 - Responses carry `x-request-id`. Send one to correlate logs; the gateway generates one when missing.
 - The gateway preserves path and query when proxying and passes the upstream status and body through. A transport failure returns 502 `BAD_GATEWAY`.
@@ -70,13 +70,14 @@ No session or unknown user returns 401 `UNAUTHENTICATED`.
 | Method and path                               | Access                               | Purpose                                                                                                         |
 | --------------------------------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
 | `POST /api/applications`                      | Applicant                            | Submit an application (needs `Idempotency-Key`; 409 `DRAFT_REQUIRED` for profiled customers)                    |
-| `POST /api/applications/drafts`               | Applicant                            | Create a draft, no workflow/outbox (needs `Idempotency-Key`)                                                    |
+| `POST /api/applications/drafts`               | Applicant                            | Create a draft, no workflow/outbox (needs `Idempotency-Key`); returns `{ id, reference, updatedAt }`            |
 | `POST /api/applications/:id/submit`           | Applicant                            | Submit a draft after the requirements gate (needs `Idempotency-Key`)                                            |
+| `PATCH /api/applications/:id/draft`           | Applicant (owner)                    | Update a draft with the `expectedUpdatedAt` concurrency token                                                   |
 | `GET /api/applications/:id/requirements`      | Owner / assigned officer (submitted) | Requirements checklist: `readyToSubmit`, blockers, warnings, reusable evidence (owner only — officers get `[]`) |
 | `PATCH /api/applications/:id/context-consent` | Applicant (owner)                    | Set context-analysis consent (`context-consent-v1`)                                                             |
 | `POST /api/applications/:id/documents/reuse`  | Applicant (owner)                    | Copy clean/fresh customer evidence into app docs (201 copy, 200 replay)                                         |
 | `GET /api/applications`                       | User                                 | List applications, newest first, cursor pages (officers exclude drafts)                                         |
-| `GET /api/applications/:id`                   | User                                 | Full case detail; gateway composes the `loan` block (officers 404 on drafts)                                    |
+| `GET /api/applications/:id`                   | User                                 | Case detail: officer full shape, applicant-safe projection; gateway composes `loan` (officers 404 on drafts)    |
 | `GET /api/customer/profile`                   | Applicant (owner)                    | Profile, masked accounts, KYC freshness, reusable evidence metadata                                             |
 | `GET /api/customer/documents`                 | Applicant (owner)                    | Reusable evidence metadata and freshness; no bytes/text                                                         |
 
@@ -163,25 +164,80 @@ Response `200`:
 			"amountCents": 1200000,
 			"termMonths": 48,
 			"submittedAt": "<iso>",
-			"decidedAt": "<iso>"
+			"decidedAt": "<iso>",
+			"updatedAt": "<iso>"
 		}
 	],
 	"nextCursor": "<iso>,<uuid>"
 }
 ```
 
-`nextCursor` is `null` when the page is not full. Pass it as `cursor` for the next page.
+`nextCursor` is `null` when the page is not full. Pass it as `cursor` for the next page. `updatedAt` is the draft-update concurrency token (also present on submitted rows).
 
 ### Read application detail
 
-Response `200` contains `application`, `checks`, `externalReports`, `documents`, `score`, `policyEvaluation`, `decision`, and `timeline`. Key nested fields:
+Access changes the shape:
 
-- `application`: list fields plus `identity`, `financial`, `business`, `consents`, `purpose`, `workflowStartedAt`, `failedReason`.
-- `checks[]`: `type`, `status`, `details`. `externalReports[]`: `provider`, `kind`, `version`, `payload`. `documents[]`: `kind`, `status`, `note`.
-- `score`: `modelVersion`, `score`, `grade`, `components`, `factors`, `affordability` (null until scored). `policyEvaluation`: `policyVersion`, `outcome`, `reasons[]`, `maxAmountCents`, `inputs` (null until evaluated). `decision`: `outcome`, `decidedBy`, `approvedAmountCents`, `termMonths`, `rateBps`, `reasons` (null until decided). `notes`, `officerUserId`, `requestId`, and `snapshot` are officer-only: applicants see the safe fields above (`id`, `outcome`, `decidedBy`, terms, `rateBps`, `reasons`, `decidedAt`).
-- `timeline[]`: `at`, `actor`, `action`, `entity`, `payload` (audit entries, newest first).
+- **Officers** get the full internal case: `application`, `checks`, `externalReports`, `documents`, `score`, `policyEvaluation`, `decision`, `timeline`, and `fraudReview`. Officers ignore `view` and always get this shape.
+- **Applicant owners** get the client-safe projection by default. `?view=client` is an optional assertion; any other non-empty `view` is 400 `VALIDATION_ERROR`. The safe response omits `score`, `policyEvaluation`, `externalReports` and raw audit rows.
+- Cross-applicant reads and bad ids return 404 `NOT_FOUND`, never 403. Officers get 404 on drafts.
 
-The gateway adds `loan`:
+Applicant-safe response `200`:
+
+```json
+{
+	"application": {
+		"id": "<uuid>",
+		"reference": "<reference>",
+		"type": "sme",
+		"product": "sme_term_loan",
+		"status": "pending_review",
+		"amountCents": 6000000,
+		"termMonths": 60,
+		"purpose": "Working capital",
+		"identity": { "...": "the submitted identity block" },
+		"financial": null,
+		"business": { "...": "the submitted SME block" },
+		"consents": [true, true, true],
+		"aiResearchConsent": true,
+		"documentProcessingConsent": true,
+		"documentConsentAt": "<iso>",
+		"documentConsentVersion": "document-consent-v1",
+		"contextAnalysisConsent": false,
+		"contextConsentAt": null,
+		"contextConsentVersion": null,
+		"documentsEnabled": true,
+		"submittedAt": "<iso>",
+		"decidedAt": null,
+		"updatedAt": "<iso>",
+		"failedReason": null,
+		"workflowStartedAt": null
+	},
+	"checks": [{ "type": "kyc", "status": "passed" }],
+	"documents": [{ "kind": "bank_statement", "status": "ready", "note": null }],
+	"decision": null,
+	"timeline": [{ "at": "<iso>", "action": "application.submitted" }],
+	"failure": null,
+	"loan": null
+}
+```
+
+Safe-projection rules:
+
+- `application` is an explicit allowlist: the keys shown above only. `failedReason` and `workflowStartedAt` are always `null` for applicants.
+- `checks[]`: `type` and `status` only, no `details`.
+- `documents[]`: `kind`, `status`, `note` only. No row ids, application ids, timestamps, storage fields or fingerprints.
+- `decision`: applicant-safe fields only (`id`, `outcome`, `decidedBy`, `approvedAmountCents`, `termMonths`, `rateBps`, `reasons`, `decidedAt`). No notes, snapshot, officer user id or request id.
+- `timeline[]`: `at` and `action` only, filtered to `application.submitted`, `decision.made`, `application.booked`, `application.failed`, `review.expired`. No actor, entity or payload.
+- `failure`: `null` unless the case is terminal. `{ "code": "PROCESSING_FAILED", "message": "..." }` for `failed`; `{ "code": "REVIEW_EXPIRED", "message": "..." }` for `expired`. The internal `failedReason` is never returned.
+- `loan` is added by the gateway (below). `score`, `policyEvaluation`, `externalReports` and raw audit rows are absent.
+
+Officer-only extras:
+
+- Full `checks[].details`, `externalReports[]`, `score`, `policyEvaluation`, the full `decision` row (notes/snapshot/officer id/request id) and the raw audit `timeline[]` (`at`, `actor`, `action`, `entity`, `payload`).
+- `fraudReview`: `{ "id", "status", "severity", "reasonCode" }` for the newest `open`/`needs_info` fraud review, or `null`. It is returned only when fraud review is enabled **and** the officer has an active assigned case grant; unassigned officers get `null` for this field, not a 404 for the case. Read-only; no note, signal codes or document refs.
+
+The gateway adds `loan` to both shapes:
 
 ```json
 {
@@ -193,7 +249,29 @@ The gateway adds `loan`:
 }
 ```
 
-`loan` is `null` when no loan is booked yet. A loan lookup failure other than 404 returns 502 `BAD_GATEWAY`. Cross-applicant reads and bad ids return 404 `NOT_FOUND`, never 403.
+`loan` is `null` when no loan is booked yet. A loan lookup failure other than 404 returns 502 `BAD_GATEWAY`.
+
+### Update a draft
+
+`PATCH /api/applications/:id/draft` — applicant owner only. Officers and service callers get 403 `FORBIDDEN`; other applicants and bad ids get 404 `NOT_FOUND`. No workflow, outbox event or idempotency key is used.
+
+Request body:
+
+```json
+{
+	"expectedUpdatedAt": "<iso>",
+	"application": { "...same fields as the create/submit body..." }
+}
+```
+
+- `expectedUpdatedAt`: the `updatedAt` returned by draft create, list or detail. It is compared at millisecond precision under a per-application advisory lock. A stale value returns 409 `DRAFT_CONFLICT` with `fields.updatedAt` set to the current token; reload and retry with it.
+- `application`: the same strict `applicationCreateSchema` as create, including `type`/`product` pairing, amount/term bounds, the three required `consents`, adult dob and signed-in email.
+- Read→write mapping: detail returns `financial` (individual) and `business` (SME), while this body expects `individual` and `sme`. Send the block the `type` requires.
+- Consent fields absent mean **unchanged** (stored values are merged before validation). `aiResearchConsent` may change here. `documentProcessingConsent` or `contextAnalysisConsent` supplied with a different value returns 409 `CONSENT_ROUTE_REQUIRED`; use `PATCH /api/applications/:id/document-consent` or `PATCH /api/applications/:id/context-consent` instead (those routes 404 when the document feature is off).
+- `profileConfirmations`: absent means unchanged; supplied (including `[]`) replaces the set. Unknown fields return 422 `INVALID_FIELD`.
+- Only `draft` rows can be updated (409 `NOT_DRAFT`). Under-18 dob returns 400 `VALIDATION_ERROR` (`identity.dob`); an email that differs from the session email returns 400 `VALIDATION_ERROR` (`identity.email`).
+- Success `200`: `{ "id": "<uuid>", "reference": "<reference>", "updatedAt": "<iso>" }`. Use the returned `updatedAt` for the next edit. A retry after a successful update therefore returns 409 `DRAFT_CONFLICT`; reload.
+- The same adult/email checks run again at submit, so a corrupt draft cannot be submitted.
 
 ## Review
 
@@ -212,6 +290,8 @@ Queue response `200`:
 		{
 			"id": "<uuid>",
 			"reference": "<reference>",
+			"clientName": "BreadTalk Demo Pte Ltd",
+			"city": "Singapore",
 			"type": "sme",
 			"product": "sme_term_loan",
 			"amountCents": 6000000,
@@ -220,12 +300,32 @@ Queue response `200`:
 			"waitMs": 12345,
 			"score": 711,
 			"grade": "B",
+			"risk": "medium",
+			"flags": { "referred": true, "aboveAutoLimit": true },
 			"reasons": ["AMOUNT_ABOVE_AUTO_LIMIT"],
-			"topReasons": ["AMOUNT_ABOVE_AUTO_LIMIT"]
+			"topReasons": ["SECTOR_RISK"]
 		}
-	]
+	],
+	"summary": {
+		"total": 1,
+		"shown": 1,
+		"truncated": false,
+		"medianWaitMs": 12345,
+		"over24hCount": 0,
+		"referredCount": 1,
+		"aboveAutoLimitCount": 1,
+		"oldestCaseId": "<uuid>"
+	}
 }
 ```
+
+Queue rules:
+
+- Items stay oldest first, with `id` as a tiebreaker, and are capped at 100. `clientName` is the SME company name or the applicant full name; `city` is the identity city.
+- `risk`: `low` for a score ≥ 760, `medium` for ≥ 640, `high` otherwise; a missing score is `medium`. The queue does **not** disclose fraud-review existence or severity.
+- `flags.referred`: policy outcome `refer` or any policy reasons. `flags.aboveAutoLimit`: the policy reasons include `AMOUNT_ABOVE_AUTO_LIMIT`. `topReasons` are score factor codes, not policy reasons.
+- `summary` is computed over the returned (max 100) items. `shown = items.length`; when fewer than 100 items are returned the queue is complete and `total = shown`; otherwise `total = max(pending count, shown)`. `truncated = total > shown`. `oldestCaseId` is `null` on an empty queue. The summary is a bounded snapshot, not a full-book count.
+- No fraud fields are exposed here; use `/api/fraud-review/queue` (assigned cases) or the officer case detail `fraudReview`.
 
 Decision body:
 
@@ -290,11 +390,38 @@ Advisory boundary: research never approves, declines, scores, prices, or sets te
 
 | Method and path                                   | Access  | Purpose                                  |
 | ------------------------------------------------- | ------- | ---------------------------------------- |
-| `GET /api/loans`                                  | User    | List loans (officer: all)                |
+| `GET /api/loans`                                  | User    | List loans (officer: all), bounded pages |
 | `GET /api/loans/:id`                              | User    | Loan with installments, payments, alerts |
 | `POST /api/loans/:id/alerts/:alertId/acknowledge` | Officer | Acknowledge one open alert               |
 
-`GET /api/loans` response `200`: `{ "items": [loan] }` where each loan has `id`, `applicationId`, `reference`, `principalCents`, `termMonths`, `rateBps`, `monthlyPaymentCents`, `status`, `outstandingCents`, `nextDueDate`, `disbursedAt`.
+`GET /api/loans` query params: `limit` (1-100, default 50), `offset` (0-1000, default 0), optional `status` (`active`, `overdue`, `closed`). Unknown values return 400 `VALIDATION_ERROR`. Response `200`:
+
+```json
+{
+	"items": [
+		{
+			"id": "<uuid>",
+			"applicationId": "<uuid>",
+			"reference": "<reference>",
+			"principalCents": 5000000,
+			"termMonths": 60,
+			"rateBps": 780,
+			"monthlyPaymentCents": 101000,
+			"status": "active",
+			"outstandingCents": 4200000,
+			"nextDueDate": "<iso-date>",
+			"disbursedAt": "<iso>"
+		}
+	],
+	"total": 148,
+	"limit": 50,
+	"offset": 0,
+	"nextOffset": 50,
+	"truncated": true
+}
+```
+
+Items are ordered by `disbursed_at DESC, id DESC`. `nextOffset` is `null` at the end or when the next page would start past the 1000 offset cap; `truncated = offset + items.length < total` tells the client the page is not the end. The cap is deliberate: no unbounded whole-book download and no deep-offset scan in this slice.
 
 `GET /api/loans/:id` response `200`: `{ "loan", "installments", "payments", "alerts" }`. `loan` has the list fields above. `installments[]` has `id`, `number`, `dueDate`, `principalCents`, `interestCents`, `totalCents`, `paidCents`, `status`, `paidAt`. Pass an entry's `id` as `installmentId` to demo pay. `payments[]` has `id`, `installmentId`, `amountCents`, `paidAt`, `source`. `alerts[]` has `id`, `installmentId`, `type`, `severity`, `status`, `acknowledgedBy`. Cross-applicant reads and bad ids return 404 `NOT_FOUND`.
 
@@ -343,11 +470,12 @@ Age request body: `{ "days": 40 }` (`days` 0-3650; optional `installmentId` ages
 
 Officer only.
 
-| Method and path              | Purpose                                        |
-| ---------------------------- | ---------------------------------------------- |
-| `GET /api/dashboard/summary` | Application/loan counts, decision timing, feed |
+| Method and path              | Purpose                                         |
+| ---------------------------- | ----------------------------------------------- |
+| `GET /api/dashboard/summary` | Application/loan counts, decision timing, feed  |
+| `GET /api/portfolio/summary` | Current-book aggregates, 12-week series, alerts |
 
-Response `200`:
+`GET /api/dashboard/summary` response `200`:
 
 ```json
 {
@@ -355,6 +483,7 @@ Response `200`:
 	"loans": { "active": 2 },
 	"avgDecisionSeconds": 12.5,
 	"decidedApplications": 3,
+	"decisionsToday": 4,
 	"recentFeed": [
 		{
 			"id": "<uuid>",
@@ -368,17 +497,55 @@ Response `200`:
 }
 ```
 
-The feed holds the 20 most recent events from the portfolio read model.
+The feed holds the 20 most recent events from the portfolio read model. `decisionsToday` counts `decisions.created_at` rows in the current **Asia/Singapore** reporting day (bounded to `[start, start + 1 day)`). Approvals are recorded by the booking activity, so a booking that crosses midnight counts on the insert day; this is “decision rows recorded today”, not a separate officer-click timestamp.
+
+`GET /api/portfolio/summary` response `200`:
+
+```json
+{
+	"principalCents": 367000000,
+	"outstandingCents": 321000000,
+	"overdueExposureCents": 5990400,
+	"activeLoans": 148,
+	"overdueLoans": 2,
+	"openAlerts": 3,
+	"alertsTotal": 3,
+	"alertsTruncated": false,
+	"coverageRatio": null,
+	"series": [{ "weekStart": "2026-08-03", "bookedCents": 210000000 }],
+	"composition": [{ "product": "sme_term_loan", "outstandingCents": 173000000 }],
+	"alerts": [
+		{
+			"id": "<uuid>",
+			"loanId": "<uuid>",
+			"reference": "<application-reference>",
+			"type": "payment_overdue",
+			"severity": "high",
+			"status": "open",
+			"createdAt": "<iso>"
+		}
+	]
+}
+```
+
+- The book population is `status IN ('active','overdue')`: `principalCents`, `outstandingCents`, `activeLoans` and `composition` exclude closed loans. `activeLoans` includes overdue loans; `overdueLoans` is the overdue subset.
+- `overdueExposureCents` is the outstanding principal of overdue loans (the schema has no 30+ DPD field; the label is “Overdue exposure”).
+- `series` has 12 weekly buckets in `Asia/Singapore`, Monday-start, oldest first, from `disbursed_at` and summed by principal. Closed loans remain in the weeks they were booked; missing weeks are zero-filled.
+- `composition` groups outstanding principal by product over the current book.
+- `alerts` lists up to 20 open alerts on current-book loans, newest first; `openAlerts`/`alertsTotal` count the same population and `alertsTruncated = alertsTotal > alerts.length`. Acknowledge with the existing alert route.
+- `coverageRatio` is `null` until a real provision source exists; the UI renders “—”. Do not invent a value.
 
 ## Policy
 
 Officer only. All endpoints proxy to the policy service (`:4006`). Applicants
-get 403 on every `/api/policy/*` route. The gateway applies a per-officer rate
-limit (10/min, 429 `RATE_LIMITED`) and a 75 s upstream timeout.
+get 403 on every `/api/policy/*` route. The per-officer 10/min limiter and 429
+`RATE_LIMITED` apply only to `POST /api/policy/ask`; register/section reads and
+version writes are not AI-throttled. The upstream timeout is 75 s.
 
 | Method and path                                  | Purpose                                                           |
 | ------------------------------------------------ | ----------------------------------------------------------------- |
 | `POST /api/policy/ask`                           | Cited answer from the approved policy corpus (navigator)          |
+| `GET /api/policy/register`                       | Current approved policy documents (ACL-filtered metadata)         |
 | `GET /api/policy/sections/:versionId/:sectionId` | One approved section for the citation drawer (`?token=` required) |
 | `POST /api/policy/versions/:id/submit`           | Submit a draft version for approval (policy admin only)           |
 | `POST /api/policy/versions/:id/approve`          | Approve a submitted version (policy admin only, no self-approval) |
@@ -404,7 +571,29 @@ without logging the question text.
 
 Rules:
 
-- Feature disabled (`POLICY_ASSIST_ENABLED=false`): every policy route returns 503 `POLICY_DISABLED` and the UI hides.
+- Feature disabled (`POLICY_ASSIST_ENABLED=false`): `POST /api/policy/ask` returns 503 `POLICY_DISABLED` and the navigator UI hides. The register, section reads and version writes are not AI answers and stay available.
+- `GET /api/policy/register` returns the **current** approved version of each credit policy (effective date ≤ the Asia/Singapore reporting day; not superseded), filtered by the existing fail-closed policy ACL. Officers without a read grant do not see the key/title.
+- Register response `200`:
+
+```json
+{
+	"items": [
+		{
+			"policyKey": "POL-CR-003",
+			"title": "SME Underwriting Standard",
+			"version": "v1",
+			"versionId": "<uuid>",
+			"effectiveFrom": "2026-01-01",
+			"effectiveTo": null,
+			"productScope": "sme",
+			"jurisdiction": "SG",
+			"sectionCount": 4
+		}
+	]
+}
+```
+
+- The register is metadata only: no section bodies, quotes, owner ids, ACLs or internal policy ids. It is ordered by `policyKey`.
 - Section reads need the signed `?token=` issued with a citation; bad tokens, drafts, and out-of-range versions return 404 `NOT_FOUND`.
 - Version writes need a policy admin (`policy_owner` with a case grant, or `compliance`): other officers get 403. `submit` on a non-draft returns 409 `NOT_DRAFT`; `approve` needs a prior `submit` (409 `NOT_SUBMITTED`), rejects self-approval (403 `SELF_APPROVAL`) and backdated `effectiveFrom` (422 `BACKDATED`).
 
@@ -773,17 +962,20 @@ Response `200`:
 | `ORIGIN_FORBIDDEN`            | 403      | Production origin check failed                                                                                                                                                               |
 | `DEMO_MODE_DISABLED`          | 403      | Demo endpoint called with `DEMO_MODE=false`                                                                                                                                                  |
 | `NOT_FOUND`                   | 404      | Missing row, bad uuid, or cross-applicant read                                                                                                                                               |
-| `VALIDATION_ERROR`            | 400, 422 | Bad body: 400 on auth/submit/pay/age, 422 on review decisions                                                                                                                                |
+| `VALIDATION_ERROR`            | 400, 422 | Bad body/query: 400 on auth/submit/draft/consent/loans, 422 on review decisions                                                                                                              |
 | `INVALID_JSON`                | 400      | Body is not JSON                                                                                                                                                                             |
+| `INVALID_FIELD`               | 422      | Unknown profile-confirmation field                                                                                                                                                           |
 | `MISSING_IDEMPOTENCY_KEY`     | 400      | Submit without `Idempotency-Key`                                                                                                                                                             |
 | `INVALID_CURSOR`              | 400      | Cursor is not `<ISO-8601>,<uuid>`                                                                                                                                                            |
 | `BODY_TOO_LARGE`              | 413      | Body over 100,000 bytes (11,000,000 on the document-upload route)                                                                                                                            |
-| `RATE_LIMITED`                | 429      | Login or submit limit hit                                                                                                                                                                    |
+| `RATE_LIMITED`                | 429      | Login, submit or policy-ask limit hit                                                                                                                                                        |
 | `IDEMPOTENCY_CONFLICT`        | 409      | Key reused with a different payload                                                                                                                                                          |
 | `TOO_MANY_APPLICATIONS`       | 409      | 3 non-terminal applications already                                                                                                                                                          |
 | `DRAFT_REQUIRED`              | 409      | Profiled applicant used direct create; use draft → submit                                                                                                                                    |
 | `TOO_MANY_DRAFTS`             | 409      | 3 active drafts already                                                                                                                                                                      |
-| `NOT_DRAFT`                   | 409      | Submit called on a non-draft application                                                                                                                                                     |
+| `NOT_DRAFT`                   | 409      | Submit or draft update called on a non-draft application                                                                                                                                     |
+| `DRAFT_CONFLICT`              | 409      | `expectedUpdatedAt` is stale; `fields.updatedAt` carries the current token                                                                                                                   |
+| `CONSENT_ROUTE_REQUIRED`      | 409      | Draft update tried to change document/context consent; use the consent route                                                                                                                 |
 | `REQUIREMENTS_INCOMPLETE`     | 409      | Draft has hard blockers; `fields` maps `field:<path>` / `document:<kind>` to reason codes (`required\|stale\|expired\|unknown_date\|rejected\|missing\|consent\|identity_mismatch\|invalid`) |
 | `DECISION_CONFLICT`           | 409      | Case already decided with another request                                                                                                                                                    |
 | `BOOKING_INCOMPLETE`          | 409      | Approved decision not yet booked; saga still converging                                                                                                                                      |
@@ -792,7 +984,7 @@ Response `200`:
 | `DECISION_REJECTED`           | 422      | Workflow rejected the decision terms                                                                                                                                                         |
 | `CONSENT_REQUIRED`            | 403      | AI research consent or document-processing consent missing                                                                                                                                   |
 | `RESEARCH_DISABLED`           | 404      | Agentic research feature flag off                                                                                                                                                            |
-| `POLICY_DISABLED`             | 503      | Policy assist flag off; retry with the flag on or decide without policy                                                                                                                      |
+| `POLICY_DISABLED`             | 503      | Policy **ask** flag off; retry with the flag on or decide without policy (register/sections/version writes stay available)                                                                   |
 | `RUN_NOT_SUCCEEDED`           | 409      | Finding reviewed before its run succeeded                                                                                                                                                    |
 | `RESEARCH_UNAVAILABLE`        | 503      | Research bundle unfetchable; retry or decide without research                                                                                                                                |
 | `RESEARCH_SELECTION_STALE`    | 409      | Selection no longer resolves; re-review or decide without                                                                                                                                    |
@@ -892,9 +1084,10 @@ Headers on every internal call: `x-user-id`, `x-user-role`, `x-user-email`, `x-i
 | `GET /internal/applications/:id/research-context` | Applications  | Automation      | Service only (officer/applicant 403)                                                                                                                                                                                                              |
 | `GET .../applications/:id/context/*`              | Applications  | Research        | Service only (officer/applicant 403); bounded officer-screen reads for the context analyst (`profile`, `accounts`, `transactions`, `metrics`, `financials`, `document-findings`, `applicant`, `credit-history`, `external-reports`, `kyc-checks`) |
 | `GET /internal/loans/by-applicant/:userId`        | Loans         | Research        | Service only; `?applicationId&asOf` bound to the calling case (consent + applicant + as-of-day match, fail closed), audited                                                                                                                       |
-| `GET /internal/stats`                             | Applications  | Portfolio       | Officer                                                                                                                                                                                                                                           |
+| `GET /internal/stats`                             | Applications  | Portfolio       | Officer; includes `decisionsToday` (Asia/Singapore day)                                                                                                                                                                                           |
 | `GET /internal/loans/by-application/:id`          | Loans         | Gateway, review | Signed user; owner or officer                                                                                                                                                                                                                     |
 | `GET /internal/stats`                             | Loans         | Portfolio       | Officer                                                                                                                                                                                                                                           |
+| `GET /internal/portfolio/summary`                 | Loans         | Portfolio       | Officer; current-book aggregates, 12-week series, open alerts                                                                                                                                                                                     |
 | `POST /internal/research/runs/ensure`             | Research      | Review          | Officer (claims the case; cross-officer 404)                                                                                                                                                                                                      |
 | `GET /internal/research/applications/:id/latest`  | Research      | Review          | Officer with an active grant, else 404                                                                                                                                                                                                            |
 | `POST .../runs/:runId/view`                       | Research      | Review          | Officer with an active grant, else 404                                                                                                                                                                                                            |
@@ -909,7 +1102,7 @@ Headers on every internal call: `x-user-id`, `x-user-role`, `x-user-email`, `x-i
 | `POST /internal/fraud-review/retention/run`       | Applications  | Automation      | Service only; redacts expired resolved reviews/explanations unless a legal hold applies                                                                                                                                                           |
 | `GET /health`                                     | Every service | Any             | Public                                                                                                                                                                                                                                            |
 
-`GET /internal/applications/:id/decision` returns `{ "status", "decision": { "id", "outcome", "requestId" } | null }`. `GET /internal/loans/by-application/:id` returns the loan summary with installment counts and enforces the same owner-or-officer rule as the public loan routes (cross-applicant reads are 404). `GET /internal/loans/by-applicant/:userId` is the context-analyst read instead: `?applicationId` and `?asOf` (`YYYY-MM-DD`, not in the future) are both required, `asOf` must equal the calling case's as-of day, and the loans service revalidates context consent plus applicant ownership against the applications service before reading (fail closed, no loan query on binding failure). Consent/applicant denials are 403/404 and audit `context.denied`; success audits `context.read` — ids and codes only, never PII. The stats endpoints return status-count maps for the dashboard.
+`GET /internal/applications/:id/decision` returns `{ "status", "decision": { "id", "outcome", "requestId" } | null }`. `GET /internal/review/queue` returns the public queue items plus the bounded `summary` described above. `GET /internal/portfolio/summary` returns the current-book aggregates described under Dashboard; `/api/portfolio/summary` proxies it with the signed officer. `GET /internal/loans/by-application/:id` returns the loan summary with installment counts and enforces the same owner-or-officer rule as the public loan routes (cross-applicant reads are 404). `GET /internal/loans/by-applicant/:userId` is the context-analyst read instead: `?applicationId` and `?asOf` (`YYYY-MM-DD`, not in the future) are both required, `asOf` must equal the calling case's as-of day, and the loans service revalidates context consent plus applicant ownership against the applications service before reading (fail closed, no loan query on binding failure). Consent/applicant denials are 403/404 and audit `context.denied`; success audits `context.read` — ids and codes only, never PII. The stats endpoints return status-count maps for the dashboard; applications stats also returns `decisionsToday`.
 
 Research access management (T00): `POST .../access/grants` takes a strict `{ "userId": "<uuid>", "accessRole": "assigned_officer"|"compliance"|"policy_owner"|"safeguarding" }` body and returns `201 { "grant" }`; unknown roles or bad ids are 422. `POST .../access/revoke` takes `{ "userId": "<uuid>" }` and returns `200 { "revoked": true }`, or 404 when no active grant exists. Both audit the change. `GET /internal/applications/:id/research-context` (service only) returns `{ "caseFacts": {<the same 16 keys as case-facts>}, "applicantUserId": "<uuid>", "contextAnalysisConsent": <boolean> }`; `applicantUserId` is internal routing data and never enters the agent prompt or trace. Officer `/case-facts` behavior is unchanged.
 

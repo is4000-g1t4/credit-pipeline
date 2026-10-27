@@ -19,6 +19,7 @@ interface ApplicationsStats {
 	applications: Record<string, number>;
 	avgDecisionSeconds: number | null;
 	decidedApplications: number;
+	decisionsToday?: number;
 }
 
 interface LoansStats {
@@ -49,6 +50,7 @@ export function dashboardRoutes(deps: DashboardRouteDeps): ServiceApp {
 			loans: loanStats.loans,
 			avgDecisionSeconds: apps.avgDecisionSeconds,
 			decidedApplications: apps.decidedApplications,
+			decisionsToday: apps.decisionsToday ?? null,
 			recentFeed: feed.map((f) => ({
 				id: f.id,
 				type: f.type,
@@ -58,6 +60,20 @@ export function dashboardRoutes(deps: DashboardRouteDeps): ServiceApp {
 				occurredAt: f.occurredAt.toISOString(),
 			})),
 		});
+	});
+
+	// Portfolio book summary (SPEC §5): officer only, proxied from the loans
+	// service aggregation. Non-OK upstream surfaces as 502, like the dashboard.
+	app.get("/api/portfolio/summary", requireOfficer, async (c) => {
+		const me = c.var.user;
+		const loansRes = await internalFetch(loansUrl, "/internal/portfolio/summary", me, {
+			secret: internalSecret,
+			fetchImpl,
+		});
+		if (!loansRes.ok) {
+			throw new HttpError(502, "BAD_GATEWAY", "upstream service unavailable");
+		}
+		return c.json(await loansRes.json());
 	});
 
 	return app;

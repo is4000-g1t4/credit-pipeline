@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { POLICY_ENGINE_STANDARD_SECTION_IDS } from "@credit/core";
+import { POLICY_ENGINE_STANDARD_SECTION_IDS, reportingDay } from "@credit/core";
 import {
 	HttpError,
 	readJson,
@@ -23,7 +23,12 @@ import {
 	assertStandardHash,
 	CorpusIntegrityError,
 } from "./corpus-integrity.js";
-import { SERVICE_CASE_EXPLAIN, capBridgeBodies, toBridgeDelivery, type BridgeRow } from "./bridge.js";
+import {
+	SERVICE_CASE_EXPLAIN,
+	capBridgeBodies,
+	toBridgeDelivery,
+	type BridgeRow,
+} from "./bridge.js";
 import { classifyScope, hasDirectIdentifier, hmacQuestion } from "./gates.js";
 import { caseRetrievalText, DOCUMENT_FAMILY, policyFamiliesForSignal } from "./mapping.js";
 import { canRead, filterByAcl, rankChunks, type Actor } from "./retrieval.js";
@@ -92,10 +97,6 @@ const bridgeSearchSchema = exceptionBaseSchema
 		topK: z.number().int().min(1).max(12).optional(),
 	})
 	.strict();
-
-function today(): string {
-	return new Date().toISOString().slice(0, 10);
-}
 
 function productScope(product: "personal_loan" | "sme_term_loan"): "individual" | "sme" {
 	return product === "sme_term_loan" ? "sme" : "individual";
@@ -272,7 +273,7 @@ export function createPolicyRoutes(deps: PolicyDeps): Hono<{ Variables: ServiceV
 		if (!parsed.success) throw new HttpError(422, "VALIDATION_ERROR", "invalid request");
 		const me = c.var.user;
 		const question = parsed.data.question.trim();
-		const asOf = today();
+		const asOf = reportingDay(new Date());
 		const queryId = randomUUID();
 		const base: QueryBase = {
 			id: queryId,
@@ -423,7 +424,7 @@ export function createPolicyRoutes(deps: PolicyDeps): Hono<{ Variables: ServiceV
 			asOf: caseContext.asOf,
 		};
 		const reserved = await store.reserveBudget({
-			day: today(),
+			day: reportingDay(new Date()),
 			budgetClass: "case",
 			actorId: "00000000-0000-0000-0000-000000000000",
 			maxCostUsd: env.caseMaxCostUsd,
@@ -660,7 +661,7 @@ export function createPolicyRoutes(deps: PolicyDeps): Hono<{ Variables: ServiceV
 			return c.json({ status: "identifier_blocked", sections: [], missing: [] });
 		}
 		const reserved = await store.reserveBudget({
-			day: today(),
+			day: reportingDay(new Date()),
 			budgetClass: "policy_exception",
 			actorId,
 			maxCostUsd: 0.02,
@@ -760,6 +761,27 @@ export function createPolicyRoutes(deps: PolicyDeps): Hono<{ Variables: ServiceV
 		return c.json(section);
 	});
 
+	app.get("/api/policy/register", requireOfficer, async (c) => {
+		const asOf = reportingDay(new Date());
+		const rows = await store.listApprovedPolicyDocuments(asOf);
+		const actor = await loadActor(store, c.var.user);
+		const acls = await store.loadAcls([...new Set(rows.map((row) => row.policyId))]);
+		const items = rows
+			.filter((row) => canRead(row.policyId, actor, acls))
+			.map((row) => ({
+				policyKey: row.policyKey,
+				title: row.title,
+				version: row.version,
+				versionId: row.versionId,
+				effectiveFrom: row.effectiveFrom,
+				effectiveTo: row.effectiveTo,
+				productScope: row.productScope,
+				jurisdiction: row.jurisdiction,
+				sectionCount: row.sectionCount,
+			}));
+		return c.json({ items });
+	});
+
 	app.post("/api/policy/versions/:id/submit", requireOfficer, async (c) => {
 		const version = await store.getVersion(c.req.param("id"));
 		if (!version) throw new HttpError(404, "NOT_FOUND", "not found");
@@ -791,7 +813,7 @@ export function createPolicyRoutes(deps: PolicyDeps): Hono<{ Variables: ServiceV
 		if (version.submittedBy === me.id)
 			throw new HttpError(403, "SELF_APPROVAL", "submitter cannot approve");
 		const effectiveFrom = parsed.data.effectiveFrom ?? version.effectiveFrom;
-		if (effectiveFrom < today())
+		if (effectiveFrom < reportingDay(new Date()))
 			throw new HttpError(422, "BACKDATED", "effective date cannot be in the past");
 		const sectionIds = await store.listVersionSectionIds(version.id);
 		const [versionCorpus, approvedCorpus] = await Promise.all([

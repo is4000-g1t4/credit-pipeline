@@ -6,12 +6,7 @@
 
 import { api } from "./client";
 import type { PolicyAnswerSegment } from "./policy";
-import type {
-	AssistArtifact,
-	MemoOpenItem,
-	MemoSection,
-	MemoTraceToolCall,
-} from "./memo";
+import type { AssistArtifact, MemoOpenItem, MemoSection, MemoTraceToolCall } from "./memo";
 
 export interface PolicyExceptionSectionRef {
 	policyKey: string;
