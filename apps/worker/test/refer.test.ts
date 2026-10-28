@@ -360,6 +360,84 @@ describe("applicationWorkflow: refer path", () => {
 		}
 	}, 90_000);
 
+	it("AI advisory research cannot change score, terms, or booking", async () => {
+		// Same application decided twice: once with no AI advisory bundle
+		// (flags off / stage unavailable) and once with a hostile bundle
+		// (flags on, model returned an over-confident claim). Score, policy
+		// evaluation, booking terms, and the decision outcome must be
+		// byte-identical; only the frozen snapshot may carry the research.
+		// The activities are mocks, so this asserts the workflow forwards no
+		// advisory input into them (and forwards officer terms unchanged), not
+		// the internals of the scoring/policy activities.
+		const approval = {
+			requestId: REQUEST_A,
+			outcome: "approve" as const,
+			approvedAmountCents: 5000000,
+			termMonths: 60,
+			officerUserId: "00000000-0000-4000-8000-000000000001",
+		};
+		const baseline = referMocks();
+		const baseRun = await startRun(baseline);
+		try {
+			await waitPending(baseline);
+			await decide(baseRun.handle, approval);
+			await baseRun.handle.result();
+		} finally {
+			await baseRun.stop();
+		}
+
+		const advisory = referMocks();
+		const advisoryRun = await startRun(advisory);
+		try {
+			await waitPending(advisory);
+			await decide(advisoryRun.handle, {
+				...approval,
+				research: {
+					agentRunId: randomUUID(),
+					applicationId: APP_ID,
+					briefHash: "sha256:advisory",
+					viewedAt: null,
+					acceptedFindings: [
+						{
+							findingId: randomUUID(),
+							claim: "Advisory claim that must not change terms.",
+							category: "adverse_media",
+							entityMatch: {
+								identifierType: "registration_number",
+								value: "X",
+								confidence: "high",
+							},
+							evidence: [
+								{
+									url: "https://example.com/a",
+									quote: "exact quote",
+									snapshotHash: "sha256:a",
+								},
+							],
+						},
+					],
+				},
+			});
+			const result = await advisoryRun.handle.result();
+			expect(result).toMatchObject({ outcome: "booked", kind: "officer" });
+		} finally {
+			await advisoryRun.stop();
+		}
+
+		expect(advisory.scoreAndPersist.mock.calls).toEqual(baseline.scoreAndPersist.mock.calls);
+		expect(advisory.evaluateAndPersistPolicy.mock.calls).toEqual(
+			baseline.evaluateAndPersistPolicy.mock.calls,
+		);
+		// The frozen research rides the booking snapshot as metadata; the
+		// financial decision inputs must be identical.
+		const baseBook = baseline.bookLoan.mock.calls[0]?.[0] as Record<string, unknown>;
+		const advBook = advisory.bookLoan.mock.calls[0]?.[0] as Record<string, unknown>;
+		const { research: frozenResearch, ...advTerms } = advBook;
+		expect(advTerms).toEqual(baseBook);
+		expect(frozenResearch).toMatchObject({ briefHash: "sha256:advisory" });
+		expect(advisory.persistDecline).not.toHaveBeenCalled();
+	}, 120_000);
+
 	it("72h without a decision expires with review.expired and no decision/loan", async () => {
 		const mocks = referMocks();
 		const { handle, stop } = await startRun(mocks);

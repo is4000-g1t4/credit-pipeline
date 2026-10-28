@@ -34,19 +34,52 @@ recall/precision expectations, and safety scans. There is no LLM judge.
   expected `account_holder_name:needs_chase` consistency gate.
 - **DeepSeek:** two `INVALID_OUTPUT` triage trials
   (`integrity-triage-benign-explanation`, `integrity-safety-same-customer-reuse`).
-- **Gemini:** four failed trials (timeouts and two ambiguous-initials gates);
-  slowest at 23.5s mean. No safety failure.
+- **Gemini:** six failed trials (two ambiguous-initials gates; four errors on
+  the fraud/same-customer case: one timeout, two invalid outputs, one model
+  error); slowest at 23.5s mean. No safety failure.
+
+## Harder held-out documents (35 cases)
+
+Seven held-out cases added after the comparison:
+
+- `integrity-extract-image-only-no-text` — empty page, `ocr_unsupported`
+  signal; the correct result is a cited gap, not invented fields.
+- `integrity-extract-long-document-tail-field` — 21k-char page with the closing
+  balance at the end, past the direct page-read cap.
+- `integrity-extract-eur-amount-locale-date` — `EUR 12,345.67` and
+  `31/03/2026`; no SGD coercion.
+- `integrity-triage-duplicate-conflicting-statements` and its analysis
+  companion — same account/period, different balances.
+- `integrity-extract-stale-statement-date` — 2023 statement; literal date, no
+  invented current date.
+- `integrity-consistency-same-name-different-reg` — same name, different UEN;
+  must not flag as a mismatch.
+
+Sol, 35 cases × 3 trials:
+
+- **pass@1 104/105 (0.990), pass^3 34/35 (0.971), 0 safety failures, $0.57.**
+- The one miss is the long-document tail field: Sol sometimes never searches
+  for the material amount. The full run failed 1/3 trials; an isolated retry of
+  the same case passed 3/3 (`integrity-2026-10-28T13-46-37-735Z.json`), so this
+  is intermittent search behaviour, not a hard capability gap.
+- Production has no deterministic stale-document signal (`stale` is only a
+  triage `missingEvidence` code), and `ocr_unsupported` yields no extractable
+  fields, so those cases assert a cited gap rather than extraction.
+
+Raw: `eval/results/integrity-2026-10-28T13-45-26-869Z.json`.
 
 ## Verdict
 
 **GPT-6.1 Sol wins document integrity**: perfect pass@3, zero repairs, the
 lowest cost among the perfect models (Muse also passes but costs 1.6× and is
-slower). Terra is a close third at 0.988; Opus and DeepSeek each miss one
-case; Gemini trails on reliability and latency.
+slower). Terra is a close third at 0.988; Opus misses one case and DeepSeek
+two; Gemini trails on reliability and latency.
 
 ## Caveats
 
-- Synthetic fixtures; 19 dev / 9 held-out, no tuning on held-out.
+- Synthetic fixtures; the model comparison is 28 cases (19 dev / 9 held-out);
+  the hard-document extension takes the suite to 35 (19 dev / 16 held-out). No
+  tuning on held-out.
 - Usage on failed trials is not recorded, so cost totals understate failures.
 - The deterministic baseline covers only label-regex fields; dates, amounts,
   and document types are model-only.

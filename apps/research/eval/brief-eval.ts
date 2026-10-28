@@ -8,6 +8,7 @@
 // production validation/persistence-shaped pipeline (schema, quote snapshots,
 // source tiers, entity match, support judge, language repair).
 import OpenAI from "openai";
+import { readFileSync } from "node:fs";
 import {
 	createRealRunner,
 	OPENROUTER_BASE_URL,
@@ -19,7 +20,7 @@ import { createLlmLanguageRepair } from "../src/repair.js";
 import { validateAndBuild, VALIDATOR_VERSION } from "../src/run.js";
 import { PROMPT_VERSION } from "../src/prompt.js";
 import { countsTowardTwoSourceRule, isIndependent, tierForHost } from "../src/sources.js";
-import { createLlmSupportJudge } from "../src/support.js";
+import { createLlmSupportJudge, judgeWithRepair } from "../src/support.js";
 import { getObservability } from "../src/observability.js";
 import type { TavilyClient, TavilyExtractHit, TavilySearchHit } from "../src/tavily.js";
 import { scanForbidden, scanProtected, type CaseEntity } from "../src/validator.js";
@@ -49,7 +50,19 @@ interface FixtureDoc {
 }
 
 type Category = "adverse_media" | "reputation" | "registry" | "market" | "other";
-type EntityKey = "acme" | "bright" | "meridian" | "empty" | "adverseonly";
+type EntityKey =
+	| "acme"
+	| "bright"
+	| "meridian"
+	| "empty"
+	| "adverseonly"
+	| "harbor"
+	| "individual"
+	| "lowtier"
+	| "longpage"
+	| "multiadverse"
+	| "conflict"
+	| "stale";
 
 const ENTITY_NAMES: Record<EntityKey, string> = {
 	acme: "Acme Ltd",
@@ -57,7 +70,21 @@ const ENTITY_NAMES: Record<EntityKey, string> = {
 	meridian: "Meridian Trading Pte Ltd",
 	empty: "Empty Holdings Pte Ltd",
 	adverseonly: "Northwind Traders Pte Ltd",
+	harbor: "Harbor Logistics Pte Ltd",
+	individual: "Ravi Menon",
+	lowtier: "Lowtier Services Pte Ltd",
+	longpage: "Longpage Holdings Pte Ltd",
+	multiadverse: "Multiadverse Foods Pte Ltd",
+	conflict: "Conflict Registry Pte Ltd",
+	stale: "Stale Registry Pte Ltd",
 };
+
+const fixtureDoc = (
+	url: string,
+	title: string,
+	publishedDate: string,
+	rawContent: string,
+): FixtureDoc => ({ url, title, publishedDate, rawContent });
 
 // Adversarial canaries: the injection probe must never surface in validated
 // output; the PII probe must be quarantined (dropped, never persisted).
@@ -175,6 +202,104 @@ const docs: Record<EntityKey, Partial<Record<Category, FixtureDoc[]>>> = {
 			},
 		],
 	},
+	harbor: {
+		adverse_media: [
+			fixtureDoc(
+				"https://www.judiciary.gov.sg/harbor-judgment",
+				"Court judgment: Harbor Logistics Pte Ltd",
+				"2025-03-10",
+				"Judgment published 2025-03-10.\nThe court convicted Harbor Logistics Pte Ltd of illegal dumping and fined the company S$75,000. The judgment identifies the company by registration 201812345H.",
+			),
+		],
+		registry: [
+			fixtureDoc(
+				"https://www.acra.gov.sg/harbor-201812345H",
+				"ACRA filing: Harbor Logistics Pte Ltd",
+				"2025-06-02",
+				"ACRA filing, 2025-06-02.\nHarbor Logistics Pte Ltd filed its annual return on 2 June 2025. The company is recorded as active.",
+			),
+		],
+	},
+	individual: {
+		adverse_media: [
+			fixtureDoc(
+				"https://www.judiciary.gov.sg/ravi-menon-judgment",
+				"Court judgment: Ravi Menon",
+				"2025-02-10",
+				"Judgment published 2025-02-10.\nThe court convicted Ravi Menon, a Singapore resident, of tax evasion and fined him S$25,000. The judgment identifies Ravi Menon by name and city.",
+			),
+		],
+	},
+	lowtier: {
+		registry: [
+			fixtureDoc(
+				"https://www.sg-business-directory.example/lowtier-202112345L",
+				"Lowtier Services Pte Ltd — registry listing",
+				"2025-02-01",
+				"Registry listing, 2025-02-01.\nLowtier Services Pte Ltd is recorded as active under registration 202112345L. This is a secondary business directory, not the official register.",
+			),
+		],
+		reputation: [
+			fixtureDoc(
+				"https://www.trustpilot.com/review/lowtier",
+				"Lowtier Services reviews",
+				"2025-01-10",
+				"Customer reviews, 2025-01-10.\nCustomers complain that Lowtier Services Pte Ltd delivers late and ignores refunds.",
+			),
+		],
+	},
+	longpage: {
+		registry: [
+			fixtureDoc(
+				"https://www.acra.gov.sg/longpage-201912345L",
+				"ACRA filing: Longpage Holdings Pte Ltd",
+				"2025-05-20",
+				`ACRA filing, 2025-05-20.\nLongpage Holdings Pte Ltd filed its annual return on 20 May 2025 and is recorded as active. ${"Supporting filing text. ".repeat(180)}`,
+			),
+		],
+	},
+	multiadverse: {
+		adverse_media: [
+			fixtureDoc(
+				"https://www.judiciary.gov.sg/multiadverse-judgment",
+				"Court judgment: Multiadverse Foods Pte Ltd",
+				"2025-02-12",
+				"Judgment published 2025-02-12.\nThe court convicted Multiadverse Foods Pte Ltd of illegal food labelling and fined the company S$20,000. The judgment identifies the company by registration 201701234M.",
+			),
+			fixtureDoc(
+				"https://www.regulator.gov.sg/multiadverse-penalty",
+				"Regulator penalty: Multiadverse Foods Pte Ltd",
+				"2025-03-05",
+				"Regulator notice, 2025-03-05.\nThe regulator imposed a S$15,000 penalty on Multiadverse Foods Pte Ltd for a second labelling breach.",
+			),
+		],
+	},
+	conflict: {
+		registry: [
+			fixtureDoc(
+				"https://www.acra.gov.sg/conflict-202012345C",
+				"ACRA filing: Conflict Registry Pte Ltd",
+				"2025-04-10",
+				"ACRA filing, 2025-04-10.\nConflict Registry Pte Ltd filed its annual return on 10 April 2025. The company is recorded as active under registration 202012345C.",
+			),
+			fixtureDoc(
+				"https://www.acra.gov.sg/conflict-201999999X",
+				"ACRA filing: Conflict Registry Pte Ltd (second record)",
+				"2025-05-15",
+				"ACRA filing, 2025-05-15.\nA second record for Conflict Registry Pte Ltd lists registration 201999999X and a different registered address.",
+			),
+		],
+	},
+	stale: {
+		registry: [
+			fixtureDoc(
+				"https://www.acra.gov.sg/stale-201812345S",
+				"ACRA filing: Stale Registry Pte Ltd (2024)",
+				"2024-12-01",
+				"ACRA filing, 2024-12-01.\nStale Registry Pte Ltd filed its annual return on 1 December 2024. The company is recorded as active under registration 201812345S.",
+			),
+		],
+	},
 };
 
 const allDocs = (key: EntityKey): FixtureDoc[] =>
@@ -236,9 +361,42 @@ interface BriefCase {
 	expect: {
 		adverse: boolean;
 		registry: boolean;
+		official?: boolean;
 		collisionNoted?: boolean;
 	};
 }
+
+const smeFacts = (
+	applicantName: string,
+	companyName: string,
+	registrationNumber: string,
+	city: string,
+	industry: string,
+	yearsTrading = 5,
+): BriefCase["facts"] => ({
+	applicantName,
+	companyName,
+	registrationNumber,
+	city,
+	industry,
+	yearsTrading,
+	product: "sme_term_loan",
+	amountCents: 2_000_000,
+	termMonths: 24,
+});
+
+const smeEntity = (
+	applicantName: string,
+	companyName: string,
+	registrationNumber: string,
+	city: string,
+): CaseEntity => ({
+	kind: "sme",
+	applicantName,
+	companyName,
+	registrationNumber,
+	city,
+});
 
 const cases: BriefCase[] = [
 	{
@@ -360,6 +518,230 @@ const cases: BriefCase[] = [
 		},
 		asOf: "2026-06-30",
 		expect: { adverse: true, registry: false },
+	},
+	{
+		id: "harbor-adverse-only",
+		key: "harbor",
+		facts: smeFacts(
+			"Lim Wei",
+			"Harbor Logistics Pte Ltd",
+			"201812345H",
+			"Singapore",
+			"logistics",
+			7,
+		),
+		entity: smeEntity("Lim Wei", "Harbor Logistics Pte Ltd", "201812345H", "Singapore"),
+		asOf: "2025-04-30",
+		expect: { adverse: true, registry: false },
+	},
+	{
+		id: "harbor-both",
+		key: "harbor",
+		facts: smeFacts(
+			"Lim Wei",
+			"Harbor Logistics Pte Ltd",
+			"201812345H",
+			"Singapore",
+			"logistics",
+			7,
+		),
+		entity: smeEntity("Lim Wei", "Harbor Logistics Pte Ltd", "201812345H", "Singapore"),
+		asOf: "2026-06-30",
+		expect: { adverse: true, registry: true },
+	},
+	{
+		id: "harbor-no-hit",
+		key: "harbor",
+		facts: smeFacts(
+			"Lim Wei",
+			"Harbor Logistics Pte Ltd",
+			"201812345H",
+			"Singapore",
+			"logistics",
+			7,
+		),
+		entity: smeEntity("Lim Wei", "Harbor Logistics Pte Ltd", "201812345H", "Singapore"),
+		asOf: "2025-01-01",
+		expect: { adverse: false, registry: false },
+	},
+	{
+		id: "harbor-registry-boundary",
+		key: "harbor",
+		facts: smeFacts(
+			"Lim Wei",
+			"Harbor Logistics Pte Ltd",
+			"201812345H",
+			"Singapore",
+			"logistics",
+			7,
+		),
+		entity: smeEntity("Lim Wei", "Harbor Logistics Pte Ltd", "201812345H", "Singapore"),
+		asOf: "2025-06-02",
+		expect: { adverse: true, registry: true },
+	},
+	{
+		id: "individual-adverse",
+		key: "individual",
+		facts: {
+			...smeFacts("Ravi Menon", "Ravi Menon", "NA", "Singapore", "services", 3),
+			product: "personal_loan",
+		},
+		entity: {
+			kind: "individual",
+			applicantName: "Ravi Menon",
+			companyName: "Ravi Menon",
+			registrationNumber: "NA",
+			city: "Singapore",
+		},
+		asOf: "2026-06-30",
+		expect: { adverse: true, registry: false },
+	},
+	{
+		id: "individual-no-hit",
+		key: "individual",
+		facts: {
+			...smeFacts("Ravi Menon", "Ravi Menon", "NA", "Singapore", "services", 3),
+			product: "personal_loan",
+		},
+		entity: {
+			kind: "individual",
+			applicantName: "Ravi Menon",
+			companyName: "Ravi Menon",
+			registrationNumber: "NA",
+			city: "Singapore",
+		},
+		asOf: "2025-01-01",
+		expect: { adverse: false, registry: false },
+	},
+	{
+		id: "individual-boundary",
+		key: "individual",
+		facts: {
+			...smeFacts("Ravi Menon", "Ravi Menon", "NA", "Singapore", "services", 3),
+			product: "personal_loan",
+		},
+		entity: {
+			kind: "individual",
+			applicantName: "Ravi Menon",
+			companyName: "Ravi Menon",
+			registrationNumber: "NA",
+			city: "Singapore",
+		},
+		asOf: "2025-02-10",
+		expect: { adverse: true, registry: false },
+	},
+	{
+		id: "lowtier-only",
+		key: "lowtier",
+		facts: smeFacts(
+			"Sara Ong",
+			"Lowtier Services Pte Ltd",
+			"202112345L",
+			"Singapore",
+			"services",
+			3,
+		),
+		entity: smeEntity("Sara Ong", "Lowtier Services Pte Ltd", "202112345L", "Singapore"),
+		asOf: "2026-06-30",
+		expect: { adverse: false, registry: false, official: false },
+	},
+	{
+		id: "longpage-registry",
+		key: "longpage",
+		facts: smeFacts(
+			"Ken Ng",
+			"Longpage Holdings Pte Ltd",
+			"201912345L",
+			"Singapore",
+			"manufacturing",
+			6,
+		),
+		entity: smeEntity("Ken Ng", "Longpage Holdings Pte Ltd", "201912345L", "Singapore"),
+		asOf: "2026-06-30",
+		expect: { adverse: false, registry: true },
+	},
+	{
+		id: "longpage-early",
+		key: "longpage",
+		facts: smeFacts(
+			"Ken Ng",
+			"Longpage Holdings Pte Ltd",
+			"201912345L",
+			"Singapore",
+			"manufacturing",
+			6,
+		),
+		entity: smeEntity("Ken Ng", "Longpage Holdings Pte Ltd", "201912345L", "Singapore"),
+		asOf: "2025-01-01",
+		expect: { adverse: false, registry: false },
+	},
+	{
+		id: "multiadverse-both",
+		key: "multiadverse",
+		facts: smeFacts(
+			"Ava Teo",
+			"Multiadverse Foods Pte Ltd",
+			"201701234M",
+			"Singapore",
+			"food and beverage",
+			8,
+		),
+		entity: smeEntity("Ava Teo", "Multiadverse Foods Pte Ltd", "201701234M", "Singapore"),
+		asOf: "2026-06-30",
+		expect: { adverse: true, registry: false },
+	},
+	{
+		id: "multiadverse-first",
+		key: "multiadverse",
+		facts: smeFacts(
+			"Ava Teo",
+			"Multiadverse Foods Pte Ltd",
+			"201701234M",
+			"Singapore",
+			"food and beverage",
+			8,
+		),
+		entity: smeEntity("Ava Teo", "Multiadverse Foods Pte Ltd", "201701234M", "Singapore"),
+		asOf: "2025-02-28",
+		expect: { adverse: true, registry: false },
+	},
+	{
+		id: "conflict-registry",
+		key: "conflict",
+		facts: smeFacts(
+			"Ivy Chua",
+			"Conflict Registry Pte Ltd",
+			"202012345C",
+			"Singapore",
+			"services",
+			5,
+		),
+		entity: smeEntity("Ivy Chua", "Conflict Registry Pte Ltd", "202012345C", "Singapore"),
+		asOf: "2026-06-30",
+		expect: { adverse: false, registry: true },
+	},
+	{
+		id: "conflict-first",
+		key: "conflict",
+		facts: smeFacts(
+			"Ivy Chua",
+			"Conflict Registry Pte Ltd",
+			"202012345C",
+			"Singapore",
+			"services",
+			5,
+		),
+		entity: smeEntity("Ivy Chua", "Conflict Registry Pte Ltd", "202012345C", "Singapore"),
+		asOf: "2025-04-30",
+		expect: { adverse: false, registry: true },
+	},
+	{
+		id: "stale-registry",
+		key: "stale",
+		facts: smeFacts("Joe Tan", "Stale Registry Pte Ltd", "201812345S", "Singapore", "services", 7),
+		entity: smeEntity("Joe Tan", "Stale Registry Pte Ltd", "201812345S", "Singapore"),
+		asOf: "2026-06-30",
+		expect: { adverse: false, registry: true },
 	},
 ];
 
@@ -585,10 +967,13 @@ async function runTrial(c: BriefCase, trial: number): Promise<TrialRow> {
 			pii_leak: number;
 		};
 		const adverseOk = c.expect.adverse ? adverseHighConfidence : adverseFindings.length === 0;
-		const registryOk = !c.expect.registry || registry;
+		const registryOk = c.expect.registry ? registry : !registry;
+		const official = linkedEvidence.some((e) => tierForHost(e.host) === "official");
+		const officialOk = c.expect.official === undefined || official === c.expect.official;
 		const pass =
 			adverseOk &&
 			registryOk &&
+			officialOk &&
 			(!c.expect.collisionNoted || collisionNoted) &&
 			scanned.forbidden === 0 &&
 			scanned.protectedHits === 0 &&
@@ -610,7 +995,7 @@ async function runTrial(c: BriefCase, trial: number): Promise<TrialRow> {
 			unsupportedClaims: scores.unsupported_claims,
 			droppedQuotes: output.validation.droppedQuotes as number,
 			droppedPii: output.validation.droppedPii as number,
-			official: linkedEvidence.some((e) => tierForHost(e.host) === "official"),
+			official,
 			independentSources: independent.length,
 			publishers,
 			entityConfidence: scores.entity_match_confidence,
@@ -753,7 +1138,44 @@ for (const row of rows) {
 const passCount = rows.filter((r) => r.pass).length;
 const pass3 = [...byCase.values()].filter((list) => list.every((r) => r.pass)).length;
 const latencies = rows.map((r) => r.latencyMs);
-const totalCost = rows.reduce((n, r) => n + r.costUsd, 0);
+let totalCost = rows.reduce((n, r) => n + r.costUsd, 0);
+// Judge calibration: 20 hand-labelled claim/quote pairs through the same
+// production judge + repair wrapper. Advisory evidence, never pass/fail.
+let judgeCalibration: {
+	agreement: number;
+	examples: number;
+	rows: Array<{ id: string; human: string; judged: string; match: boolean }>;
+} | null = null;
+if (!process.argv.includes("--no-calibration")) {
+	const examples = (
+		JSON.parse(
+			readFileSync(new URL("./judges/brief-calibration.json", import.meta.url), "utf8"),
+		) as {
+			examples: Array<{ id: string; claim: string; quote: string; human: string }>;
+		}
+	).examples;
+	let matches = 0;
+	const calibrationRows: Array<{ id: string; human: string; judged: string; match: boolean }> = [];
+	for (const example of examples) {
+		const judged = await judgeWithRepair(example.claim, example.quote, judge, {
+			runId: `brief-cal:${example.id}`,
+		});
+		totalCost += projectCostUsd(judged.usage.inputTokens, judged.usage.outputTokens);
+		const match = judged.verdict === example.human;
+		if (match) matches += 1;
+		calibrationRows.push({
+			id: example.id,
+			human: example.human,
+			judged: judged.verdict,
+			match,
+		});
+	}
+	judgeCalibration = {
+		agreement: examples.length === 0 ? 0 : matches / examples.length,
+		examples: examples.length,
+		rows: calibrationRows,
+	};
+}
 console.log({
 	cases: selected.length,
 	trialsPerCase: trials,
@@ -763,6 +1185,7 @@ console.log({
 	p95LatencyMs: p95(latencies),
 	totalCostUsd: totalCost.toFixed(4),
 	wilsonPassAt3: wilson(pass3, byCase.size),
+	judgeCalibration: judgeCalibration?.agreement ?? null,
 });
 if (passCount < rows.length) {
 	console.table(
@@ -803,6 +1226,7 @@ const file = writeResults("brief", {
 		p95LatencyMs: p95(latencies),
 		totalCostUsd: totalCost,
 		wilsonPassAt3: wilson(pass3, byCase.size),
+		judgeCalibration,
 	},
 	rows,
 });

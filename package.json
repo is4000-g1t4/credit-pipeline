@@ -29,6 +29,7 @@
 		"demo:verify": "bun scripts/demo-verify.ts",
 		"demo:context-stub": "bun scripts/demo-context-stub.ts",
 		"demo:reset": "bun scripts/demo-reset.ts",
+		"eval:guardrails": "node scripts/eval-guardrails.mjs",
 		"build": "pnpm -r --if-present build"
 	},
 	"devDependencies": {

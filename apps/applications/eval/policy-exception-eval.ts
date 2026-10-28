@@ -172,6 +172,8 @@ interface EvalCase {
 		}>;
 		sections: FixtureSection[];
 		question: string;
+		/** Optional prior officer/navigator thread (follow-up context only). */
+		turns?: Array<{ role: string; text: string }>;
 		unmappedRuleIds: string[];
 	};
 	expected: {
@@ -566,6 +568,18 @@ function followupGate(
 		return { status: "no_match", gate: "out-of-scope" };
 	}
 	return null;
+}
+
+/** Multi-turn follow-ups carry the prior officer/navigator thread as prompt
+ * context ahead of the current question. The gates still see only the
+ * current question; this is not a general chat system. */
+function followupQuestion(testCase: EvalCase): string {
+	const turns = testCase.input.turns;
+	if (!turns || turns.length === 0) return testCase.input.question;
+	const lines = turns.map((turn) =>
+		turn.role === "navigator" ? `Navigator: ${turn.text}` : `Officer: ${turn.text}`,
+	);
+	return `Prior thread for this case:\n${lines.join("\n")}\nCurrent follow-up question: ${testCase.input.question}`;
 }
 
 // --- Deterministic baseline: one neutral sentence + exact quote per rule ---
@@ -1485,7 +1499,7 @@ async function runAgentTrial(
 			runner,
 			actorId: "00000000-0000-0000-0000-000000000001",
 			actorRole: "officer",
-			...(testCase.scenario === "followup" ? { question: testCase.input.question } : {}),
+			...(testCase.scenario === "followup" ? { question: followupQuestion(testCase) } : {}),
 		});
 		base.latencyMs = trace.latencyMs;
 		base.ok = true;

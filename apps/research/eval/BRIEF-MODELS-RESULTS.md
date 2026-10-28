@@ -2,9 +2,8 @@
 
 Six models through the production case-brief agent, frozen Tavily fixture, and
 production `validateAndBuild` pipeline. The model comparison used 3 cases × 3
-trials = 54 runs; tuning later added two negative fixtures for 5 cases. The
-suite remains directional (in-sample, not 30 cases). GLM 5.3 and Kimi K3.1 Pro
-were dropped; GPT-6.1 Terra added.
+trials = 54 runs; tuning later extended the suite to 20 cases. GLM 5.3 and Kimi
+K3.1 Pro were dropped; GPT-6.1 Terra added.
 
 ```powershell
 pnpm --filter @credit/research eval:brief -- --trials=3
@@ -59,18 +58,29 @@ $0.18), so the mandatory server-side adverse/registry preflight stays. Prompt
 kept 9/9 pass and entity match rose from 0.833 to **1.000**. See
 `apps/research/eval/TUNING-2026-10-28.md`.
 
-## Hard-case extension (5 cases)
+## Extended suite (20 cases)
 
-Added two negative/edge fixtures: `empty-no-hit` (no documents at all) and
-`adverseonly` (adverse finding, no registry filing). Sol, preflight on, prompt
-`v7`, 3 trials:
+The suite now has 20 fixture entities: the original three plus no-hit,
+adverse-only, individual applicant, low-tier-only, long page, two adverse
+findings, conflicting registry records, stale registry, and boundary as-of
+cases. The 17 fixtures added since the original three (15 since the 5-case
+predecessor) were authored after prompt `v7` and were not used for tuning; they
+are held-out by construction, not by a formal split field.
 
-- **15/15 pass**, **5/5 pass^3**, $0.346 total, 17.9s mean.
-- `empty-no-hit`: 0 findings, no invented facts, clean citation/safety.
-- `adverseonly`: 1 adverse finding, bootstrap registry left absent.
+Sol, preflight on, prompt `v7`, 20 cases × 3 trials:
 
-This is still a small suite (5, not 20–30), but it adds the first real
-negative case. Raw: `brief-2026-10-28T12-43-00-996Z.json`.
+- **60/60 pass, 20/20 pass^3**, $1.506, 17.4s mean / 21.2s p95.
+- `lowtier-only` was revalidated 1 trial after the secondary-directory fixture
+  and official-source gate were added (1/1 pass).
+- Judge calibration: **19/20 agreement (0.95)** on the 20 hand-labelled
+  claim/quote pairs in `eval/judges/brief-calibration.json`.
+- Every entity resolves with no collision leak; no PII, raw-source, injection,
+  or forbidden-language hits in any trial.
+- The no-hit and adverse-only cases return zero/one findings without inventing
+  a registry filing.
+
+Raw: `brief-2026-10-28T14-13-13-512Z.json` (20-case, 3 trials);
+`brief-2026-10-28T12-43-00-996Z.json` (5-case predecessor).
 
 ## Verdict
 
@@ -80,8 +90,15 @@ gates but its weak entity matching makes it the wrong default for this agent.
 
 ## Caveats
 
-- 3 hand-built fixture entities, in-sample; not a 30-case generalization
-  claim. The prior `BRIEF-RESULTS.md` uses the same fixture.
+- The comparison is 3 hand-built entities; the extended suite has 20. The 17
+  fixtures added since the original three (15 since the 5-case run) are held-out
+  by construction, not a formal split; this is not a population sample.
+- `conflict`/`multiadverse`/`stale` assert category and entity presence, not a
+  two-record contradiction or a staleness verdict. The preflight may extract
+  only the first hit, so these are directional.
+- The low-tier-only case checks that a secondary directory is fetched but not
+  promoted to a registry finding; it is not an official-register test.
 - The support judge is pinned to Terra, so Terra's own runs have
-  self-preference bias; the code pass does not depend on the judge.
+  self-preference bias; the code pass does not depend on the judge. The 20-label
+  calibration (0.95) is on Sol's judge, not Terra's.
 - Raw results are gitignored; costs are projected list prices.

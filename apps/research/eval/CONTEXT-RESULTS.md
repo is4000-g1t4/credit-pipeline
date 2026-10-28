@@ -1,5 +1,10 @@
 # Context analyst — eval (2026-10-24)
 
+> **2026-10-28 refresh:** the suite now has 37 cases, including 7 cases over 5
+> independent customers. Terra and Sol both score 37/37 pass^3; the production
+> default is Terra with the preflight snapshot off. See
+> `CONTEXT-MODELS-RESULTS.md` and `TUNING-2026-10-28.md`.
+
 Command:
 
 ```powershell

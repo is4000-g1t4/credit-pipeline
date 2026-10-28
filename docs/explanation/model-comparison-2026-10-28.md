@@ -11,22 +11,27 @@ not recommended as defaults for the reasons below.
 
 | Agent | Dataset | Trials | Report |
 |---|---|---:|---|
-| Context analyst | 30 window cases | 3 | `apps/research/eval/CONTEXT-MODELS-RESULTS.md` |
-| Policy navigator | 37 cases | 3 | `apps/policy/eval/ANSWER-MODELS-RESULTS.md` |
-| Document integrity | 28 cases | 3 | `apps/applications/eval/INTEGRITY-MODELS-RESULTS.md` |
-| External case brief | 5 fixture cases (3 comparison + 2 negative) | 3 | `apps/research/eval/BRIEF-MODELS-RESULTS.md` |
-| Policy exception | 24 cases | 3 | `apps/applications/eval/POLICY-EXCEPTION-MODELS-RESULTS.md` |
+| Context analyst | 37 cases (30 windows + 7 cases over 5 independent customers) | 3 | `apps/research/eval/CONTEXT-MODELS-RESULTS.md` |
+| Policy navigator | 43 cases | 3 | `apps/policy/eval/ANSWER-MODELS-RESULTS.md` |
+| Document integrity | 35 cases (28 comparison + 7 hard-doc) | 3 | `apps/applications/eval/INTEGRITY-MODELS-RESULTS.md` |
+| External case brief | 20 fixture cases | 3 | `apps/research/eval/BRIEF-MODELS-RESULTS.md` |
+| Policy exception | 28 valid cases (24 comparison + 4 hard) | 3 | `apps/applications/eval/POLICY-EXCEPTION-MODELS-RESULTS.md` |
+| Credit memo (live) | 22 evidence bundles | 2 | `apps/applications/eval/MEMO-LIVE-RESULTS.md` |
+| Case policy review | 22 structured case contexts | 2 | `apps/policy/eval/CASE-REVIEW-RESULTS.md` |
 
 All runners use the production prompt, tools/fixtures, and validator. Costs are
-OpenRouter list prices projected from token usage, not billed. The policy and
-exception judges are pinned to a model independent of the answerer
-(`gpt-5.6-terra` for the exception rerun; `gpt-6.1-terra` for policy).
+OpenRouter list prices projected from token usage, not billed. The 24-case
+exception comparison used `gpt-5.6-terra`; the policy judge is
+`gpt-6.1-terra`, which is independent of Sol but same-family for Terra. The
+29-case exception extension also uses `gpt-6.1-terra`; treat those judge
+columns as advisory.
 
 ## Headline matrix
 
-Pass@1 / pass^3 per agent. The brief comparison is n=3 and directional; tuning
-later extended it to 5 cases (5/5 pass^3). Gemini's brief path failed at the
-provider (400), so it has no brief score.
+Pass@1 / pass^3 per agent. The matrix is the original comparison; the brief
+suite was later extended to 20 cases and context to 37 (see the refresh table
+below). Gemini's brief path failed at the provider (400), so it has no brief
+score.
 
 | Model | Context | Policy (code) | Integrity | Brief | Policy exception |
 |---|---|---|---:|---:|---:|
@@ -36,6 +41,27 @@ provider (400), so it has no brief score.
 | DeepSeek V4.1 Flash 1017 | 0.978 / 28/30 | 0.964 / 34/37 | 0.976 / 26/28 | 0.667 / 2/3 | not run |
 | Meta Muse Wonder | 1.000 / 30/30 | 0.991 / 36/37 | **1.000 / 28/28** | 0.111 / 0/3 | not run |
 | Gemini 4 Argon | 1.000 / 30/30 | 0.973 / 35/37 | 0.929 / 25/28 | provider 400 | not run |
+
+## Post-comparison hard-case refresh
+
+The matrix above is the original six-model comparison. The P0/P1 gap work added
+harder cases and reran only Sol/Terra through the production paths:
+
+| Suite | Cases | Model | pass@1 | pass^k | Cost | Notes |
+|---|---:|---|---:|---:|---:|---|
+| Context | 37 | Terra | 1.000 | 37/37 | $1.386 | Sol ties at $3.577; 7 cases over 5 customers |
+| Policy navigator | 43 | Terra | 0.930 | 37/43 | $0.315 | held-out 12/14; judge calibration 0.85 |
+| Document integrity | 35 | Sol | 0.990 | 34/35 | $0.57 | one long-document tail miss |
+| External case brief | 20 | Sol | 1.000 | 20/20 | $1.506 | judge calibration 0.95 |
+| Policy exception | 28 | Terra | 0.964 | 27/28 | $0.458 | one dual-prohibited residual; one route-invalid case removed |
+| Credit memo (live) | 22 | Sol | 1.000 | 22/22 | $0.267 | Terra 0.932; pin changed to Sol |
+| Case policy review | 22 | Sol | 1.000 | 22/22 | $0.092 | Terra 0.932; coverage ~0.70 |
+
+Judge calibration now exists for policy, brief, and exception (20 labels each:
+0.85 / 0.95 / 0.90). Case review has 10 anchors (0.50 exact agreement) and the
+memo judge none, so those two judge columns remain advisory. The advisory
+workflow test and `pnpm eval:guardrails` cover the flags-on/off invariant and
+cost/latency regressions.
 
 ## Reproduce
 
@@ -71,7 +97,7 @@ The production agent defaults now follow these results (overrides remain):
 | `POLICY_AGENT_MODEL` | `openai/gpt-6.1-terra` | `ANSWER-MODELS-RESULTS.md` |
 | `POLICY_EXCEPTION_MODEL` | `openai/gpt-6.1-terra` (tie with Sol; cost pick) | `POLICY-EXCEPTION-MODELS-RESULTS.md` |
 | `DOCUMENT_INTEGRITY_MODEL` | `openai/gpt-6.1-sol` | `INTEGRITY-MODELS-RESULTS.md` |
-| `ASSIST_MEMO_MODEL` | unchanged (`deepseek/...`; scripted eval only) | `MEMO-AGENT-RESULTS.md` |
+| `ASSIST_MEMO_MODEL` | `openai/gpt-6.1-sol` (live eval winner) | `apps/applications/eval/MEMO-LIVE-RESULTS.md` |
 
 ## Cost
 
@@ -133,12 +159,16 @@ lower consistency and gap coverage).
 
 ## Caveats
 
-- Context cases are three personas across 10–12 windows, not 30 customers.
-- The brief is 3 in-sample fixture cases; treat it as directional.
-- Policy/exception judges are fixed but still LLM graders; the code gates are
-  independent. Human calibration is not done.
+- Context has 30 window cases plus 7 cases over 5 independent customers; it is
+  not a customer-population sample.
+- The brief comparison is 3 in-sample entities; the extended suite has 20. The
+  17 fixtures added since the original three (15 since the 5-case run) are
+  held-out by construction, not a formal split.
+- Policy/brief/exception judges now have 20 human labels each; case review has
+  10 anchors and the memo judge none. Code gates remain independent.
 - An earlier six-model policy-exception sweep was invalidated by the
   OpenRouter key hard limit during memo/followup; it is superseded by the
   Terra/Sol rerun.
-- Two production interoperability fixes were required: `get_transactions`
-  cursor and integrity `searchPagesParams.limit` are now required properties.
+- Production interoperability fixes: context `get_transactions` cursor,
+  integrity `searchPagesParams.limit`, memo `list/search` tool schemas, and
+  policy case document-finding refs/prompt mapping.

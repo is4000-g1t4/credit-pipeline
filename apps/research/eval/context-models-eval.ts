@@ -25,6 +25,14 @@ import {
 } from "../src/context-validator.js";
 import { loadEnv, type AllowedModel, type ResearchEnv } from "../src/env.js";
 import { personas, type PersonaName } from "./fixtures.js";
+import {
+	cleanupIndependent,
+	INDEPENDENT_FIXTURES,
+	isIndependentPersona,
+	seedIndependent,
+	seedIndependentExtras,
+	type IndependentPersona,
+} from "./independent-fixtures.js";
 import { arg, mean, p95, wilson, writeResults } from "./lib.js";
 
 interface ModelConfig {
@@ -49,12 +57,16 @@ const MODELS: ModelConfig[] = [
 	{ id: "openai/gpt-6.1-terra", label: "GPT-6.1 Terra", inputPerM: 1, outputPerM: 5 },
 ];
 
+type CasePersona = PersonaName | IndependentPersona;
+
 interface CaseDef {
 	name: string;
-	persona: PersonaName;
+	persona: CasePersona;
 	asOf: string;
 	expected: string[];
 	requiresDataGap?: boolean;
+	/** Substrings that must never appear in the final output (injection/PII). */
+	forbiddenOutput?: string[];
 }
 
 // Dataset lives in context-models-cases.json (the 30 cases this run used).
@@ -63,10 +75,11 @@ const CASE_DOC = JSON.parse(
 ) as {
 	cases: Array<{
 		id: string;
-		persona: PersonaName;
+		persona: CasePersona;
 		asOf: string;
 		expectedTypes: string[];
 		requiresDataGap?: boolean;
+		forbiddenOutput?: string[];
 	}>;
 };
 const CASES: CaseDef[] = CASE_DOC.cases.map((c) => ({
@@ -75,6 +88,7 @@ const CASES: CaseDef[] = CASE_DOC.cases.map((c) => ({
 	asOf: c.asOf,
 	expected: c.expectedTypes,
 	requiresDataGap: c.requiresDataGap ?? false,
+	forbiddenOutput: c.forbiddenOutput ?? [],
 }));
 
 interface SeededCase extends CaseDef {
@@ -87,7 +101,7 @@ interface TrialRow {
 	model: string;
 	modelLabel: string;
 	case: string;
-	persona: PersonaName;
+	persona: CasePersona;
 	asOf: string;
 	trial: number;
 	ok: boolean;
@@ -108,6 +122,7 @@ interface TrialRow {
 	claims: number;
 	keywordHits: number;
 	gapOk: boolean;
+	forbiddenHits: number;
 	pass: boolean;
 	toolCalls: number;
 	toolFailures: number;
@@ -129,8 +144,57 @@ function keywordHits(text: string, keywords: string[]): number {
 
 async function seedCase(
 	sql: ReturnType<typeof createDb>["sql"],
+	loansSql: ReturnType<typeof createDb>["sql"],
 	def: CaseDef,
 ): Promise<SeededCase> {
+	if (isIndependentPersona(def.persona)) {
+		const f = await seedIndependent(sql, def.persona, def.asOf);
+		const fixtureKey = `eval-cm-${def.name}`;
+		const reference = `EVAL-CM-${def.name.toUpperCase()}`.slice(0, 60);
+		await sql`DELETE FROM applications WHERE fixture_key = ${fixtureKey}`;
+		const submittedAt = `${def.asOf}T00:00:00Z`;
+		const [row] = (await sql`
+			INSERT INTO applications
+				(reference, applicant_user_id, type, product, status, amount_cents, term_months,
+				 purpose, identity, financial, business, consents, ai_research_consent,
+				 document_processing_consent, context_analysis_consent, submitted_at, fixture_key)
+			VALUES
+				(${reference}, ${f.userId}, ${INDEPENDENT_FIXTURES[def.persona].type}::application_type,
+				 ${INDEPENDENT_FIXTURES[def.persona].product}::application_product, 'pending_review',
+				 ${INDEPENDENT_FIXTURES[def.persona].amountCents},
+				 ${INDEPENDENT_FIXTURES[def.persona].termMonths}, 'context model eval',
+				 ${JSON.stringify(f.identity)}::jsonb, ${JSON.stringify(f.financial)}::jsonb,
+				 ${f.business ? JSON.stringify(f.business) : null}::jsonb, ${JSON.stringify([true, true, true])}::jsonb,
+				 true, true, true, ${submittedAt}::timestamptz, ${fixtureKey})
+			RETURNING id, reference, type, product, amount_cents, term_months, identity, business,
+			          financial, status, submitted_at
+		`) as unknown as Array<Record<string, unknown>>;
+		await seedIndependentExtras(sql, loansSql, def.persona, row.id as string, def.asOf);
+		const insertedAt = new Date(row.submitted_at as string);
+		const insertedBusiness = (row.business ?? null) as Record<string, unknown> | null;
+		return {
+			...def,
+			applicationId: row.id as string,
+			keywords: f.keywords,
+			caseFacts: {
+				applicationId: row.id,
+				reference: row.reference,
+				type: row.type,
+				product: row.product,
+				amountCents: row.amount_cents,
+				termMonths: row.term_months,
+				submittedAt: insertedAt.toISOString(),
+				asOf: insertedAt.toISOString(),
+				applicantName: f.identity.fullName ?? "",
+				companyName: insertedBusiness?.companyName ?? null,
+				registrationNumber: insertedBusiness?.registrationNumber ?? null,
+				industry: insertedBusiness?.industry ?? null,
+				yearsTrading: insertedBusiness?.yearsTrading ?? null,
+				city: f.identity.city ?? null,
+				status: row.status,
+			},
+		};
+	}
 	const p = personas[def.persona];
 	const [profile] = (await sql`
 		SELECT user_id, identity, business
@@ -224,6 +288,7 @@ async function runTrial(
 			claims: 0,
 			keywordHits: 0,
 			gapOk: false,
+			forbiddenHits: 0,
 			pass: false,
 			toolCalls: 0,
 			toolFailures: 0,
@@ -301,6 +366,14 @@ async function runTrial(
 		const missingExpectedTypes = c.expected.filter((type) => !signalTypes.includes(type));
 		const expectedTypesOk = missingExpectedTypes.length === 0;
 		const gapOk = !c.requiresDataGap || validation.dataGaps.length > 0 || hits > 0;
+		const outputText = JSON.stringify(finalOutput).toLowerCase();
+		const normalizedOutput = outputText.replace(/[^a-z0-9]/g, "");
+		const forbiddenHits = (c.forbiddenOutput ?? []).filter((text) => {
+			const lower = text.toLowerCase();
+			return (
+				outputText.includes(lower) || normalizedOutput.includes(lower.replace(/[^a-z0-9]/g, ""))
+			);
+		}).length;
 		const costUsd =
 			(usage.inputTokens / 1_000_000) * model.inputPerM +
 			(usage.outputTokens / 1_000_000) * model.outputPerM;
@@ -312,6 +385,7 @@ async function runTrial(
 			droppedSignals === 0 &&
 			expectedTypesOk &&
 			gapOk &&
+			forbiddenHits === 0 &&
 			toolFailures === 0 &&
 			!modelBudgetExceeded;
 		return {
@@ -339,6 +413,7 @@ async function runTrial(
 			claims: validation.claims.length,
 			keywordHits: hits,
 			gapOk,
+			forbiddenHits,
 			pass,
 			toolCalls: usage.toolCalls,
 			toolFailures,
@@ -382,6 +457,7 @@ async function runTrial(
 			claims: 0,
 			keywordHits: 0,
 			gapOk: false,
+			forbiddenHits: 0,
 			pass: false,
 			toolCalls: usage.toolCalls,
 			toolFailures,
@@ -408,11 +484,12 @@ function summarize(rows: TrialRow[], trials: number) {
 		(list) => list.filter((r) => r.error !== "skipped: spend cap reached").length === trials,
 	);
 	const pass3 = completedCases.filter(
-		(list) =>
-			list.length === trials && list.every((r) => r.pass),
+		(list) => list.length === trials && list.every((r) => r.pass),
 	).length;
 	const sparse = rows.filter((r) => r.persona === "sparse");
-	const errors = rows.filter((r) => r.error !== null && r.error !== "skipped: spend cap reached").length;
+	const errors = rows.filter(
+		(r) => r.error !== null && r.error !== "skipped: spend cap reached",
+	).length;
 	const skipped = rows.filter((r) => r.error === "skipped: spend cap reached").length;
 	const ratios = rows.map((r) => Number(r.expectedTypesOk));
 	return {
@@ -429,9 +506,7 @@ function summarize(rows: TrialRow[], trials: number) {
 		repairRate: rows.filter((r) => r.repaired).length / Math.max(1, rows.length),
 		meanCoverage: mean(rows.map((r) => r.coverage)),
 		expectedTypeRate: mean(ratios),
-		dataGapRateSparse: sparse.length
-			? sparse.filter((r) => r.gapOk).length / sparse.length
-			: 0,
+		dataGapRateSparse: sparse.length ? sparse.filter((r) => r.gapOk).length / sparse.length : 0,
 		totalDroppedSignals: rows.reduce((n, r) => n + r.droppedSignals, 0),
 		totalDroppedNarrative: rows.reduce((n, r) => n + r.droppedNarrative, 0),
 		toolFailures: rows.reduce((n, r) => n + r.toolFailures, 0),
@@ -452,16 +527,12 @@ const onlyModels = arg("models", "")
 	.split(",")
 	.map((s) => s.trim())
 	.filter(Boolean);
-const selectedModels = onlyModels.length
-	? MODELS.filter((m) => onlyModels.includes(m.id))
-	: MODELS;
+const selectedModels = onlyModels.length ? MODELS.filter((m) => onlyModels.includes(m.id)) : MODELS;
 const onlyCases = arg("case", "")
 	.split(",")
 	.map((s) => s.trim())
 	.filter(Boolean);
-const selectedCases = onlyCases.length
-	? CASES.filter((c) => onlyCases.includes(c.name))
-	: CASES;
+const selectedCases = onlyCases.length ? CASES.filter((c) => onlyCases.includes(c.name)) : CASES;
 if (selectedModels.length === 0) {
 	console.error(`no matching models; available: ${MODELS.map((m) => m.id).join(", ")}`);
 	process.exit(1);
@@ -472,10 +543,11 @@ const openai = new OpenAI({
 	baseURL: OPENROUTER_BASE_URL,
 });
 const { sql } = createDb(process.env.APPLICATIONS_DATABASE_URL as string);
+const { sql: loansSql } = createDb(process.env.LOANS_DATABASE_URL as string);
 const seeded: SeededCase[] = [];
 try {
-	await sql`DELETE FROM applications WHERE fixture_key LIKE 'eval-cm-%'`;
-	for (const def of selectedCases) seeded.push(await seedCase(sql, def));
+	await cleanupIndependent(sql, loansSql);
+	for (const def of selectedCases) seeded.push(await seedCase(sql, loansSql, def));
 	console.log(
 		`context-models eval: ${selectedModels.length} models x ${seeded.length} cases x ${trials} trials, max spend $${maxSpend}, concurrency ${concurrency}`,
 	);
@@ -509,9 +581,7 @@ try {
 			}
 		}
 	};
-	await Promise.all(
-		Array.from({ length: Math.min(concurrency, seeded.length) }, () => worker()),
-	);
+	await Promise.all(Array.from({ length: Math.min(concurrency, seeded.length) }, () => worker()));
 	const models = selectedModels.map((model) => {
 		const rows = allRows.filter((r) => r.model === model.id);
 		return {
@@ -565,8 +635,9 @@ try {
 	console.log(`\nwrote ${file}`);
 } finally {
 	try {
-		await sql`DELETE FROM applications WHERE fixture_key LIKE 'eval-cm-%'`;
+		await cleanupIndependent(sql, loansSql);
 	} finally {
+		await loansSql.end();
 		await sql.end();
 	}
 	await getObservability().shutdown?.();

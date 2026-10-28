@@ -13,7 +13,8 @@
 		"import:draft": "bun --env-file=../../.env scripts/policy-import.ts",
 		"reindex": "bun --env-file=../../.env scripts/policy-reindex.ts",
 		"eval:embedding": "tsx eval/embedding-eval.ts",
-		"eval:answers": "tsx eval/answer-eval.ts"
+		"eval:answers": "tsx eval/answer-eval.ts",
+		"eval:case-review": "tsx eval/case-review-eval.ts"
 	},
 	"dependencies": {
 		"@credit/agent-observability": "workspace:*",

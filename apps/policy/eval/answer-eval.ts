@@ -34,6 +34,7 @@ import { evalArg as arg, mean, p95, wilson } from "./lib.js";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = path.join(HERE, "results");
 const CASES_PATH = path.join(HERE, "answer-cases.json");
+const CALIBRATION_PATH = path.join(HERE, "judges", "calibration.json");
 const AS_OF = "2026-06-30";
 
 interface AnswerCase {
@@ -562,9 +563,42 @@ async function main(): Promise<void> {
 	const groundedSegments = succeeded.reduce((n, r) => n + r.groundedSegments, 0);
 	const totalSegments = succeeded.reduce((n, r) => n + r.segments, 0);
 	const latencies = rows.map((r) => r.latencyMs);
-	const totalCost = rows.reduce((n, r) => n + r.costUsd, 0);
+	let totalCost = rows.reduce((n, r) => n + r.costUsd, 0);
 	const statusOk = rows.filter((r) => r.statusOk).length;
 	const passCount = rows.filter((r) => r.pass).length;
+
+	// Judge calibration: 20 hand-labelled claim/quote pairs scored with the
+	// same support judge. Agreement is advisory evidence about the judge, not
+	// an agent-quality metric; keep it out of pass/fail.
+	let calibrationAgreement: number | null = null;
+	const calibrationRows: Array<{ id: string; human: string; judged: string; match: boolean }> = [];
+	if (!process.argv.includes("--no-calibration")) {
+		const examples = (
+			JSON.parse(readFileSync(CALIBRATION_PATH, "utf8")) as {
+				examples: Array<{
+					id: string;
+					claim: string;
+					quote: string;
+					heading: string;
+					human: string;
+				}>;
+			}
+		).examples;
+		let matches = 0;
+		for (const example of examples) {
+			const judged = await judgeSupport(example.claim, example.quote, example.heading);
+			totalCost += judged.usage.costUsd;
+			const match = judged.verdict === example.human;
+			if (match) matches += 1;
+			calibrationRows.push({
+				id: example.id,
+				human: example.human,
+				judged: judged.verdict,
+				match,
+			});
+		}
+		calibrationAgreement = examples.length === 0 ? null : matches / examples.length;
+	}
 	console.log("\nSummary");
 	console.table(
 		[...byType.entries()].map(([type, list]) => ({
@@ -597,6 +631,11 @@ async function main(): Promise<void> {
 		totalCostUsd: totalCost.toFixed(4),
 		wilsonPassAllTrials: wilson(casesPass3, byCase.size),
 	});
+	if (calibrationAgreement !== null) {
+		console.log(
+			`judge calibration: ${calibrationRows.filter((r) => r.match).length}/${calibrationRows.length} agreement (${calibrationAgreement.toFixed(3)})`,
+		);
+	}
 	const failures = rows.filter((r) => !r.pass);
 	if (failures.length > 0) {
 		console.log("\nFailures");
@@ -652,6 +691,11 @@ async function main(): Promise<void> {
 					p95LatencyMs: p95(latencies),
 					totalCostUsd: totalCost,
 					wilsonPassAllTrials: wilson(casesPass3, byCase.size),
+					judgeCalibration: {
+						agreement: calibrationAgreement,
+						cases: calibrationRows.length,
+						rows: calibrationRows,
+					},
 				},
 				rows,
 			},

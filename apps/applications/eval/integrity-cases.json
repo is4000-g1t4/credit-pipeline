@@ -1227,6 +1227,319 @@
 			"notes": "Held out: same-customer reuse plus unknown metadata must not produce a high-severity flag.",
 			"split": "heldout",
 			"tags": ["safety", "same_customer", "must_not_flag"]
+		},
+		{
+			"expected": {
+				"forbiddenText": ["S$", "USD", "EUR"],
+				"triageMustValidate": true,
+				"triageRequiredSignalCodes": ["ocr_unsupported"]
+			},
+			"feature": "document_integrity",
+			"id": "integrity-extract-image-only-no-text",
+			"input": {
+				"applicationType": "sme",
+				"documents": [
+					{
+						"alias": "scan",
+						"kind": "bank_statement",
+						"ocrStatus": "unsupported",
+						"pages": [""],
+						"source": "ocr"
+					}
+				],
+				"signals": [
+					{
+						"code": "ocr_unsupported",
+						"documentAlias": "scan",
+						"severity": "medium",
+						"summary": "document text could not be extracted"
+					}
+				],
+				"unavailable": [
+					{
+						"code": "missing",
+						"label": "Scanned page has no extractable text layer"
+					}
+				]
+			},
+			"mode": "triage",
+			"notes": "Held out: image-only page with no extractable text; OCR is out of scope so no fields may be invented — the ocr_unsupported signal must be cited and the gap recorded, never filled.",
+			"split": "heldout",
+			"tags": ["extraction", "ocr", "image_only", "no_text"]
+		},
+		{
+			"expected": {
+				"expectedCandidates": [
+					{
+						"field": "document_type",
+						"value": "bank_statement"
+					},
+					{
+						"field": "material_amount",
+						"value": "S$88,123.45"
+					}
+				],
+				"requiredCandidateFields": ["document_type", "material_amount"]
+			},
+			"feature": "document_integrity",
+			"id": "integrity-extract-long-document-tail-field",
+			"input": {
+				"applicationType": "sme",
+				"documents": [
+					{
+						"alias": "stmt",
+						"documentDate": "2026-03-31",
+						"kind": "bank_statement",
+						"pages": [
+							"BANK STATEMENT\nAccount holder: Daniel Koh\nStatement period: 01 Jan 2026 to 31 Mar 2026\nRecorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. Recorded transaction line placeholder with no figures to extract. \nClosing balance: S$88,123.45\n"
+						],
+						"periodEnd": "2026-03-31"
+					}
+				]
+			},
+			"mode": "analysis",
+			"notes": "Held out: one page over 20k chars with the closing balance at the very end; get_page returns only the first 8k chars (truncated:true), so the tail field is reachable only via search_pages excerpts — extraction must still find it exactly.",
+			"split": "heldout",
+			"tags": ["extraction", "long_document", "truncation"]
+		},
+		{
+			"expected": {
+				"expectedCandidates": [
+					{
+						"field": "document_type",
+						"value": "bank_statement"
+					},
+					{
+						"field": "document_date",
+						"value": "31/03/2026"
+					},
+					{
+						"field": "material_amount",
+						"value": "EUR 12,345.67"
+					}
+				],
+				"forbiddenCandidateValues": ["SGD", "S$"],
+				"requiredCandidateFields": ["document_type", "document_date", "material_amount"]
+			},
+			"feature": "document_integrity",
+			"id": "integrity-extract-eur-amount-locale-date",
+			"input": {
+				"applicationType": "sme",
+				"documents": [
+					{
+						"alias": "stmt",
+						"documentDate": "2026-03-31",
+						"kind": "bank_statement",
+						"pages": [
+							"BANK STATEMENT\nAccount holder: Daniel Koh\nStatement date: 31/03/2026\nClosing balance: EUR 12,345.67"
+						],
+						"periodEnd": "2026-03-31"
+					}
+				]
+			},
+			"mode": "analysis",
+			"notes": "Held out: EUR amount plus day-first locale date; the currency must be kept as EUR and never coerced to SGD, and the locale date normalised to 2026-03-31.",
+			"split": "heldout",
+			"tags": ["extraction", "amount_format", "date_format", "currency"]
+		},
+		{
+			"expected": {
+				"triageMustValidate": true,
+				"triageRequiredSignalCodes": ["duplicate_hash_same_application"]
+			},
+			"feature": "document_integrity",
+			"id": "integrity-triage-duplicate-conflicting-statements",
+			"input": {
+				"applicationType": "sme",
+				"documents": [
+					{
+						"alias": "stmt1",
+						"kind": "bank_statement",
+						"pages": [
+							"BANK STATEMENT\nAccount holder: Daniel Koh\nAccount number: 1111111111\nStatement period: 01 Jan 2026 to 31 Mar 2026\nClosing balance: S$10,000.00"
+						]
+					},
+					{
+						"alias": "stmt2",
+						"kind": "bank_statement",
+						"pages": [
+							"BANK STATEMENT\nAccount holder: Daniel Koh\nAccount number: 1111111111\nStatement period: 01 Jan 2026 to 31 Mar 2026\nClosing balance: S$10,500.00"
+						]
+					}
+				],
+				"duplicateCounts": {
+					"crossApplicant": 0,
+					"sameApplicantOther": 0,
+					"sameApplication": 1
+				},
+				"duplicateMatches": [
+					{
+						"kind": "bank_statement",
+						"matchAlias": "stmt1-copy",
+						"relation": "same_application",
+						"sourceAlias": "stmt1"
+					}
+				],
+				"signals": [
+					{
+						"code": "duplicate_hash_same_application",
+						"count": 1,
+						"severity": "medium",
+						"summary": "identical file hash appears more than once in this case"
+					}
+				]
+			},
+			"mode": "triage",
+			"notes": "Held out: two statements of the same kind reuse one file hash yet state different balances for the same account and period; the duplicate signal must be cited. The conflicting pair itself is graded deterministically in integrity-consistency-conflicting-statement-amounts.",
+			"split": "heldout",
+			"tags": ["triage", "duplicate", "conflict", "same_application"]
+		},
+		{
+			"expected": {
+				"expectedCandidates": [
+					{
+						"field": "document_type",
+						"value": "bank_statement"
+					},
+					{
+						"field": "document_date",
+						"value": "30 Jun 2023"
+					}
+				],
+				"forbiddenCandidateValues": ["2024", "2025", "2026"],
+				"requiredCandidateFields": ["document_type", "document_date"]
+			},
+			"feature": "document_integrity",
+			"id": "integrity-extract-stale-statement-date",
+			"input": {
+				"applicationType": "sme",
+				"documents": [
+					{
+						"alias": "stmt",
+						"documentDate": "2023-06-30",
+						"kind": "bank_statement",
+						"pages": [
+							"BANK STATEMENT\nAccount holder: Daniel Koh\nStatement date: 30 Jun 2023\nClosing balance: S$9,876.54"
+						],
+						"periodEnd": "2023-06-30"
+					}
+				]
+			},
+			"mode": "analysis",
+			"notes": "Held out: statement three years before the case as-of; production emits no deterministic stale signal, so the floor is literal extraction — the stale date must be reported as-is, never refreshed to a current year.",
+			"split": "heldout",
+			"tags": ["extraction", "stale", "document_date"]
+		},
+		{
+			"expected": {
+				"expectedCandidates": [
+					{
+						"field": "registration_number",
+						"value": "201912345K"
+					},
+					{
+						"field": "registration_number",
+						"value": "201988765K"
+					}
+				],
+				"expectedConsistency": [
+					{
+						"field": "company_name",
+						"findingState": "match",
+						"proposedKind": "match"
+					}
+				],
+				"requiredCandidateFields": ["registration_number"]
+			},
+			"feature": "document_integrity",
+			"id": "integrity-consistency-same-name-different-reg",
+			"input": {
+				"applicationType": "sme",
+				"documents": [
+					{
+						"alias": "br",
+						"kind": "business_registration",
+						"pages": [
+							"BUSINESS REGISTRATION\nCompany Name: Merlion Foods Pte Ltd\nRegistration No.: 201912345K"
+						]
+					},
+					{
+						"alias": "stmt",
+						"kind": "bank_statement",
+						"pages": [
+							"BANK STATEMENT\nCompany Name: Merlion Foods Pte Ltd\nRegistration No.: 201988765K\nAccount holder: Daniel Koh"
+						]
+					}
+				]
+			},
+			"mode": "analysis",
+			"notes": "Held out: identical company names with genuinely different registration numbers; the name pair must confirm as a match — a differing UEN must never flip the name verdict to mismatch.",
+			"split": "heldout",
+			"tags": ["consistency", "company_name", "match", "benign", "negative"]
+		},
+		{
+			"expected": {
+				"expectedCandidates": [
+					{
+						"field": "material_amount",
+						"value": "S$10,000.00"
+					}
+				],
+				"expectedConsistency": [
+					{
+						"field": "material_amount",
+						"findingState": "mismatch",
+						"proposedKind": "mismatch"
+					}
+				],
+				"requiredCandidateFields": ["material_amount"]
+			},
+			"feature": "document_integrity",
+			"id": "integrity-consistency-conflicting-statement-amounts",
+			"input": {
+				"applicationType": "sme",
+				"documents": [
+					{
+						"alias": "stmt1",
+						"kind": "bank_statement",
+						"pages": [
+							"BANK STATEMENT\nAccount holder: Daniel Koh\nAccount number: 1111111111\nStatement period: 01 Jan 2026 to 31 Mar 2026\nClosing balance: S$10,000.00"
+						]
+					},
+					{
+						"alias": "stmt2",
+						"kind": "bank_statement",
+						"pages": [
+							"BANK STATEMENT\nAccount holder: Daniel Koh\nAccount number: 1111111111\nStatement period: 01 Jan 2026 to 31 Mar 2026\nClosing balance: S$10,500.00"
+						]
+					}
+				],
+				"duplicateCounts": {
+					"crossApplicant": 0,
+					"sameApplicantOther": 0,
+					"sameApplication": 1
+				},
+				"duplicateMatches": [
+					{
+						"kind": "bank_statement",
+						"matchAlias": "stmt1-copy",
+						"relation": "same_application",
+						"sourceAlias": "stmt1"
+					}
+				],
+				"signals": [
+					{
+						"code": "duplicate_hash_same_application",
+						"count": 1,
+						"severity": "medium",
+						"summary": "identical file hash appears more than once in this case"
+					}
+				]
+			},
+			"mode": "analysis",
+			"notes": "Held out: companion to the duplicate triage case — same account and period with irreconcilably different closing balances; the pair must confirm as a material_amount mismatch.",
+			"split": "heldout",
+			"tags": ["consistency", "material_amount", "mismatch", "duplicate"]
 		}
 	],
 	"schema": "Top-level mode is analysis|triage. input is an IntegritySource fragment: documents[{alias,kind,pages[],ocrStatus,textLayerRisk,ocrConfidence,documentDate,periodEnd,source,readable}], signals[{code,severity,documentAlias|null,summary,count?}], crosscheck{findings[{field,status,confidence,expected,observed,documentAlias,pageNumber}]}, duplicateCounts, duplicateMatches[{sourceAlias,matchAlias,kind,relation}], customerDocuments[{alias,kind,pages[]}], unavailable[{code,label}], caseFacts, consents, includeCustomerEvidence, otherRefs (cross-customer values passed as triage forbiddenValues). expected: requiredCandidateFields (every field needs a non-rejected candidate), expectedCandidates[{field,value}] (value normalised with production normalizeCandidateValue and compared to validated normalizedValue), forbiddenCandidateValues (substring on candidate values), expectedConsistency[{field,proposedKind,findingState:match|mismatch|needs_chase}], triageRequiredSignalCodes (must appear in validated citation refs), triageMustValidate (production runIntegrityTriage must accept), minContradictions/minAlternativeExplanations (counts on validated brief), forbiddenText (substring on validated brief prose only, never on evidence quotes), mustNotFlag (shouldFlag(signals,high) is false and, for triage, suggestedPriority is not high). maxDroppedClaims is accepted but informational: the production orchestrator repairs until zero dropped, so an accepted outcome always has zero."

@@ -33,6 +33,49 @@ export const getEvidenceParams = z.object({ ref: z.string() }).strict();
 
 export const listUnavailableParams = z.object({}).strict();
 
+// Plain-JSON equivalents of the list/search params for the `@openai/agents`
+// SDK. The SDK forces `strict: true` on zod-declared functions, and OpenAI
+// strict mode rejects schemas whose optional properties are absent from
+// `required` (400 invalid_function_parameters), so the zod forms above can
+// never be sent. These declare the same shape with `strict: false`; runtime
+// validation still lives in `runMemoEvidenceTool` (bad args are tool errors
+// in the payload, never throws), so wire behavior is unchanged.
+interface EvidenceJsonParams {
+	type: "object";
+	properties: Record<string, Record<string, unknown>>;
+	required: string[];
+	additionalProperties: true;
+}
+
+function sourceTypeJsonSchema(): Record<string, unknown> {
+	return { type: "string", enum: [...SOURCE_TYPES] };
+}
+
+export const listEvidenceJsonParams: EvidenceJsonParams = {
+	type: "object",
+	properties: {
+		sourceType: sourceTypeJsonSchema(),
+		limit: { type: "integer", minimum: 1, maximum: 50 },
+	},
+	required: [],
+	// `true` to satisfy the SDK's non-strict JSON-schema type; the runtime
+	// still ignores unknown fields via `asRecord` in `runMemoEvidenceTool`.
+	additionalProperties: true,
+};
+
+export const searchEvidenceJsonParams: EvidenceJsonParams = {
+	type: "object",
+	properties: {
+		query: { type: "string" },
+		sourceType: sourceTypeJsonSchema(),
+		limit: { type: "integer", minimum: 1, maximum: 20 },
+	},
+	required: ["query"],
+	// `true` to satisfy the SDK's non-strict JSON-schema type; the runtime
+	// still ignores unknown fields via `asRecord` in `runMemoEvidenceTool`.
+	additionalProperties: true,
+};
+
 const SOURCE_TYPE_LIST = [...SOURCE_TYPES] as string[];
 
 function asRecord(value: unknown): Record<string, unknown> {

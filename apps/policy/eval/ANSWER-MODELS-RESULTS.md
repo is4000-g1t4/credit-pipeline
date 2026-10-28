@@ -45,6 +45,35 @@ not a citation-grader artifact.
   judge pass. Its prose is good but it refuses or returns invalid answers more
   often.
 
+## Held-out gap extension (43 cases)
+
+Six held-out cases added: two unanswerable domains absent from the corpus
+(parental leave, SWIFT cut-off times), two ambiguous requests, and two
+adversarial/injection questions wrapped around real policy questions
+(DSCR/LTV). They bring the suite to 43 cases: 29 dev / 14 held-out.
+
+Terra, 43 cases × 3 trials (final run with judge calibration):
+
+- **pass@1 120/129 (0.930)**, **pass^3 37/43 (0.860)**.
+- Dev 25/29 pass^3; held-out **12/14** pass^3.
+- Status accuracy 128/129, citation hit 91/92, grounded 213/215, cost $0.315.
+- Judge calibration: **17/20 agreement (0.850)** on the 20 hand-labelled pairs.
+
+The two held-out unanswerable cases pass 3/3. Of the two adversarial cases,
+`nav-heldout-13` passes 3/3 and `nav-heldout-14` passes 1/3 (two judge `missing`
+verdicts). The other held-out loss is `nav-heldout-01` (judge `partial`). Dev
+failures are `nav-no-match-01` (status: `needs_policy_owner` vs `no_match`),
+`nav-answerable-05`/`17` (completeness/grounding), and `nav-engine-03`
+(completeness). There were no citation failures in this run.
+
+**Stale/as-of version case: blocked.** `eval/corpus.ts` hardcodes
+`effectiveTo: null` and every policy is a single `v1` version, so there is no
+multi-version corpus to exercise as-of selection. Do not fabricate one.
+
+The eval now also scores **20 hand-labelled claim/quote pairs** with the same
+support judge and reports agreement in the result JSON
+(`apps/policy/eval/judges/calibration.json`).
+
 ## Verdict
 
 **GPT-6.1 Terra wins the policy navigator**: perfect code pass@3, the highest
@@ -55,5 +84,7 @@ not recommended for this agent.
 
 - The judge is Terra, so Terra's judge columns carry self-preference bias; the
   code pass is independent of the judge.
-- 37 cases (29 dev / 8 held-out); held-out was not used for tuning.
+- The model comparison is 37 cases (29 dev / 8 held-out); the held-out gap
+  extension takes the suite to 43 (29 dev / 14 held-out). Held-out was not used
+  for tuning.
 - Costs are OpenRouter list prices from token usage, not billed.

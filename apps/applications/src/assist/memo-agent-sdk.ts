@@ -17,10 +17,10 @@ import { applicationObservability } from "../observability.js";
 import { MemoAgentError, type MemoAgentRunner, type MemoAgentRunResult } from "./memo-agent.js";
 import {
 	getEvidenceParams,
-	listEvidenceParams,
+	listEvidenceJsonParams,
 	listUnavailableParams,
 	runMemoEvidenceTool,
-	searchEvidenceParams,
+	searchEvidenceJsonParams,
 } from "./memo-tools.js";
 import { readRunUsage, type AgentsOpenAIClient } from "@credit/agent-observability/openai-agents";
 
@@ -160,14 +160,16 @@ export function createAgentsMemoRunner(opts: AgentsMemoRunnerOptions): MemoAgent
 						name: "list_evidence",
 						description:
 							"List evidence refs with labels, source types, and short excerpts. Use this first to cover the bundle; get_evidence returns fuller text.",
-						parameters: listEvidenceParams,
+						parameters: listEvidenceJsonParams,
+						strict: false,
 						execute: async (args) => invoke("list_evidence", args),
 					}),
 					tool({
 						name: "search_evidence",
 						description:
 							"Case-insensitive token search over evidence labels, content, and metadata. Returns short excerpts, not full content.",
-						parameters: searchEvidenceParams,
+						parameters: searchEvidenceJsonParams,
+						strict: false,
 						execute: async (args) => invoke("search_evidence", args),
 					}),
 					tool({

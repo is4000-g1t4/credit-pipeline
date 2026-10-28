@@ -100,7 +100,7 @@ const parsed = createEnv({
 		ASSIST_MEMO_WRITER: z.enum(["deterministic", "agent"]).default("deterministic"),
 		// Not model-compared: the memo eval is scripted
 		// (apps/applications/eval/MEMO-AGENT-RESULTS.md).
-		ASSIST_MEMO_MODEL: z.string().min(1).default("deepseek/deepseek-v4.1-flash-1017"),
+		ASSIST_MEMO_MODEL: z.string().min(1).default("openai/gpt-6.1-sol"),
 		ASSIST_MEMO_PROMPT_VERSION: z.string().min(1).default("memo-agent-v1"),
 		ASSIST_MEMO_AGENT_VERSION: z.string().min(1).default("memo-agent-v1"),
 		ASSIST_MEMO_MAX_STEPS: z.coerce.number().int().min(1).max(64).default(30),

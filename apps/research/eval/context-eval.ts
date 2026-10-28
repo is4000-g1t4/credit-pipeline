@@ -208,8 +208,10 @@ const selected = personaOrder.filter((name) => !only || name === only);
 const { sql } = createDb(process.env.APPLICATIONS_DATABASE_URL as string);
 const cases: ContextCase[] = [];
 try {
-	// Eval-owned rows only; never a live demo application.
-	await sql`DELETE FROM applications WHERE fixture_key LIKE 'eval-%'`;
+	// Eval-owned rows only; never a live demo application. Context-model
+	// applications use their own `eval-cm-*` namespace and have dependent
+	// findings/crosschecks, so leave them to `context-models-eval`.
+	await sql`DELETE FROM applications WHERE fixture_key LIKE 'eval-%' AND fixture_key NOT LIKE 'eval-cm-%'`;
 	for (const persona of selected) cases.push(await ensureCase(sql, persona));
 } catch (err) {
 	console.error("context eval setup failed", err);

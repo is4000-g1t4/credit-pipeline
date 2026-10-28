@@ -1,5 +1,22 @@
 # Policy navigator — answer eval
 
+## 2026-10-28 held-out extension
+
+The suite now has 43 cases (29 dev, 14 held-out): two unanswerable domains absent
+from the corpus, two ambiguous requests, and two injection questions wrapped
+around real policy questions. Terra, 3 trials:
+
+- **pass@1 120/129 (0.930)**, **pass^3 37/43 (0.860)**; dev 25/29, held-out
+  12/14.
+- Status 128/129, citation 91/92, grounded 213/215, cost $0.315.
+- Judge calibration (20 hand-labelled pairs): **17/20 (0.850)**.
+
+The held-out losses are judge `partial`/`missing` verdicts on valid answers
+(`nav-heldout-01`, `nav-heldout-14`); the remaining dev failures are the
+pre-existing completeness/citation flakes. Stale/as-of version selection is
+blocked because the corpus has one version per policy (`effectiveTo: null`).
+Details: `ANSWER-MODELS-RESULTS.md`.
+
 ## 2026-10-27 re-run (POL-CR-009 decision-engine standard)
 
 The corpus gained `POL-CR-009-decision-engine-standard.md` (9.0–9.4), so the
@@ -100,9 +117,9 @@ numbers are directional and stricter than the deterministic citation gate.
 
 - Synthetic corpus, one version per policy; no retired/future-effective version
   is exercised. The eval bypasses ACL and budget gates (metadata records this).
-- 31 cases is enough for a PoC, not for a production claim. The dev failures
+- 43 cases is enough for a PoC, not for a production claim. The dev failures
   are reported rather than hidden.
-- The claim-support/completeness judge is self-graded by the same model family
-  and has no human agreement study; treat those columns as advisory.
+- The claim-support/completeness judge now has 20 hand-labelled pairs (0.85
+  agreement), but it is still an LLM grader; treat those columns as advisory.
 - The held-out result is the one to quote for generalisation. The dev result is
   the tuning set.

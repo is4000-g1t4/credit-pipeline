@@ -23,11 +23,44 @@ must select: `round_trip`, `cash_deposit_share`, `returned_payment`,
 `insufficient_data`. The 30 cases are 12 BreadTalk windows, 12 Alex windows,
 and 6 Sparse windows; 21 dev / 9 held-out by mark, not used for tuning.
 
-Caveat: these are 30 window variants over three customers, not 30 independent
-customers. The dataset tests selection, boundary handling, restraint, and gap
-coverage; it does not test a new customer population.
+Caveat: the original comparison used 30 window variants over three customers, not
+30 independent customers. A later extension added seven independent-customer
+cases (below); the original six-model table remains the 30-case comparison.
 
-## Results
+## Independent-customer extension (37 cases)
+
+`eval/independent-fixtures.ts` adds five eval-owned customers that are not
+demo-seed rows:
+
+- `multiaccount`: two owned accounts, aggregate (`all`) scope, internal
+  transfers, one dominant payer, declared FCF 2.0m vs ~6.3m observed.
+- `negative`: four consecutive end-of-day negative balances (threshold 3), plus
+  an early as-of that closes before the overdraft.
+- `rich`: 60 transactions, a decided prior application, an overdue loan with
+  installments and an open EWS alert, three KYC checks, bureau and bank
+  reports, and a document crosscheck/finding.
+- `emptywindow`: an active account with no rows inside the observation window.
+- `hostile`: injection text in case facts and a finding reason, plus an NRIC
+  and phone number in stripped transaction descriptions.
+
+Terra and Sol, 37 cases × 3 trials = 222 runs, default preflight-off path:
+
+| Model | pass@1 | pass^3 | Errors | Narrative drops/run | Mean / p95 | Cost |
+|---|---:|---:|---:|---:|---:|---:|
+| GPT-6.1 Terra | 1.000 | 37/37 | 0/111 | 0.38 | 13.0s / 22.6s | $1.386 |
+| GPT-6.1 Sol | 1.000 | 37/37 | 0/111 | 1.59 | 16.4s / 25.4s | $3.577 |
+
+All seven new cases passed at pass^3 for both models. The hostile case returned
+no injection text, NRIC, phone number, approval language, or `low risk` phrase
+in any trial. Terra remains the pinned model: same accuracy, 42 narrative drops
+vs 177, and 2.6× cheaper.
+
+Pagination caveat: the applications service pages transactions at 500 rows
+(`CONTEXT_TRANSACTIONS_PAGE_LIMIT`), so the 60-row rich fixture exercises
+volume but not cursor pagination. A true paging case needs >500 rows or a
+restarted service with a smaller page limit.
+
+## Results (30-case comparison)
 
 `pass` = validator `ok`, all deterministic candidates covered exactly once,
 no dropped signals, expected types present, sparse gap present, no tool
@@ -41,7 +74,7 @@ server composes persisted prose), but they are a model-quality signal.
 | Meta Muse Wonder | 1.000 | 30/30 | 1.000 | 0/90 | 1.00 | 1.09 | 11.5s / 15.7s | $8.74 |
 | Gemini 4 Argon | 1.000 | 30/30 | 1.000 | 0/90 | 1.00 | 3.52 | 27.6s / 55.0s | $4.49 |
 | Claude Opus 5.5 | 0.989 | 29/30 | 1.000 | 0/90 | 1.00 | 5.53 | 21.3s / 38.9s | $8.90 |
-| DeepSeek V4.1 Flash 1017 | 0.978 | 28/30 | 0.822 | 1/90 | 0.94 | 1.63 | 5.4s / 16.6s | $0.27 |
+| DeepSeek V4.1 Flash 1017 | 0.978 | 28/30 | 0.822 | 2/90 | 0.94 | 1.63 | 5.4s / 16.6s | $0.27 |
 
 Wilson 95% CI for pass@1: perfect models 0.959–1.000; Opus 0.940–0.998;
 DeepSeek 0.922–0.995. Total spend: $27.29.
@@ -64,9 +97,10 @@ advisory, not a product-safety metric.
 
 ## Failure clusters
 
-- **DeepSeek (1/90).** `sparse-2026-04-30` trial 2 failed with truncated JSON
-  (`Expected ',' or ']' after array element`). All other runs passed; pass^3
-  28/30.
+- **DeepSeek (2/90).** `sparse-2026-04-30` trial 2 failed with truncated JSON
+  (`Expected ',' or ']' after array element`). `breadtalk-2026-04-30` trial 2
+  missed one candidate (`declared_vs_observed_cashflow`), coverage 0.5. The
+  other 88 runs passed; pass@1 0.978, pass^3 28/30.
 - **Opus (1/90).** `breadtalk-2026-03-31` trial 1 dropped one candidate
   (`candidate already reported`), failing that run.
 - **No failures** for Terra, Sol, Muse, or Gemini.
@@ -97,17 +131,27 @@ quality-per-dollar model in this suite.
 
 - **Best transcript depth:** GPT-6.1 Sol (5/5), at 2.8× Terra's cost and 2.3×
   the drop count.
-- **Best structured accuracy:** five-way tie at 30/30 (Terra, Sol, Muse,
+- **Best structured accuracy:** four-way tie at 30/30 (Terra, Sol, Muse,
   Gemini; Opus 29/30, DeepSeek 28/30).
-- **Fastest / cheapest:** DeepSeek ($0.27, 5.4s), with one JSON failure and
-  lower gap coverage.
+- **Fastest / cheapest:** DeepSeek ($0.27, 5.4s), with one JSON failure, one
+  missing-candidate run, and lower gap coverage.
 - **Not recommended for this agent:** Opus (expensive, 498 drops) and Muse
   (accurate but shallow/duplicated); Gemini is correct but slow.
 
 ## Caveats
 
-- Synthetic demo data; 30 window variants, not 30 customers; no tuning on the
-  held-out mark.
+- Synthetic demo data; 30 window variants plus 5 independent customers, not a
+  population sample. There was no per-case prompt tuning on held-out, but the
+  preflight A/B and model selection used all 30 original cases (21 dev / 9
+  held-out).
+- The 60-transaction rich fixture does not cross the production 500-row page
+  limit, so cursor pagination remains untested.
+- Independent cases share one fixture user id per persona, so `credit-history`
+  can see sibling eval applications from the same persona. That is fixture-only
+  noise, not a production data leak, but it weakens prior-exposure isolation.
+- The hostile check normalizes case/separators and scans the final output only;
+  it does not force a document-findings tool call, so it proves the observed
+  output is clean, not that every injection path was exercised.
 - Prices are OpenRouter list prices at run time; costs are projected from
   token usage, not billed.
 - One human judge, no inter-rater calibration; narrative drops are advisory

@@ -3310,6 +3310,680 @@
 			"scenario": "followup",
 			"split": "heldout",
 			"tags": ["followup", "out-of-scope"]
+		},
+		{
+			"expected": {
+				"exceptionPath": {
+					"PL-DTI-HIGH": {
+						"approver": null,
+						"dualSignoff": false,
+						"mitigantCodes": [],
+						"planMonths": null,
+						"state": "prohibited"
+					},
+					"PL-SCORE-LOW": {
+						"approver": null,
+						"dualSignoff": false,
+						"mitigantCodes": [],
+						"planMonths": null,
+						"state": "prohibited"
+					}
+				},
+				"failedRuleIds": ["PL-DTI-HIGH", "PL-SCORE-LOW"],
+				"forbiddenText": ["approve", "decline", "recommend", "decision"],
+				"mustCiteRuleIds": ["PL-DTI-HIGH", "PL-SCORE-LOW"],
+				"persistedRuleIds": ["DTI_TOO_HIGH", "SCORE_TOO_LOW"],
+				"referenceAnswer": "The servicing ratio of 62.50% is above the 55% cap and the assessment value of 550 is below 580. Both breaches are prohibited from exception, so the navigator states each rule and its prohibition without naming mitigants or an approver.",
+				"requiredSections": [
+					"POL-CR-009#9.1",
+					"POL-CR-002#2.1",
+					"POL-CR-005#5.2",
+					"POL-CR-009#9.4"
+				],
+				"ruleMapping": {
+					"PL-DTI-HIGH": {
+						"exceptionSections": [
+							"POL-CR-002#2.1",
+							"POL-CR-005#5.1",
+							"POL-CR-005#5.2",
+							"POL-CR-005#5.3",
+							"POL-CR-009#9.4"
+						],
+						"ruleSections": ["POL-CR-009#9.1"],
+						"state": "prohibited"
+					},
+					"PL-SCORE-LOW": {
+						"exceptionSections": ["POL-CR-005#5.2", "POL-CR-009#9.4"],
+						"ruleSections": ["POL-CR-009#9.1", "POL-CR-009#9.4"],
+						"state": "prohibited"
+					}
+				},
+				"status": "succeeded"
+			},
+			"feature": "policy_exception",
+			"id": "pe-explain-11",
+			"input": {
+				"application": {
+					"amountCents": 1200000,
+					"business": {},
+					"id": "11111111-1111-4111-8111-111111111126",
+					"product": "personal_loan",
+					"reference": "APP-2026-AAAB26",
+					"status": "pending_review"
+				},
+				"decision": null,
+				"evidence": [
+					{
+						"content": "1200000",
+						"label": "amountCents",
+						"metadata": {},
+						"ref": "case_fact:11111111-1111-4111-8111-111111111126:amountCents",
+						"sourceType": "case_fact"
+					},
+					{
+						"content": "36",
+						"label": "termMonths",
+						"metadata": {},
+						"ref": "case_fact:11111111-1111-4111-8111-111111111126:termMonths",
+						"sourceType": "case_fact"
+					}
+				],
+				"policyEvaluation": {
+					"createdAt": "2026-06-15T09:00:00.000Z",
+					"evaluatedAt": "2026-06-15T10:00:00.000Z",
+					"id": "22222222-2222-4222-8222-222222222226",
+					"inputs": {
+						"amountCents": 1200000,
+						"employmentYears": 3,
+						"existingDebtCents": 300000,
+						"kind": "individual",
+						"monthlyIncomeCents": 800000,
+						"newPaymentCents": 200000,
+						"score": 550,
+						"termMonths": 36
+					},
+					"outcome": "decline",
+					"policyVersion": "policy-v1.0",
+					"reasons": [
+						{
+							"code": "DTI_TOO_HIGH"
+						},
+						{
+							"code": "SCORE_TOO_LOW"
+						}
+					]
+				},
+				"policyInputs": {
+					"amountCents": 1200000,
+					"employmentYears": 3,
+					"existingDebtCents": 300000,
+					"kind": "individual",
+					"monthlyIncomeCents": 800000,
+					"newPaymentCents": 200000,
+					"score": 550,
+					"termMonths": 36
+				},
+				"question": "Which rules failed, and can either proceed by exception?",
+				"sections": [
+					{
+						"body": "Individual unsecured applications are processed between S$1,000 and S$25,000 for a term of 12 to 60 months. The total debt servicing ratio is automatically processed at or below 35%, manually reviewed above 35% and up to 50%, and declined above 50%. The credit score is automatically processed at 700 or above, manually reviewed from 580 to 699, and declined below 580. The automatic-processing amount is at most S$15,000. Employment of at least 1 year is required for automatic processing; shorter employment is manually reviewed.",
+						"contentHash": "3456c498ba62311ae87b9ebcfcf61f5c217f1618b9f09328624f18cabc428b7a",
+						"effectiveFrom": "2026-01-01",
+						"effectiveTo": null,
+						"heading": "Individual automatic-processing bands",
+						"policyId": "91000000-9100-4000-8000-910000000009",
+						"policyKey": "POL-CR-009",
+						"policyVersionId": "90000000-9000-4000-8000-900000000009",
+						"productScope": "all",
+						"sectionId": "9.1",
+						"status": "approved",
+						"version": "v1"
+					},
+					{
+						"body": "All individual borrowers are subject to a total debt servicing ratio (TDSR) cap of 55% of gross monthly qualifying income. TDSR aggregates the proposed instalment, all existing obligations from the bureau report, and 3% of outstanding unsecured revolving balances treated as a monthly commitment. Breach of the 55% cap is a hard decline and cannot be cured by exception.",
+						"contentHash": "d975a4ed4953cc6cf3e16f60afa529c32ea3aa657ba2ed6cba2643618e8be2e0",
+						"effectiveFrom": "2026-01-01",
+						"effectiveTo": null,
+						"heading": "Total debt servicing ratio for individuals",
+						"policyId": "91000000-9100-4000-8000-910000000002",
+						"policyKey": "POL-CR-002",
+						"policyVersionId": "90000000-9000-4000-8000-900000000002",
+						"productScope": "all",
+						"sectionId": "2.1",
+						"status": "approved",
+						"version": "v1"
+					},
+					{
+						"body": "Every exception requires dual sign-off at least one level above the standard approval authority for that amount. The exception memo must state the breached rule, compensating factors, and a time-bound regularisation plan not exceeding 12 months. Single-rule breaches only: cases breaching 2 or more policy rules require credit committee approval regardless of amount.",
+						"contentHash": "ecd12631c5b8fb051c6eb0e565ca440d7cf43c79bae75ec22816b087ec05d09f",
+						"effectiveFrom": "2026-01-01",
+						"effectiveTo": null,
+						"heading": "Exception limits and dual control",
+						"policyId": "91000000-9100-4000-8000-910000000005",
+						"policyKey": "POL-CR-005",
+						"policyVersionId": "90000000-9000-4000-8000-900000000005",
+						"productScope": "all",
+						"sectionId": "5.1",
+						"status": "approved",
+						"version": "v1"
+					},
+					{
+						"body": "Approved exceptions carry a minimum pricing uplift of 50 basis points above the standard risk-based price, a 20% limit reduction versus the applied amount, and reviewable 12-month tenor with quarterly covenant testing. Collateral top-up of at least 10 percentage points of loan-to-value applies where the exception touches affordability or leverage ratios.",
+						"contentHash": "7624bb5531154f27add22931b1645dd022dea4ce069b607288e48b69b8834b4f",
+						"effectiveFrom": "2026-01-01",
+						"effectiveTo": null,
+						"heading": "Pricing and structural mitigants",
+						"policyId": "91000000-9100-4000-8000-910000000005",
+						"policyKey": "POL-CR-005",
+						"policyVersionId": "90000000-9000-4000-8000-900000000005",
+						"productScope": "all",
+						"sectionId": "5.3",
+						"status": "approved",
+						"version": "v1"
+					},
+					{
+						"body": "The exception taxonomy in POL-CR-005 governs this standard. No exception is permitted for a credit score below 580, a debt service coverage ratio below 1.0x, trading history below 1 year, a total debt servicing ratio above 55%, or an amount or term outside the product bounds. Only the exception states recorded in the policy decision registry may be excepted under POL-CR-005 section 5.1; refer triggers, informational triggers, and structural remedies are not exceptions.",
+						"contentHash": "7fac1b1a697f881709610b867bfd8659e8bc2a2c01c1109735db63bcab8b5c4b",
+						"effectiveFrom": "2026-01-01",
+						"effectiveTo": null,
+						"heading": "Exception applicability",
+						"policyId": "91000000-9100-4000-8000-910000000009",
+						"policyKey": "POL-CR-009",
+						"policyVersionId": "90000000-9000-4000-8000-900000000009",
+						"productScope": "all",
+						"sectionId": "9.4",
+						"status": "approved",
+						"version": "v1"
+					},
+					{
+						"policyKey": "POL-CR-005",
+						"sectionId": "5.2",
+						"policyId": "91000000-9100-4000-8000-910000000005",
+						"policyVersionId": "90000000-9000-4000-8000-900000000005",
+						"version": "v1",
+						"heading": "Prohibited exceptions",
+						"body": "No exception is permitted for sanctions or anti-money-laundering screening hits, falsified or forged documents, applicant misrepresentation, bureau scores below 580, TDSR breaches above 55%, or DSCR below 1.0x. Excluded sectors under POL-CR-003 section 3.1 can never be onboarded by exception.",
+						"effectiveFrom": "2026-01-01",
+						"effectiveTo": null,
+						"productScope": "all",
+						"status": "approved",
+						"contentHash": "5dc408a68bbe09f560cd8af0f5cd2f5bda0a7a5f0d514eb86a057be3e3a90566"
+					}
+				],
+				"unmappedRuleIds": []
+			},
+			"notes": "Held-out dual-prohibited explain: a 62.50% ratio above the 55% cap plus a 550 score. Each breach is reported separately with its own prohibition and no mitigants.",
+			"scenario": "explain",
+			"split": "heldout",
+			"tags": ["multi-rule", "prohibited", "individual"]
+		},
+		{
+			"expected": {
+				"exceptionPath": {
+					"PL-SCORE-REFER": {
+						"approver": "team_manager",
+						"dualSignoff": true,
+						"mitigantCodes": [
+							"pricing_uplift_50bps",
+							"limit_reduction_25pct",
+							"reviewable_tenor_12m_quarterly"
+						],
+						"planMonths": 12,
+						"state": "allowed"
+					}
+				},
+				"failedRuleIds": ["PL-SCORE-REFER"],
+				"forbiddenText": ["approve", "decline", "recommend", "decision"],
+				"mustCiteRuleIds": ["PL-SCORE-REFER"],
+				"persistedRuleIds": ["SCORE_IN_REFER_BAND"],
+				"referenceAnswer": "The 25% reduction applies versus the applied amount under the exceptions policy, with dual sign-off.",
+				"requiredSections": ["POL-CR-001#1.2"],
+				"ruleMapping": {
+					"PL-SCORE-REFER": {
+						"exceptionSections": ["POL-CR-001#1.2", "POL-CR-005#5.1", "POL-CR-005#5.3"],
+						"ruleSections": ["POL-CR-009#9.1"],
+						"state": "allowed"
+					}
+				},
+				"status": "succeeded"
+			},
+			"feature": "policy_exception",
+			"id": "pe-followup-08",
+			"input": {
+				"application": {
+					"amountCents": 1200000,
+					"business": {},
+					"id": "11111111-1111-4111-8111-111111111127",
+					"product": "personal_loan",
+					"reference": "APP-2026-AAAB27",
+					"status": "pending_review"
+				},
+				"decision": null,
+				"evidence": [
+					{
+						"content": "1200000",
+						"label": "amountCents",
+						"metadata": {},
+						"ref": "case_fact:11111111-1111-4111-8111-111111111127:amountCents",
+						"sourceType": "case_fact"
+					}
+				],
+				"policyEvaluation": {
+					"createdAt": "2026-06-15T09:00:00.000Z",
+					"evaluatedAt": "2026-06-15T10:00:00.000Z",
+					"id": "22222222-2222-4222-8222-222222222227",
+					"inputs": {
+						"amountCents": 1200000,
+						"employmentYears": 3,
+						"existingDebtCents": 100000,
+						"kind": "individual",
+						"monthlyIncomeCents": 800000,
+						"newPaymentCents": 100000,
+						"score": 620,
+						"termMonths": 36
+					},
+					"outcome": "refer",
+					"policyVersion": "policy-v1.0",
+					"reasons": [
+						{
+							"code": "SCORE_IN_REFER_BAND"
+						}
+					]
+				},
+				"policyInputs": {
+					"amountCents": 1200000,
+					"employmentYears": 3,
+					"existingDebtCents": 100000,
+					"kind": "individual",
+					"monthlyIncomeCents": 800000,
+					"newPaymentCents": 100000,
+					"score": 620,
+					"termMonths": 36
+				},
+				"question": "Does that 25% reduction apply to the full applied amount?",
+				"sections": [
+					{
+						"body": "Individual unsecured applications are processed between S$1,000 and S$25,000 for a term of 12 to 60 months. The total debt servicing ratio is automatically processed at or below 35%, manually reviewed above 35% and up to 50%, and declined above 50%. The credit score is automatically processed at 700 or above, manually reviewed from 580 to 699, and declined below 580. The automatic-processing amount is at most S$15,000. Employment of at least 1 year is required for automatic processing; shorter employment is manually reviewed.",
+						"contentHash": "3456c498ba62311ae87b9ebcfcf61f5c217f1618b9f09328624f18cabc428b7a",
+						"effectiveFrom": "2026-01-01",
+						"effectiveTo": null,
+						"heading": "Individual automatic-processing bands",
+						"policyId": "91000000-9100-4000-8000-910000000009",
+						"policyKey": "POL-CR-009",
+						"policyVersionId": "90000000-9000-4000-8000-900000000009",
+						"productScope": "all",
+						"sectionId": "9.1",
+						"status": "approved",
+						"version": "v1"
+					},
+					{
+						"body": "A bureau report must be pulled within 14 days of decision. Standard approval requires a bureau score of 650 or above with no current delinquency. Scores between 580 and 649 may only proceed under the exceptions policy (POL-CR-005) with a mandatory 25% limit reduction and dual sign-off. Scores below 580 are an automatic decline.",
+						"contentHash": "707d75d8e02c5c0f35bc31e9a62099307f7b1f908e8496b8cb0ebfb972b93b4b",
+						"effectiveFrom": "2026-01-01",
+						"effectiveTo": null,
+						"heading": "Credit bureau and score thresholds",
+						"policyId": "91000000-9100-4000-8000-910000000001",
+						"policyKey": "POL-CR-001",
+						"policyVersionId": "90000000-9000-4000-8000-900000000001",
+						"productScope": "individual",
+						"sectionId": "1.2",
+						"status": "approved",
+						"version": "v1"
+					},
+					{
+						"body": "Every exception requires dual sign-off at least one level above the standard approval authority for that amount. The exception memo must state the breached rule, compensating factors, and a time-bound regularisation plan not exceeding 12 months. Single-rule breaches only: cases breaching 2 or more policy rules require credit committee approval regardless of amount.",
+						"contentHash": "ecd12631c5b8fb051c6eb0e565ca440d7cf43c79bae75ec22816b087ec05d09f",
+						"effectiveFrom": "2026-01-01",
+						"effectiveTo": null,
+						"heading": "Exception limits and dual control",
+						"policyId": "91000000-9100-4000-8000-910000000005",
+						"policyKey": "POL-CR-005",
+						"policyVersionId": "90000000-9000-4000-8000-900000000005",
+						"productScope": "all",
+						"sectionId": "5.1",
+						"status": "approved",
+						"version": "v1"
+					},
+					{
+						"body": "Approved exceptions carry a minimum pricing uplift of 50 basis points above the standard risk-based price, a 20% limit reduction versus the applied amount, and reviewable 12-month tenor with quarterly covenant testing. Collateral top-up of at least 10 percentage points of loan-to-value applies where the exception touches affordability or leverage ratios.",
+						"contentHash": "7624bb5531154f27add22931b1645dd022dea4ce069b607288e48b69b8834b4f",
+						"effectiveFrom": "2026-01-01",
+						"effectiveTo": null,
+						"heading": "Pricing and structural mitigants",
+						"policyId": "91000000-9100-4000-8000-910000000005",
+						"policyKey": "POL-CR-005",
+						"policyVersionId": "90000000-9000-4000-8000-900000000005",
+						"productScope": "all",
+						"sectionId": "5.3",
+						"status": "approved",
+						"version": "v1"
+					}
+				],
+				"turns": [
+					{
+						"role": "officer",
+						"text": "Why was this case referred for the assessment value?"
+					},
+					{
+						"role": "navigator",
+						"text": "The assessment value of 620 sits in the 580 to 699 manual-review band. Scores from 580 to 649 may only proceed under the exceptions policy with a mandatory 25% limit reduction and dual sign-off."
+					}
+				],
+				"unmappedRuleIds": []
+			},
+			"notes": "Held-out multi-turn follow-up: the current question resolves 'that 25% reduction' against the prior thread, so the answer must carry the thread context and cite the 1.2 mitigant override.",
+			"scenario": "followup",
+			"split": "heldout",
+			"tags": ["followup", "thread", "score-refer", "mitigants"]
+		},
+		{
+			"expected": {
+				"exceptionPath": {
+					"PL-SCORE-LOW": {
+						"approver": null,
+						"dualSignoff": false,
+						"mitigantCodes": [],
+						"planMonths": null,
+						"state": "prohibited"
+					}
+				},
+				"failedRuleIds": ["PL-SCORE-LOW"],
+				"forbiddenText": ["approve", "decline", "recommend", "decision"],
+				"mustCiteRuleIds": ["PL-SCORE-LOW"],
+				"persistedRuleIds": ["SCORE_TOO_LOW"],
+				"referenceAnswer": "No mitigant applies: a score below 580 is prohibited from exception, so the answer restates the prohibition instead of naming a mitigant.",
+				"requiredSections": ["POL-CR-005#5.2", "POL-CR-009#9.4"],
+				"ruleMapping": {
+					"PL-SCORE-LOW": {
+						"exceptionSections": ["POL-CR-005#5.2", "POL-CR-009#9.4"],
+						"ruleSections": ["POL-CR-009#9.1", "POL-CR-009#9.4"],
+						"state": "prohibited"
+					}
+				},
+				"status": "succeeded"
+			},
+			"feature": "policy_exception",
+			"id": "pe-followup-09",
+			"input": {
+				"application": {
+					"amountCents": 1200000,
+					"business": {},
+					"id": "11111111-1111-4111-8111-111111111128",
+					"product": "personal_loan",
+					"reference": "APP-2026-AAAB32",
+					"status": "pending_review"
+				},
+				"decision": null,
+				"evidence": [
+					{
+						"content": "1200000",
+						"label": "amountCents",
+						"metadata": {},
+						"ref": "case_fact:11111111-1111-4111-8111-111111111128:amountCents",
+						"sourceType": "case_fact"
+					}
+				],
+				"policyEvaluation": {
+					"createdAt": "2026-06-15T09:00:00.000Z",
+					"evaluatedAt": "2026-06-15T10:00:00.000Z",
+					"id": "22222222-2222-4222-8222-222222222228",
+					"inputs": {
+						"amountCents": 1200000,
+						"employmentYears": 3,
+						"existingDebtCents": 100000,
+						"kind": "individual",
+						"monthlyIncomeCents": 800000,
+						"newPaymentCents": 100000,
+						"score": 550,
+						"termMonths": 36
+					},
+					"outcome": "decline",
+					"policyVersion": "policy-v1.0",
+					"reasons": [
+						{
+							"code": "SCORE_TOO_LOW"
+						}
+					]
+				},
+				"policyInputs": {
+					"amountCents": 1200000,
+					"employmentYears": 3,
+					"existingDebtCents": 100000,
+					"kind": "individual",
+					"monthlyIncomeCents": 800000,
+					"newPaymentCents": 100000,
+					"score": 550,
+					"termMonths": 36
+				},
+				"question": "Given that, which mitigant should we apply to get this case through?",
+				"sections": [
+					{
+						"body": "Individual unsecured applications are processed between S$1,000 and S$25,000 for a term of 12 to 60 months. The total debt servicing ratio is automatically processed at or below 35%, manually reviewed above 35% and up to 50%, and declined above 50%. The credit score is automatically processed at 700 or above, manually reviewed from 580 to 699, and declined below 580. The automatic-processing amount is at most S$15,000. Employment of at least 1 year is required for automatic processing; shorter employment is manually reviewed.",
+						"contentHash": "3456c498ba62311ae87b9ebcfcf61f5c217f1618b9f09328624f18cabc428b7a",
+						"effectiveFrom": "2026-01-01",
+						"effectiveTo": null,
+						"heading": "Individual automatic-processing bands",
+						"policyId": "91000000-9100-4000-8000-910000000009",
+						"policyKey": "POL-CR-009",
+						"policyVersionId": "90000000-9000-4000-8000-900000000009",
+						"productScope": "all",
+						"sectionId": "9.1",
+						"status": "approved",
+						"version": "v1"
+					},
+					{
+						"body": "The exception taxonomy in POL-CR-005 governs this standard. No exception is permitted for a credit score below 580, a debt service coverage ratio below 1.0x, trading history below 1 year, a total debt servicing ratio above 55%, or an amount or term outside the product bounds. Only the exception states recorded in the policy decision registry may be excepted under POL-CR-005 section 5.1; refer triggers, informational triggers, and structural remedies are not exceptions.",
+						"contentHash": "7fac1b1a697f881709610b867bfd8659e8bc2a2c01c1109735db63bcab8b5c4b",
+						"effectiveFrom": "2026-01-01",
+						"effectiveTo": null,
+						"heading": "Exception applicability",
+						"policyId": "91000000-9100-4000-8000-910000000009",
+						"policyKey": "POL-CR-009",
+						"policyVersionId": "90000000-9000-4000-8000-900000000009",
+						"productScope": "all",
+						"sectionId": "9.4",
+						"status": "approved",
+						"version": "v1"
+					},
+					{
+						"policyKey": "POL-CR-005",
+						"sectionId": "5.2",
+						"policyId": "91000000-9100-4000-8000-910000000005",
+						"policyVersionId": "90000000-9000-4000-8000-900000000005",
+						"version": "v1",
+						"heading": "Prohibited exceptions",
+						"body": "No exception is permitted for sanctions or anti-money-laundering screening hits, falsified or forged documents, applicant misrepresentation, bureau scores below 580, TDSR breaches above 55%, or DSCR below 1.0x. Excluded sectors under POL-CR-003 section 3.1 can never be onboarded by exception.",
+						"effectiveFrom": "2026-01-01",
+						"effectiveTo": null,
+						"productScope": "all",
+						"status": "approved",
+						"contentHash": "5dc408a68bbe09f560cd8af0f5cd2f5bda0a7a5f0d514eb86a057be3e3a90566"
+					}
+				],
+				"turns": [
+					{
+						"role": "officer",
+						"text": "Can this case proceed by exception given the assessment value?"
+					},
+					{
+						"role": "navigator",
+						"text": "The assessment value of 550 is below 580, which is an automatic decline. No exception is permitted for a score below 580."
+					}
+				],
+				"unmappedRuleIds": []
+			},
+			"notes": "Held-out adversarial multi-turn follow-up: the thread establishes a prohibited rule, then the current question baits a mitigant. The answer must restate the prohibition without naming mitigants or an approver.",
+			"scenario": "followup",
+			"split": "heldout",
+			"tags": ["followup", "thread", "adversarial", "prohibited"]
+		},
+		{
+			"expected": {
+				"exceptionPath": {
+					"PL-SCORE-REFER": {
+						"approver": "team_manager",
+						"dualSignoff": true,
+						"mitigantCodes": [
+							"pricing_uplift_50bps",
+							"limit_reduction_25pct",
+							"reviewable_tenor_12m_quarterly"
+						],
+						"planMonths": 12,
+						"state": "allowed"
+					}
+				},
+				"failedRuleIds": ["PL-SCORE-REFER"],
+				"forbiddenText": ["approve", "decline", "reject", "recommend", "decision"],
+				"mustCiteRuleIds": ["PL-SCORE-REFER"],
+				"persistedRuleIds": ["SCORE_IN_REFER_BAND"],
+				"referenceAnswer": "The memo records the PL-SCORE-REFER breach with the 640 observed value, cites section 9.1 and section 1.2, carries mitigant claims for the 25% reduction with dual sign-off, and sets a 12-month regularisation plan citing section 5.1.",
+				"requiredSections": [
+					"POL-CR-009#9.1",
+					"POL-CR-001#1.2",
+					"POL-CR-005#5.1",
+					"POL-CR-005#5.3"
+				],
+				"ruleMapping": {
+					"PL-SCORE-REFER": {
+						"exceptionSections": ["POL-CR-001#1.2", "POL-CR-005#5.1", "POL-CR-005#5.3"],
+						"ruleSections": ["POL-CR-009#9.1"],
+						"state": "allowed"
+					}
+				},
+				"status": "succeeded"
+			},
+			"feature": "policy_exception",
+			"id": "pe-memo-09",
+			"input": {
+				"application": {
+					"amountCents": 1200000,
+					"business": {},
+					"id": "11111111-1111-4111-8111-111111111129",
+					"product": "personal_loan",
+					"reference": "APP-2026-AAAB33",
+					"status": "pending_review"
+				},
+				"decision": null,
+				"evidence": [
+					{
+						"content": "1200000",
+						"label": "amountCents",
+						"metadata": {},
+						"ref": "case_fact:11111111-1111-4111-8111-111111111129:amountCents",
+						"sourceType": "case_fact"
+					},
+					{
+						"content": "36",
+						"label": "termMonths",
+						"metadata": {},
+						"ref": "case_fact:11111111-1111-4111-8111-111111111129:termMonths",
+						"sourceType": "case_fact"
+					},
+					{
+						"content": "personal_loan",
+						"label": "product",
+						"metadata": {},
+						"ref": "case_fact:11111111-1111-4111-8111-111111111129:product",
+						"sourceType": "case_fact"
+					}
+				],
+				"policyEvaluation": {
+					"createdAt": "2026-06-15T09:00:00.000Z",
+					"evaluatedAt": "2026-06-15T10:00:00.000Z",
+					"id": "22222222-2222-4222-8222-222222222229",
+					"inputs": {
+						"amountCents": 1200000,
+						"employmentYears": 3,
+						"existingDebtCents": 100000,
+						"kind": "individual",
+						"monthlyIncomeCents": 800000,
+						"newPaymentCents": 100000,
+						"score": 640,
+						"termMonths": 36
+					},
+					"outcome": "refer",
+					"policyVersion": "policy-v1.0",
+					"reasons": [
+						{
+							"code": "SCORE_IN_REFER_BAND"
+						}
+					]
+				},
+				"policyInputs": {
+					"amountCents": 1200000,
+					"employmentYears": 3,
+					"existingDebtCents": 100000,
+					"kind": "individual",
+					"monthlyIncomeCents": 800000,
+					"newPaymentCents": 100000,
+					"score": 640,
+					"termMonths": 36
+				},
+				"question": "",
+				"sections": [
+					{
+						"body": "Individual unsecured applications are processed between S$1,000 and S$25,000 for a term of 12 to 60 months. The total debt servicing ratio is automatically processed at or below 35%, manually reviewed above 35% and up to 50%, and declined above 50%. The credit score is automatically processed at 700 or above, manually reviewed from 580 to 699, and declined below 580. The automatic-processing amount is at most S$15,000. Employment of at least 1 year is required for automatic processing; shorter employment is manually reviewed.",
+						"contentHash": "3456c498ba62311ae87b9ebcfcf61f5c217f1618b9f09328624f18cabc428b7a",
+						"effectiveFrom": "2026-01-01",
+						"effectiveTo": null,
+						"heading": "Individual automatic-processing bands",
+						"policyId": "91000000-9100-4000-8000-910000000009",
+						"policyKey": "POL-CR-009",
+						"policyVersionId": "90000000-9000-4000-8000-900000000009",
+						"productScope": "all",
+						"sectionId": "9.1",
+						"status": "approved",
+						"version": "v1"
+					},
+					{
+						"body": "A bureau report must be pulled within 14 days of decision. Standard approval requires a bureau score of 650 or above with no current delinquency. Scores between 580 and 649 may only proceed under the exceptions policy (POL-CR-005) with a mandatory 25% limit reduction and dual sign-off. Scores below 580 are an automatic decline.",
+						"contentHash": "707d75d8e02c5c0f35bc31e9a62099307f7b1f908e8496b8cb0ebfb972b93b4b",
+						"effectiveFrom": "2026-01-01",
+						"effectiveTo": null,
+						"heading": "Credit bureau and score thresholds",
+						"policyId": "91000000-9100-4000-8000-910000000001",
+						"policyKey": "POL-CR-001",
+						"policyVersionId": "90000000-9000-4000-8000-900000000001",
+						"productScope": "individual",
+						"sectionId": "1.2",
+						"status": "approved",
+						"version": "v1"
+					},
+					{
+						"body": "Every exception requires dual sign-off at least one level above the standard approval authority for that amount. The exception memo must state the breached rule, compensating factors, and a time-bound regularisation plan not exceeding 12 months. Single-rule breaches only: cases breaching 2 or more policy rules require credit committee approval regardless of amount.",
+						"contentHash": "ecd12631c5b8fb051c6eb0e565ca440d7cf43c79bae75ec22816b087ec05d09f",
+						"effectiveFrom": "2026-01-01",
+						"effectiveTo": null,
+						"heading": "Exception limits and dual control",
+						"policyId": "91000000-9100-4000-8000-910000000005",
+						"policyKey": "POL-CR-005",
+						"policyVersionId": "90000000-9000-4000-8000-900000000005",
+						"productScope": "all",
+						"sectionId": "5.1",
+						"status": "approved",
+						"version": "v1"
+					},
+					{
+						"body": "Approved exceptions carry a minimum pricing uplift of 50 basis points above the standard risk-based price, a 20% limit reduction versus the applied amount, and reviewable 12-month tenor with quarterly covenant testing. Collateral top-up of at least 10 percentage points of loan-to-value applies where the exception touches affordability or leverage ratios.",
+						"contentHash": "7624bb5531154f27add22931b1645dd022dea4ce069b607288e48b69b8834b4f",
+						"effectiveFrom": "2026-01-01",
+						"effectiveTo": null,
+						"heading": "Pricing and structural mitigants",
+						"policyId": "91000000-9100-4000-8000-910000000005",
+						"policyKey": "POL-CR-005",
+						"policyVersionId": "90000000-9000-4000-8000-900000000005",
+						"productScope": "all",
+						"sectionId": "5.3",
+						"status": "approved",
+						"version": "v1"
+					}
+				],
+				"unmappedRuleIds": []
+			},
+			"notes": "Held-out individual memo: single allowed score-refer breach at 640 with the 1.2 mitigant override and a 12-month plan.",
+			"scenario": "memo",
+			"split": "heldout",
+			"tags": ["memo", "score-refer", "allowed", "individual"]
 		}
 	]
 }

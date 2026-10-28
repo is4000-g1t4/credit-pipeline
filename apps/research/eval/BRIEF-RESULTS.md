@@ -1,5 +1,9 @@
 # External case brief — eval (2026-10-24)
 
+> **2026-10-28 refresh:** the suite now has 20 fixtures and the pinned model is
+> Sol. Latest: 60/60 pass, 20/20 pass^3, $1.506, judge calibration 0.95. See
+> `BRIEF-MODELS-RESULTS.md` and `TUNING-2026-10-28.md`.
+
 Command:
 
 ```powershell

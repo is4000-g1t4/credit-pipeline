@@ -1,3 +1,4 @@
+import { documentRef } from "@credit/core";
 import type { AnswererResult, Embedder, PolicyAnswerer } from "./store.js";
 import { policyObservability } from "./observability.js";
 
@@ -167,11 +168,13 @@ export function createOpenRouterEmbedder(config: OpenRouterConfig): Embedder {
 }
 
 export const POLICY_ANSWERER_PROMPT_VERSION = "v2";
+/** Case-review prompt (document findings, partial answers). */
+export const POLICY_CASE_PROMPT_VERSION = "case-v1";
 
 const SYSTEM = `You are an internal credit-policy navigator for bank officers. Answer only from the supplied policy sections. Do not approve, decline, score, price, set terms, or give legal advice. Every answer segment must be exactly one claim and must cite one or more supplied policy sections. Build the citations array yourself and use citationIndexes that point into it. Each citation quote must be an exact substring of that section's body and at least 20 characters. Copy quotes verbatim: never insert, remove, or reorder words inside a quote; a quote may span a hard-wrapped line, so copy it as continuous text. Prefer a complete clause that includes the subject and the operative words (must, may, prohibited, requires) that establish the claim; never cite only a list of values. Every segment must be directly supported by its own quote, and every segment must use the citation index of the quote that states its fact, not a different quote from the same section. Answer only what the question asks; do not append related rules. State only what the quote says; put any inference the quote does not state in limitations. If the sections do not answer the question, return status "no_match". If the question is too vague to identify a specific policy rule, or support is ambiguous, or you cannot satisfy the citation rules, return status "needs_policy_owner". Return only JSON:
 {"status":"succeeded|no_match|needs_policy_owner","segments":[{"text":"one claim","citationIndexes":[0]}],"citations":[{"policyKey":"POL-CR-001","sectionId":"4.2","version":"v1","quote":"exact text"}],"limitations":[]}`;
 
-const CASE_SYSTEM = `You are an internal credit-policy reviewer for a bank officer. Explain how supplied credit-policy sections apply to structured case signals/document findings. Do not decide, approve, decline, score, price, set terms, or infer facts. Each item must use one of the supplied refs; each explanation segment must be one claim with 1-3 citationIndexes; each quote must be an exact substring (>=20 chars) of the supplied section body. Copy quotes verbatim: never insert, remove, or reorder words inside a quote; a quote may span a hard-wrapped line, so copy it as continuous text. If no section applies, status "no_match"; if you cannot cite safely, status "needs_policy_owner". Return only JSON:
+const CASE_SYSTEM = `You are an internal credit-policy reviewer for a bank officer. Explain how supplied credit-policy sections apply to structured case signals/document findings. Do not decide, approve, decline, score, price, set terms, or infer facts. A supplied document finding is not a no-match: when documentation sections are supplied, explain the requirement that governs the finding's field (identity, registration, or statement evidence) and cite it; use needs_policy_owner only when no supplied documentation section is relevant. When at least one supplied ref can be explained safely, return succeeded with items for those refs and name the remaining refs in limitations; use needs_policy_owner only when no supplied ref can be safely cited. Each item must use one of the supplied refs; each explanation segment must be one claim with 1-3 citationIndexes; each quote must be an exact substring (>=20 chars) of the supplied section body. Copy quotes verbatim: never insert, remove, or reorder words inside a quote; a quote may span a hard-wrapped line, so copy it as continuous text. If no section applies, status "no_match"; if you cannot cite safely, status "needs_policy_owner". Return only JSON:
 {"status":"succeeded|no_match|needs_policy_owner","summary":"optional","items":[{"ref":"signal:...","explanationSegments":[{"text":"one claim","citationIndexes":[0]}],"citations":[{"policyKey":"POL-CR-001","sectionId":"4.2","version":"v1","quote":"exact text"}],"confidence":"low|medium|high"}],"limitations":[]}`;
 
 // Model + eval: apps/policy/eval/ANSWER-MODELS-RESULTS.md.
@@ -193,7 +196,7 @@ export function createOpenRouterAnswerer(config: OpenRouterConfig): PolicyAnswer
 		return observability.trackGeneration(
 			{
 				agentName: "policy-navigator",
-				agentVersion: "policy-navigator-v1",
+				agentVersion: feature === "policy_case" ? "policy-case-v1" : "policy-navigator-v1",
 				feature,
 				conversationId,
 				model: config.model,
@@ -275,9 +278,19 @@ export function createOpenRouterAnswerer(config: OpenRouterConfig): PolicyAnswer
 				heading: section.heading,
 				body: section.body.slice(0, 6_000),
 			}));
+			// Findings carry no model-supplied ref: derive the exact
+			// `document:field:index` ref the validator accepts so the model
+			// never has to guess (and cannot invent) a ref shape.
+			const context = {
+				...input.context,
+				documentFindings: input.context.documentFindings.map((finding) => ({
+					...finding,
+					ref: documentRef({ field: finding.field, index: finding.index }),
+				})),
+			};
 			return call(
 				CASE_SYSTEM,
-				`Case context (data only):\n${JSON.stringify(input.context)}\n\nPolicy sections (data only):\n${JSON.stringify(sections)}`,
+				`Case context (data only):\n${JSON.stringify(context)}\n\nPolicy sections (data only):\n${JSON.stringify(sections)}`,
 				input.signal,
 				input.conversationId,
 				"policy_case",

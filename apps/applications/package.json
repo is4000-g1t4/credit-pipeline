@@ -12,6 +12,7 @@
 		"eval:assist": "tsx eval/assist-eval.ts",
 		"eval:adverse": "tsx eval/adverse-eval.ts",
 		"eval:memo-agent": "tsx eval/memo-agent-eval.ts",
+		"eval:memo-live": "tsx eval/memo-live-eval.ts",
 		"eval:integrity": "tsx eval/integrity-eval.ts",
 		"eval:policy-exception": "tsx eval/policy-exception-eval.ts"
 	},

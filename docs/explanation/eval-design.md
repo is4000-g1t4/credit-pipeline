@@ -207,22 +207,26 @@ Existing evals:
   `apps/research/eval/BRIEF-RESULTS.md`,
   `apps/research/eval/CONTEXT-RESULTS.md`.
 
-Gaps worth closing, in order:
+Gaps worth closing, in order (updated 2026-10-28):
 
-1. The claim-support/completeness judge is the same model family and has no
-   human calibration. Treat those columns as advisory until ~20 labels are
-   scored against it.
-2. No case-policy-stage eval. `validateCaseAnswer` also drops items rather than
-   failing the stage, so a future eval must measure per-ref coverage and drop
-   rate.
-3. No held-out split for the brief/context demo personas. Their 9/9 results are
-   in-sample sanity checks.
+1. Judge calibration: policy navigator, brief, and policy exception now score
+   20 hand-labelled pairs and report agreement; case review has 10 anchors; the
+   memo live judge is still uncalibrated. Treat every judge column as advisory.
+2. Case-policy-stage eval: now `apps/policy/eval/case-review-eval.ts`. It
+   measures per-ref coverage, drop rate, invented refs, and citation gaps.
+3. Held-out split: context has seven independent-customer cases; the brief's 15
+   new fixtures were authored after prompt tuning but are not formally split.
 4. Rejected model output is discarded in production, so there is no record of
    _why_ a navigator answer fell back to `needs_policy_owner`.
 5. No navigator telemetry in Grafana; the policy service still has no
    instrumentation.
-6. The advisory-only invariant is covered only by the decision-snapshot test
-   (`apps/worker/test/refer.test.ts`), not by a flags-on/off end-to-end test.
+6. The advisory-only invariant now has a workflow-level flags-on/off test
+   (identical score, policy, terms, and booking with and without a hostile
+   advisory bundle) plus the snapshot test; a full HTTP e2e toggling every AI
+   stage remains open.
+7. Cost/latency guardrails now exist in `scripts/eval-guardrails.mjs`
+   (`pnpm eval:guardrails`); wire them into CI after the result artifacts are
+   published.
 
 ### 4.5 Feature registry
 
@@ -231,15 +235,16 @@ a supported capability.
 
 | Feature                                          | Archetype                                | Dataset                                                   | Command                                                    | Status                                                                     |
 | ------------------------------------------------ | ---------------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Policy navigator (`apps/policy`)                 | Retrieval-augmented answer               | `apps/policy/eval/answer-cases.json` (37 cases)           | `pnpm --filter @credit/policy eval:answers`                | passing: held-out 8/8, dev 22/25 at pass^3; model comparison Terra best (`ANSWER-MODELS-RESULTS.md`) |
-| Case policy review (`apps/research` → policy)    | Explain/classify                         | inline demo personas + edge case                          | `pnpm --filter @credit/research eval:policy`               | planned                                                                    |
-| External case brief (`apps/research`)            | Tool-using research                      | inline 3-case fixture in `brief-eval.ts`                  | `pnpm --filter @credit/research eval:brief`                | passing: 9/9, in-sample; model comparison Sol best (`BRIEF-MODELS-RESULTS.md`) |
-| Context analyst (`apps/research`)                | Structured extraction/selection          | demo personas in `fixtures.ts` + 30 window cases in `eval/context-models-cases.json` | `pnpm --filter @credit/research eval:context` / `eval:context-models` | passing: 9/9 in-sample; model comparison 30 cases × 3 trials, GPT-6.1 Terra best (`CONTEXT-MODELS-RESULTS.md`) |
-| Advisory-only invariant                          | System invariant                         | demo personas                                             | existing e2e/demo suite                                    | partial: snapshot test only                                                |
+| Policy navigator (`apps/policy`)                 | Retrieval-augmented answer               | `apps/policy/eval/answer-cases.json` (43 cases)           | `pnpm --filter @credit/policy eval:answers`                | passing: held-out 12/14 pass^3, 20-label judge calibration (0.85); model comparison Terra best (`ANSWER-MODELS-RESULTS.md`) |
+| Case policy review (`apps/policy` explain-case)   | Explain/classify                         | 22 structured contexts in `apps/policy/eval/case-review-eval.ts` | `pnpm --filter @credit/policy eval:case-review`            | passing: Sol 22/22 pass^2, Terra 20/22; coverage ~0.70; see `CASE-REVIEW-RESULTS.md` |
+| External case brief (`apps/research`)            | Tool-using research                      | 20 fixture cases in `apps/research/eval/brief-eval.ts`     | `pnpm --filter @credit/research eval:brief`                | passing: 20/20 pass^3; 20-label judge calibration (0.95); Sol best (`BRIEF-MODELS-RESULTS.md`) |
+| Context analyst (`apps/research`)                | Structured extraction/selection          | 30 window cases + 7 independent-customer cases in `eval/context-models-cases.json` | `pnpm --filter @credit/research eval:context` / `eval:context-models` | saturated: Terra/Sol 37/37 pass^3; model comparison Terra best (`CONTEXT-MODELS-RESULTS.md`) |
+| Advisory-only invariant                          | System invariant                         | same approval with/without advisory bundle                 | `pnpm --filter @credit/worker test -- refer`               | covered at workflow level: score, policy, terms, booking identical; full HTTP e2e remains open |
 | Case-assist validator (`apps/applications`)      | Pure gate/classifier                     | 27 code-defined cases in `eval/assist-eval.ts`            | `pnpm --filter @credit/applications eval:assist`           | passing: 27/27 at pass^3, 0 unsafe pass-through                            |
 | Adverse-action letter (`apps/applications`)      | Pure gate/classifier                     | 19 code-defined cases in `eval/adverse-eval.ts`           | `pnpm --filter @credit/applications eval:adverse`          | passing: 19/19 at pass^3, 0 unsafe pass-through                            |
-| Document integrity (`apps/applications`)         | Explain/classify + structured extraction | `apps/applications/eval/integrity-cases.json` (28)        | `pnpm --filter @credit/applications eval:integrity`        | passing: dev 19/19, held-out 9/9 at pass^3; model comparison Sol best (`INTEGRITY-MODELS-RESULTS.md`) |
-| Policy exception navigator (`apps/applications`) | Explain/classify                         | `apps/applications/eval/policy-exception-cases.json` (24) | `pnpm --filter @credit/applications eval:policy-exception` | passing: dev 0.804 pass@1 / 0.647 pass^3; held-out 0.905 / 0.714; 0 safety; model comparison Terra/Sol 0.972 / 0.917, Terra cheaper (`POLICY-EXCEPTION-MODELS-RESULTS.md`) |
+| Document integrity (`apps/applications`)         | Explain/classify + structured extraction | `apps/applications/eval/integrity-cases.json` (35)        | `pnpm --filter @credit/applications eval:integrity`        | passing: dev 19/19, held-out 15/16 at pass^3; Sol 34/35 full suite, 0 safety (`INTEGRITY-MODELS-RESULTS.md`) |
+| Policy exception navigator (`apps/applications`) | Explain/classify                         | `apps/applications/eval/policy-exception-cases.json` (28) | `pnpm --filter @credit/applications eval:policy-exception` | passing: Terra 27/28 pass^3, structural/semantic 1.0, 0 safety, calibration 0.90; one bounded-residual held-out failure (`POLICY-EXCEPTION-MODELS-RESULTS.md`) |
+| Credit memo (live) (`apps/applications`)          | Bounded tool loop                        | 22 evidence bundles in `eval/memo-live-eval.ts`            | `pnpm --filter @credit/applications eval:memo-live`        | passing: Sol 22/22, Terra 20/22; Sol pinned; judge completeness ~2.4 (`MEMO-LIVE-RESULTS.md`) |
 | Future feature                                   | Pick §1.2                                | `apps/<app>/eval/cases.json`                              | `pnpm --filter @credit/<app> eval:<feature>`               | required                                                                   |
 
 Update the status column to `baseline`, `passing`, `saturated`, or
@@ -335,7 +340,8 @@ Rules:
 
 This is the most visible AI feature and the easiest to grade well.
 
-Dataset, 33 cases (25 dev, 8 held-out):
+Dataset, 43 cases (29 dev, 14 held-out): 28 answerable, 3 adversarial,
+4 unanswerable, 4 ambiguous, 2 out-of-scope, 2 identifier.
 
 - 24 answerable, across underwriting, affordability, documentation, pricing,
   and servicing.
@@ -377,29 +383,35 @@ Exact quote validity is already code-enforced.
 The research → policy `explain-case` call, with a strict structured context.
 Grade the stage output, not the orchestration.
 
-Dataset: the three demo personas (BreadTalk rich/stale, Sparse insufficient
-data, Alex clean individual) plus one synthetic edge case with four accounts
-and duplicate document fields, which the spec calls out.
+Dataset: 22 structured `PolicyCaseContext`s in
+`apps/policy/eval/case-review-eval.ts`: SME/individual, aggregate and
+single-account scope, each signal type, document findings, no signals, no
+matching family, stale/effective boundaries, multi-signal, and injection
+probes.
 
 Expected: every supplied signal/document finding gets either an item with a
 valid citation or an explicit limitation; no unknown refs; no decision
-language; `no_match` when the corpus has nothing relevant.
+language; `no_match` when the corpus has nothing relevant; a partial answer uses
+`succeeded` + limitations, not `needs_policy_owner`.
 
-Metrics: item coverage, valid-citation rate, drop rate, status correctness,
-cost, latency. The production validator already drops invalid items, so
-`drop rate` is the interesting model-quality number.
+Metrics: code pass, item coverage, valid-citation rate, drop rate, invented
+refs, segment-citation gaps, status correctness, cost, latency. The production
+validator already drops invalid items, so `drop rate` is the interesting
+model-quality number.
 
-Harness: `apps/research/eval/policy-stage-eval.ts`. For model quality, call
-`runPolicyStage` with a scratch DB and the real client. Keep consent, lease,
-budget, and retry behavior in the existing integration tests; do not mix
-them into an eval that is trying to measure the model.
+Harness: `apps/policy/eval/case-review-eval.ts`. It calls the production
+`answerCase`, retrieval, and `validateCaseAnswer` directly. Consent, case-token,
+budget, retry, and lease behavior stay in the route/integration tests; this eval
+measures the model. Results: `apps/policy/eval/CASE-REVIEW-RESULTS.md`.
 
 ### 5.4 External case brief
 
-Dataset: a frozen Tavily fixture with 2–4 documents per entity across three
-cases: one adverse-media hit, one clean, one ambiguous name/city collision.
-The fixture is injected per case so a search cannot leak another case's pages.
-Hand-label the expected findings and non-findings.
+Dataset: a frozen Tavily fixture with 2–4 documents per entity across 20 cases:
+adverse-only, clean, ambiguous name/city collision, individual, no-hit,
+low-tier-only, long page, multi-adverse, conflicting registry, stale registry,
+and boundary as-of. One fixture client per case so a search cannot leak another
+case's pages. The 17 fixtures added since the original three were authored after
+prompt `v7` and are held-out by construction.
 
 Metrics: schema pass, quote verification rate, evidence per finding,
 independent source count, official/registry source linked to the finding,
@@ -412,13 +424,15 @@ validator, so schema, quote snapshots, source rules, entity match, support
 judge, and language repair are exercised. Persistence/orchestration are not.
 
 Judge dimensions: “Is the finding supported by the quoted evidence?” is the
-production support judge. The separate summary-overreach judge is advisory
-only; it is not calibrated and is not in `pass`.
+production support judge; 20 hand-labelled pairs give 0.95 agreement. The
+separate summary-overreach judge is advisory only and is not in `pass`.
 
 ### 5.5 Context analyst
 
-Dataset: BreadTalk (rich), Sparse (no accounts), Alex (individual). The
-expected signal types come from the demo manifest: `round_trip`,
+Dataset: the original three demo personas across 30 windows, plus 7 cases over 5
+independent fixture customers (multi-account, negative balance, populated
+prior/loan/KYC/report/finding, empty window, hostile case facts). The expected
+signal types come from the demo manifest: `round_trip`,
 `cash_deposit_share`, `returned_payment`, `revenue_concentration`, and
 `insufficient_data`.
 
@@ -433,9 +447,10 @@ applications (`fixture_key LIKE 'eval-%'`). It requires Postgres, seeded demo
 fixtures, and applications/loans services. Coverage is validator-enforced, so
 it is a sanity check, not an independent quality signal.
 
-Model comparison: `apps/research/eval/context-models-eval.ts` runs 30 window
-cases per model in parallel through the same runner and validator, with a
-spend cap. Results: `apps/research/eval/CONTEXT-MODELS-RESULTS.md`.
+Model comparison: `apps/research/eval/context-models-eval.ts` runs 37 cases
+(30 windows + 7 over 5 independent customers) per model in parallel through the
+same runner and validator, with a spend cap. Results:
+`apps/research/eval/CONTEXT-MODELS-RESULTS.md`.
 
 ### 5.6 Cross-cutting: the advisory-only invariant
 
@@ -452,9 +467,17 @@ The most important safety eval for this project, and the cheapest:
 Put this in the existing e2e/demo suite as one test. It directly supports the
 “AI never decides” claim, which is the point a marker will probe.
 
-Current coverage: `apps/worker/test/refer.test.ts` freezes accepted findings
-into the decision snapshot; there is no flags-on/off end-to-end test yet. That
-is the remaining half of the invariant.
+Current coverage: `apps/worker/test/refer.test.ts` has both halves:
+
+- the decision snapshot freezes the server-built research bundle; and
+- the same approval is run with no advisory bundle and with a hostile advisory
+  bundle, asserting score, policy evaluation, booking terms, and outcome are
+  identical (the frozen research rides only the snapshot metadata).
+
+`e2e/assist.spec.ts` covers the service flag-off path. The remaining gap is a
+single HTTP e2e that toggles every AI stage (context, brief, policy review,
+memo) on the same case; the workflow-level test proves the decision path is
+already isolated.
 
 ### 5.7 Recorded results (2026-10-24)
 
@@ -503,6 +526,15 @@ check), or self-reported confidence. Do not judge prose the server composes
 from templates. Do not turn a validator guarantee into a “quality metric”;
 track the rejection rate instead.
 
+### 6.1 Cost and latency guardrails
+
+`pnpm eval:guardrails` reads the newest full run (trials ≥ 2) for each feature
+and fails on a pass, mean-latency, p95-latency, or total-cost regression. The
+thresholds live in `scripts/eval-guardrails.mjs`; they are deliberately loose
+enough to absorb model-provider variance. Missing result files are skipped, so
+the command is safe before any evals have run. Wire it into CI after the eval
+artifacts are published; do not gate a cold checkout on gitignored results.
+
 ## 7. The scorecard
 
 One headline and two or three guardrails per suite. A single weighted score
@@ -541,9 +573,9 @@ upgrade is a full re-run.
 
 Phases, highest value first:
 
-1. **Navigator answer eval** — done: 31 cases, held-out 8/8, dev 19/23 at
-   pass^3. The remaining work is held-out tuning discipline and judge
-   calibration.
+1. **Navigator answer eval** — done: 43 cases, held-out 12/14, dev 25/29 at
+   pass^3, 20-label judge calibration (0.85). The remaining work is a
+   multi-version corpus for stale/as-of cases.
 2. **Brief and context quality evals** — done: both 9/9 in-sample. Replace the
    demo personas with at least one frozen held-out case before quoting a
    generalisation number.
