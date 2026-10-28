@@ -16,6 +16,7 @@ import { createDb } from "@credit/db/research";
 import { createLogger, signInternalHeaders } from "@credit/service-kit";
 import { stubAgentRunner, type FetchedEvidence } from "../src/agent.js";
 import { createApp } from "../src/app.js";
+import { stubCaseAssistantRunner } from "../src/case-assistant.js";
 import { stubContextRunner } from "../src/context-agent.js";
 import { loadEnv } from "../src/env.js";
 import { getRun, type CaseFactsPayload } from "../src/lifecycle.js";
@@ -212,6 +213,9 @@ export function setupApp(
 		observability?: Parameters<typeof createApp>[0]["observability"];
 		contextRunner?: Parameters<typeof createApp>[0]["contextRunner"];
 		fetchContextConsent?: Parameters<typeof createApp>[0]["fetchContextConsent"];
+		caseAssistant?: Parameters<typeof createApp>[0]["caseAssistant"];
+		fetchResearchContext?: Parameters<typeof createApp>[0]["fetchResearchContext"];
+		checkAssistantCaseAccess?: Parameters<typeof createApp>[0]["checkAssistantCaseAccess"];
 		env?: Partial<ReturnType<typeof loadEnv>>;
 	} = {},
 ): TestContext {
@@ -237,6 +241,14 @@ export function setupApp(
 			overrides.contextRunner ??
 			stubContextRunner({ outputs: [], throw: new Error("context stage must not run") }),
 		fetchContextConsent: overrides.fetchContextConsent,
+		caseAssistant:
+			overrides.caseAssistant ??
+			stubCaseAssistantRunner({
+				outputs: [{ answer: "Test answer from the case assistant.", limitations: [] }],
+			}),
+		fetchResearchContext: overrides.fetchResearchContext,
+		// No applications call in tests unless the case proves the gate.
+		checkAssistantCaseAccess: overrides.checkAssistantCaseAccess ?? (async () => undefined),
 	});
 	return { app, db, sql, secret: env.internalSecret };
 }

@@ -192,6 +192,18 @@ export function createApp(deps: GatewayDeps): Hono<{ Variables: Variables }> {
 		});
 	}
 
+	// Case assistant (officer Q&A): same review upstream, the shared per-actor
+	// AI limiter (with the policy console), and the long assist timeout
+	// (agentic loop). Must sit before the generic /api/review/* proxy below.
+	app.post("/api/review/:id/assistant", officer, async (c) => {
+		const me = c.var.user;
+		if (!deps.policyLimiter.check(me.id)) {
+			throw new HttpError(429, "RATE_LIMITED", "too many assistant requests");
+		}
+		const path = c.req.path;
+		return proxyTo(c, deps, me, { baseUrl: deps.env.reviewUrl, path }, ASSIST_UPSTREAM_TIMEOUT_MS);
+	});
+
 	app.all("/api/review/*", officer, async (c) => {
 		const path = c.req.path;
 		// Officer decisions ride a Temporal update + booking that can exceed

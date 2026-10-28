@@ -12,11 +12,18 @@ import {
 import { createLlmSupportJudge } from "./support.js";
 import { createLlmLanguageRepair } from "./repair.js";
 import { createRealRunner, OPENROUTER_BASE_URL } from "./agent.js";
+import { createRealCaseAssistantRunner } from "./case-assistant.js";
 import { createRealContextRunner } from "./context-agent.js";
 import { createApp } from "./app.js";
 import { loadEnv } from "./env.js";
 import { createHttpPolicyRunner } from "./policy-stage.js";
-import { reapContextStages, reapPolicyStages, reapStaleRuns } from "./lifecycle.js";
+import {
+	latestRunForApplication,
+	reapContextStages,
+	reapPolicyStages,
+	reapStaleRuns,
+} from "./lifecycle.js";
+import { aggregateRun } from "./aggregate.js";
 import { getObservability } from "./observability.js";
 import OpenAI from "openai";
 import { createTavilyClient } from "./tavily.js";
@@ -38,7 +45,33 @@ const judge = createLlmSupportJudge(openai, env.agentModel, { observability });
 const repair = createLlmLanguageRepair(openai, env.agentModel, { observability });
 const contextRunner = createRealContextRunner({ env, openai });
 const policyRunner = createHttpPolicyRunner(env);
-const app = createApp({ db, sql, env, logger, runner, judge, repair, contextRunner, policyRunner });
+const caseAssistant = createRealCaseAssistantRunner({
+	env,
+	openai,
+	// The assistant may cite the case's latest succeeded external brief.
+	// Research owns that DB, so the runner never crosses a service boundary.
+	loadExternalSummary: async (applicationId) => {
+		const run = await latestRunForApplication(db, applicationId);
+		if (!run || run.status !== "succeeded") return null;
+		const aggregate = await aggregateRun(db, run, env.autoTriggerServiceUserId, {
+			includeContext: false,
+			includePolicy: false,
+		});
+		return aggregate.brief ?? null;
+	},
+});
+const app = createApp({
+	db,
+	sql,
+	env,
+	logger,
+	runner,
+	judge,
+	repair,
+	contextRunner,
+	policyRunner,
+	caseAssistant,
+});
 
 const MAX_BODY_BYTES = 1_000_000;
 
@@ -87,7 +120,17 @@ server.listen(env.port, env.host, () => {
 // Crash recovery on boot + periodic sweep; SKIP LOCKED, never touches live runs.
 // Recovery runs BEFORE the reaper: a crash-left queued run starts instead
 // of being failed first (see bootRecovery).
-const execDeps = { db, env, logger, runner, judge, repair, observability, contextRunner, policyRunner };
+const execDeps = {
+	db,
+	env,
+	logger,
+	runner,
+	judge,
+	repair,
+	observability,
+	contextRunner,
+	policyRunner,
+};
 try {
 	const { recovered, reaped } = await bootRecovery(execDeps);
 	if (recovered.length > 0)

@@ -5,6 +5,7 @@
 import { reasonText } from "@credit/core/browser";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
+import { CaseAssistantPanel } from "../case-assistant-panel";
 import { DecisionPanel } from "../decision-panel";
 import { DocumentPanel } from "../document-panel";
 import { IntegrityPanel } from "../integrity-panel";
@@ -38,7 +39,7 @@ import {
 	type ResearchSelection,
 } from "../../lib/api";
 
-type AssistTab = "brief" | "memo" | "policy";
+type AssistTab = "brief" | "memo" | "policy" | "ask";
 
 /** Queue risk bands (spec §1): low ≥ 760, medium ≥ 640, high below; missing is medium. */
 function riskOf(score: number | null | undefined): "low" | "medium" | "high" {
@@ -472,6 +473,7 @@ export function OfficerCaseView({
 									{ value: "brief", label: "Brief" },
 									{ value: "memo", label: "Memo" },
 									{ value: "policy", label: "Policy" },
+									{ value: "ask", label: "Ask" },
 								]}
 								value={assistTab}
 								onChange={setAssistTab}
@@ -490,6 +492,13 @@ export function OfficerCaseView({
 								</div>
 								<div hidden={assistTab !== "policy"}>
 									<PolicyExceptionPanel applicationId={app.id} caseStatus={app.status} />
+								</div>
+								<div hidden={assistTab !== "ask"}>
+									<CaseAssistantPanel
+										key={app.id}
+										applicationId={app.id}
+										contextAnalysisConsent={app.contextAnalysisConsent}
+									/>
 								</div>
 							</div>
 						</section>

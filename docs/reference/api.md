@@ -386,6 +386,62 @@ Rules:
 
 Advisory boundary: research never approves, declines, scores, prices, or sets terms. Only `verified` (supported, cited) findings render; acceptance only freezes cited evidence into the decision snapshot and never changes the decision by itself. Bundle failures map precisely: transport/5xx → 503 `RESEARCH_UNAVAILABLE` (retryable: `error.fields.retryable == ["true"]`, retry or decide without research); missing/non-succeeded run, uncovered selection, or empty accepted set → 409 `RESEARCH_SELECTION_STALE` (non-retryable: re-review or decide without). Decisions without a selection never touch research and are never blocked by it.
 
+## Case assistant (officer Ask tab)
+
+Officer-only, case-scoped, read-only Q&A. The browser sends a bounded trailing
+history; the assistant persists no chat or run row. The underlying case and
+policy reads keep their existing audit/query rows (attributed to the service
+principal). Answers come only from the 15 read-only case/policy tools; the
+answer validator and tool loop are documented in
+[Case assistant](../explanation/case-assistant.md).
+
+| Method and path                 | Access  | Purpose                                              |
+| ------------------------------- | ------- | ---------------------------------------------------- |
+| `POST /api/review/:id/assistant` | Officer | Ask one question about the case; returns answer + trace |
+
+Body (strict):
+
+```json
+{
+	"question": "Why was this case referred?",
+	"history": [{ "role": "user", "text": "..." }]
+}
+```
+
+`question` is 3–1,000 chars. `history` is optional, at most 8 messages of
+`{role: "user"|"assistant", text}`, and at most 6,000 chars summed. Unknown
+fields, roles, or over-cap values return 422 `VALIDATION_ERROR`.
+
+Response `200`: `answer`, `limitations[]`, `toolCalls[]`
+(`{name, resultCount, sourceTypes}` metadata only), `policyRefs[]`
+(`policyKey`, `sectionId`, `heading`, `version`, `effectiveFrom`,
+`policyVersionId`, `quote`, `drawerToken` — only sections the answer cites),
+`usage` (`inputTokens`, `outputTokens`), `model`, `promptVersion`,
+`agentVersion`, `latencyMs`. No prompt, tool args/output, document text, or PII
+is returned.
+
+Rules and errors:
+
+- `CASE_ASSISTANT_ENABLED` off (research or review): 404
+  `CASE_ASSISTANT_DISABLED`. Applicants get 403 first. Requires
+  `AGENTS_ENABLED=true`.
+- Case `contextAnalysisConsent` not true: 403 `CONTEXT_CONSENT_REQUIRED`.
+- Unknown, cross-officer, or draft case: 404 `NOT_FOUND` (non-disclosure).
+  Research checks `assistant-access` first, using the same need-to-know rule as
+  the case-assist routes (another officer's active assignment or a revoked
+  officer 404s).
+- A submitted-at gap or malformed case facts maps to 502
+  `CASE_ASSISTANT_FAILED`.
+- Validator rejection: 422 `UNSAFE_OUTPUT` (advisory language, direct
+  identifier, or applicant name) or 422 `INVALID_OUTPUT` (empty/overlong).
+- Deadline: 504 `CASE_ASSISTANT_TIMEOUT`. Loop/tool failure: 502
+  `CASE_ASSISTANT_FAILED`. No model runner wired: 503
+  `CASE_ASSISTANT_UNAVAILABLE`.
+- The gateway applies the 10/min per-officer AI limiter (429 `RATE_LIMITED`,
+  `too many assistant requests`) and a 120s upstream timeout; review's proxy
+  bound is 60s. Error responses are static and never echo the question,
+  answer, tool output, or documents.
+
 ## Loans
 
 | Method and path                                   | Access  | Purpose                                  |
@@ -983,6 +1039,13 @@ Response `200`:
 | `CASE_NOT_RUNNING`            | 409      | Workflow is not running                                                                                                                                                                      |
 | `DECISION_REJECTED`           | 422      | Workflow rejected the decision terms                                                                                                                                                         |
 | `CONSENT_REQUIRED`            | 403      | AI research consent or document-processing consent missing                                                                                                                                   |
+| `CONTEXT_CONSENT_REQUIRED`    | 403      | Case assistant requested without context-analysis consent                                                                                                                                    |
+| `CASE_ASSISTANT_DISABLED`     | 404      | Case-assistant flag off (research or review)                                                                                                                                                 |
+| `UNSAFE_OUTPUT`               | 422      | Assistant answer failed the advisory-language, identifier, or applicant-name gate                                                                                                            |
+| `INVALID_OUTPUT`              | 422      | Assistant answer was empty or over the length limit                                                                                                                                          |
+| `CASE_ASSISTANT_TIMEOUT`      | 504      | Assistant tool loop exceeded its deadline                                                                                                                                                    |
+| `CASE_ASSISTANT_FAILED`       | 502      | Assistant tool loop failed or case facts were unavailable                                                                                                                                    |
+| `CASE_ASSISTANT_UNAVAILABLE`  | 503      | No assistant runner is wired in research                                                                                                                                                     |
 | `RESEARCH_DISABLED`           | 404      | Agentic research feature flag off                                                                                                                                                            |
 | `POLICY_DISABLED`             | 503      | Policy **ask** flag off; retry with the flag on or decide without policy (register/sections/version writes stay available)                                                                   |
 | `RUN_NOT_SUCCEEDED`           | 409      | Finding reviewed before its run succeeded                                                                                                                                                    |
@@ -1082,6 +1145,9 @@ Headers on every internal call: `x-user-id`, `x-user-role`, `x-user-email`, `x-i
 | `GET /internal/applications/:id/decision`         | Applications  | Review          | Officer                                                                                                                                                                                                                                           |
 | `GET /internal/applications/:id/case-facts`       | Applications  | Review          | Officer                                                                                                                                                                                                                                           |
 | `GET /internal/applications/:id/research-context` | Applications  | Automation      | Service only (officer/applicant 403)                                                                                                                                                                                                              |
+| `GET /internal/applications/:id/assistant-access` | Applications | Research       | Officer; need-to-know check (any non-draft case except another officer's active assignment or a revoked officer 404s)                                                                                                                          |
+| `GET /internal/applications/:id/assistant-context` | Applications | Research       | Service only (officer/applicant 403); latest score/policy/decision plus document metadata, never filenames/hashes/text; drafts 404                                                                                                                 |
+| `POST /internal/research/applications/:id/assistant` | Research   | Review          | Officer; runs the read-only tool loop, requires `AGENTS_ENABLED` + `CASE_ASSISTANT_ENABLED` + context consent; no row is written                                                                                                                  |
 | `GET .../applications/:id/context/*`              | Applications  | Research        | Service only (officer/applicant 403); bounded officer-screen reads for the context analyst (`profile`, `accounts`, `transactions`, `metrics`, `financials`, `document-findings`, `applicant`, `credit-history`, `external-reports`, `kyc-checks`) |
 | `GET /internal/loans/by-applicant/:userId`        | Loans         | Research        | Service only; `?applicationId&asOf` bound to the calling case (consent + applicant + as-of-day match, fail closed), audited                                                                                                                       |
 | `GET /internal/stats`                             | Applications  | Portfolio       | Officer; includes `decisionsToday` (Asia/Singapore day)                                                                                                                                                                                           |

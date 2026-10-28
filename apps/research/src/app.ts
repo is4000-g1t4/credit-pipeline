@@ -8,6 +8,7 @@ import {
 	type ServiceApp,
 } from "@credit/service-kit";
 import type { AgentRunner } from "./agent.js";
+import type { CaseAssistantRunner } from "./case-assistant.js";
 import { getAutoTriggerStatus } from "./auto-trigger.js";
 import type { ContextAgentRunner } from "./context-agent.js";
 import type { ResearchEnv } from "./env.js";
@@ -31,6 +32,18 @@ export interface ResearchDeps {
 	fetchContextConsent?: (applicationId: string) => Promise<boolean>;
 	/** T03/T04 automatic case policy review; absent fails the policy stage only. */
 	policyRunner?: PolicyRunner;
+	/** Case-scoped read-only assistant; absent fails the assistant route closed (503). */
+	caseAssistant?: CaseAssistantRunner;
+	/** Test seam: full research-context body; default reads it over HMAC. */
+	fetchResearchContext?: (applicationId: string) => Promise<{
+		caseFacts: Record<string, unknown>;
+		contextAnalysisConsent: unknown;
+	}>;
+	/** Test seam: officer need-to-know check; default calls applications. */
+	checkAssistantCaseAccess?: (
+		applicationId: string,
+		user: { id: string; email: string; role: string },
+	) => Promise<void>;
 }
 
 /** Test seam: pass fakes for runner/judge/repair; production wires the real ones. */
@@ -47,6 +60,9 @@ export function createApp(deps: ResearchDeps): ServiceApp {
 		contextRunner: deps.contextRunner,
 		fetchContextConsent: deps.fetchContextConsent,
 		policyRunner: deps.policyRunner,
+		caseAssistant: deps.caseAssistant,
+		fetchResearchContext: deps.fetchResearchContext,
+		checkAssistantCaseAccess: deps.checkAssistantCaseAccess,
 	});
 	return createService({
 		name: "research",

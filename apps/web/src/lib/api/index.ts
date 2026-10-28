@@ -1,6 +1,7 @@
 // API barrel: every module re-exported under its original name, so
 // existing `../lib/api` importers need zero changes. `getMemoArtifact` and
 // `updateContextConsent` were intentionally removed (zero callers).
+export * from "./assistant";
 export * from "./client";
 export * from "./core";
 export * from "./demo";

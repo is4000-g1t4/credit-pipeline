@@ -65,6 +65,14 @@ export interface ResearchStub {
 	findings: Map<string, { runId: string; applicationId: string; status: string }>;
 	/** Context signals by signal id: run, owning app, superseded flag. */
 	signals: Map<string, { runId: string; applicationId: string; superseded: boolean }>;
+	/** Recorded assistant request bodies (POST …/assistant). */
+	assistantBodies: unknown[];
+	/** Canned assistant answers by application id (absent → default stub). */
+	assistantAnswers: Map<string, unknown>;
+	/** Application ids whose assistant call is 404. */
+	assistantMissing: Set<string>;
+	/** Application ids whose assistant call is 409. */
+	assistantConflict: Set<string>;
 	/** Run ids whose context retry is claimed/exhausted (→ 409). */
 	retryBlocked: Set<string>;
 	/** When true, every research call fails transport (→ 502/503). */
@@ -104,6 +112,7 @@ function defaultCaseFacts(applicationId: string): Record<string, unknown> {
 export interface SetupOptions {
 	agentsEnabled?: boolean;
 	caseBriefEnabled?: boolean;
+	caseAssistantEnabled?: boolean;
 }
 
 export function setupApp(opts: SetupOptions = {}): TestContext {
@@ -112,6 +121,7 @@ export function setupApp(opts: SetupOptions = {}): TestContext {
 		...base,
 		agentsEnabled: opts.agentsEnabled ?? true,
 		caseBriefEnabled: opts.caseBriefEnabled ?? true,
+		caseAssistantEnabled: opts.caseAssistantEnabled ?? true,
 	};
 	const gateway = stubGateway();
 	const internal: InternalStub = {
@@ -134,6 +144,10 @@ export function setupApp(opts: SetupOptions = {}): TestContext {
 		findings: new Map(),
 		signals: new Map(),
 		retryBlocked: new Set(),
+		assistantBodies: [],
+		assistantAnswers: new Map(),
+		assistantMissing: new Set(),
+		assistantConflict: new Set(),
 		down: false,
 	};
 	const fetchImpl = (async (
@@ -193,6 +207,39 @@ export function setupApp(opts: SetupOptions = {}): TestContext {
 						inserted: true,
 					},
 					202,
+				);
+			}
+			match = path.match(/^\/internal\/research\/applications\/([^/]+)\/assistant$/);
+			if (match && method === "POST") {
+				const appId = match[1];
+				research.assistantBodies.push(JSON.parse(String(init?.body ?? "{}")));
+				if (research.assistantMissing.has(appId)) {
+					return jsonResponse({ error: { code: "NOT_FOUND", message: "not found" } }, 404);
+				}
+				if (research.assistantConflict.has(appId)) {
+					return jsonResponse(
+						{
+							error: {
+								code: "CASE_NOT_PENDING",
+								message: "case is not awaiting an officer decision",
+							},
+						},
+						409,
+					);
+				}
+				return jsonResponse(
+					research.assistantAnswers.get(appId) ?? {
+						answer: "Stub answer.",
+						limitations: [],
+						toolCalls: [],
+						policyRefs: [],
+						usage: { inputTokens: 1, outputTokens: 1, costUsd: 0 },
+						model: "stub",
+						promptVersion: "stub-v1",
+						agentVersion: "stub-v1",
+						latencyMs: 1,
+					},
+					200,
 				);
 			}
 			match = path.match(/^\/internal\/research\/applications\/([^/]+)\/latest$/);

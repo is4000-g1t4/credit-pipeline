@@ -12,8 +12,8 @@ P0/P1/P2 expansion.
 ## Headline
 
 Pass@1 / pass^k from the latest refreshed runs. Pinned models are Terra for
-context, policy, and exception; Sol for brief, integrity, and memo. The
-comparison reports also include the earlier six-model sweeps.
+context, policy, exception, and the case assistant; Sol for brief, integrity,
+and memo. The comparison reports also include the earlier six-model sweeps.
 
 | Agent               |    Cases | Model | pass@1 | pass^k |   Cost | Report                                                              |
 | ------------------- | -------: | ----- | -----: | -----: | -----: | ------------------------------------------------------------------- |
@@ -24,6 +24,7 @@ comparison reports also include the earlier six-model sweeps.
 | Policy exception    | 28 valid | Terra |  0.964 |  27/28 | $0.458 | [model comparison](applications/POLICY-EXCEPTION-MODELS-RESULTS.md) |
 | Credit memo (live)  |       22 | Sol   |  1.000 |  22/22 | $0.267 | [live report](applications/MEMO-LIVE-RESULTS.md)                    |
 | Case policy review  |       22 | Sol   |  1.000 |  22/22 | $0.092 | [report](policy/CASE-REVIEW-RESULTS.md)                             |
+| Case assistant      |       20 | Terra |  1.000 |  20/20 | $0.249 | [model comparison](research/CASE-ASSISTANT-MODELS-RESULTS.md)       |
 
 Context and policy also have Sol runs; memo and case review have Terra
 comparisons in their reports. Known residuals: one long-document integrity
@@ -54,6 +55,7 @@ case-review coverage ~0.70. See each report's caveats.
 - [External case brief model comparison](research/BRIEF-MODELS-RESULTS.md) — six models, 20 fixtures, judge calibration.
 - [Context analyst](research/CONTEXT-RESULTS.md) — feature eval and independent-customer refresh.
 - [Context analyst model comparison](research/CONTEXT-MODELS-RESULTS.md) — six models, 30 windows + 7 independent customers.
+- [Case assistant model comparison](research/CASE-ASSISTANT-MODELS-RESULTS.md) — Terra/Sol, 20 questions, five eval customers, code gates.
 - [Tuning](TUNING-2026-10-28.md) — preflight A/Bs, prompt v7, and the P0/P1/P2 gap work.
 
 ## Commands
@@ -66,6 +68,7 @@ pnpm --filter @credit/research eval:brief -- --trials=3
 pnpm --filter @credit/applications eval:policy-exception -- --trials=3
 pnpm --filter @credit/applications eval:memo-live -- --trials=2
 pnpm --filter @credit/policy eval:case-review -- --trials=2
+pnpm --filter @credit/research eval:case-assistant -- --trials=3
 pnpm eval:guardrails
 ```
 

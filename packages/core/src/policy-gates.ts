@@ -111,8 +111,14 @@ export function scrubKnownPii(text: string, values: readonly string[]): string {
 const ADVISORY_ACTION_RE =
 	/\b(?:approv(?:e|ed|es|al|ing)|declin(?:e|ed|es|ing)|reject(?:ed|ion|ing|s)?|recommend(?:ed|ation|ations|ing|s)?|decision(?:s)?)\b/i;
 
-export function containsAdvisoryActionLanguage(text: string): boolean {
-	return ADVISORY_ACTION_RE.test(
+/** The matched advisory term (safe to log: one word, never the text). */
+export function advisoryActionMatch(text: string): string | null {
+	const match = ADVISORY_ACTION_RE.exec(
 		text.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replaceAll(/[_-]+/g, " "),
 	);
+	return match?.[0].toLowerCase() ?? null;
+}
+
+export function containsAdvisoryActionLanguage(text: string): boolean {
+	return advisoryActionMatch(text) !== null;
 }

@@ -18,6 +18,7 @@ import {
 	readJson,
 	requireOfficer,
 	requireService,
+	signInternalHeaders,
 	zodFields,
 	type Logger,
 	type ServiceApp,
@@ -38,6 +39,7 @@ import {
 	type AccessRole,
 } from "./access.js";
 import type { AgentRunner } from "./agent.js";
+import { CaseAssistantError, type CaseAssistantRunner } from "./case-assistant.js";
 import { checkAutoCaps } from "./auto-trigger.js";
 import type { ContextAgentRunner } from "./context-agent.js";
 import type { ResearchEnv } from "./env.js";
@@ -104,6 +106,103 @@ export interface ResearchRouteDeps {
 	fetchContextConsent?: (applicationId: string) => Promise<boolean>;
 	/** T03/T04 automatic case policy review; absent fails the policy stage only. */
 	policyRunner?: PolicyRunner;
+	/** Case-scoped read-only assistant; absent fails the assistant route closed (503). */
+	caseAssistant?: CaseAssistantRunner;
+	/** Test seam: full research-context body; default reads it over HMAC. */
+	fetchResearchContext?: (applicationId: string) => Promise<{
+		caseFacts: Record<string, unknown>;
+		contextAnalysisConsent: unknown;
+	}>;
+	/** Test seam: officer need-to-know check; default calls applications. */
+	checkAssistantCaseAccess?: (
+		applicationId: string,
+		user: { id: string; email: string; role: string },
+	) => Promise<void>;
+}
+
+/** Absent assistant runner: the route fails closed (503), never silent. */
+const unavailableCaseAssistantRunner: CaseAssistantRunner = {
+	async run() {
+		throw new CaseAssistantError("CASE_ASSISTANT_UNAVAILABLE", "case assistant is not configured");
+	},
+};
+
+/**
+ * Full research-context body over the signed service route (fail typed:
+ * unknown ids 404, drafts 409, anything else a 502 without case content).
+ */
+async function fetchResearchContextOverHttp(
+	env: ResearchEnv,
+	applicationId: string,
+): Promise<{ caseFacts: Record<string, unknown>; contextAnalysisConsent: unknown }> {
+	const path = `/internal/applications/${applicationId}/research-context`;
+	const headers = signInternalHeaders(env.internalSecret, {
+		userId: env.autoTriggerServiceUserId,
+		role: "service",
+		email: env.autoTriggerServiceEmail,
+		method: "GET",
+		path,
+	});
+	let res: Response;
+	try {
+		res = await fetch(`${env.applicationsUrl}${path}`, {
+			headers,
+			signal: AbortSignal.timeout(10_000),
+		});
+	} catch {
+		throw new HttpError(502, "CASE_ASSISTANT_FAILED", "case context is unavailable");
+	}
+	if (res.status === 404) throw new HttpError(404, "NOT_FOUND", "not found");
+	if (res.status === 409)
+		throw new HttpError(409, "CASE_NOT_SUBMITTED", "application is not submitted");
+	if (!res.ok) throw new HttpError(502, "CASE_ASSISTANT_FAILED", "case context is unavailable");
+	const body = (await res.json()) as {
+		caseFacts?: unknown;
+		contextAnalysisConsent?: unknown;
+	};
+	if (
+		!body ||
+		typeof body !== "object" ||
+		body.caseFacts === null ||
+		typeof body.caseFacts !== "object"
+	) {
+		throw new HttpError(502, "CASE_ASSISTANT_FAILED", "case facts are unavailable");
+	}
+	return {
+		caseFacts: body.caseFacts as Record<string, unknown>,
+		contextAnalysisConsent: body.contextAnalysisConsent,
+	};
+}
+
+/**
+ * Officer need-to-know check over the signed user route. Applications owns the
+ * rule (any non-draft case except another officer's active assignment or a
+ * revoked officer); unknown/forbidden cases 404 without case content.
+ */
+async function checkAssistantCaseAccessOverHttp(
+	env: ResearchEnv,
+	applicationId: string,
+	user: { id: string; email: string; role: string },
+): Promise<void> {
+	const path = `/internal/applications/${applicationId}/assistant-access`;
+	const headers = signInternalHeaders(env.internalSecret, {
+		userId: user.id,
+		role: "officer",
+		email: user.email,
+		method: "GET",
+		path,
+	});
+	let res: Response;
+	try {
+		res = await fetch(`${env.applicationsUrl}${path}`, {
+			headers,
+			signal: AbortSignal.timeout(5_000),
+		});
+	} catch {
+		throw new HttpError(502, "CASE_ASSISTANT_FAILED", "case access check failed");
+	}
+	if (res.status === 404) throw new HttpError(404, "NOT_FOUND", "not found");
+	if (!res.ok) throw new HttpError(502, "CASE_ASSISTANT_FAILED", "case access check failed");
 }
 
 /** UTC minute bucket for the per-officer/run/minute view dedupe key. */
@@ -902,6 +1001,115 @@ export function researchRoutes(deps: ResearchRouteDeps): ServiceApp {
 		},
 	);
 
+	// Case-scoped read-only assistant (officer Q&A over one case). Flag-gated
+	// (404 without agents + case-assistant flags); consent-gated (403 without
+	// context consent); drafts 409 via research-context. The runner owns the
+	// tool loop and answer validation; this route never sees prompts, tool
+	// results, or PII beyond the officer's own question.
+	app.post(
+		"/internal/research/applications/:applicationId/assistant",
+		requireOfficer,
+		async (c) => {
+			const startedAt = Date.now();
+			const me = c.var.user;
+			const applicationId = c.req.param("applicationId");
+			if (!isUuid(applicationId)) throw new HttpError(404, "NOT_FOUND", "not found");
+			if (!env.agentsEnabled || !env.caseAssistantEnabled) {
+				throw new HttpError(404, "CASE_ASSISTANT_DISABLED", "case assistant is disabled");
+			}
+			const parsed = z
+				.object({
+					question: z.string().min(1).max(env.caseAssistantMaxQuestionChars),
+					history: z
+						.array(
+							z
+								.object({
+									role: z.enum(["user", "assistant"]),
+									text: z.string().min(1).max(env.caseAssistantMaxHistoryChars),
+								})
+								.strict(),
+						)
+						.max(env.caseAssistantMaxHistoryMessages)
+						.optional(),
+				})
+				.strict()
+				.safeParse(await readJson(c));
+			if (!parsed.success) {
+				throw new HttpError(
+					422,
+					"VALIDATION_ERROR",
+					"invalid assistant request",
+					zodFields(parsed.error),
+				);
+			}
+			const history = parsed.data.history ?? [];
+			if (history.reduce((n, m) => n + m.text.length, 0) > env.caseAssistantMaxHistoryChars) {
+				throw new HttpError(422, "VALIDATION_ERROR", "assistant history is too long");
+			}
+			const checkAccess =
+				deps.checkAssistantCaseAccess ??
+				((id: string, user: { id: string; email: string; role: string }) =>
+					checkAssistantCaseAccessOverHttp(env, id, user));
+			await checkAccess(applicationId, me);
+			const fetchContext =
+				deps.fetchResearchContext ?? ((id: string) => fetchResearchContextOverHttp(env, id));
+			const { caseFacts, contextAnalysisConsent } = await fetchContext(applicationId);
+			if (contextAnalysisConsent !== true) {
+				throw new HttpError(
+					403,
+					"CONTEXT_CONSENT_REQUIRED",
+					"context analysis consent is required",
+				);
+			}
+			const submittedAt = caseFacts["submittedAt"];
+			if (typeof submittedAt !== "string" || submittedAt.length < 10) {
+				throw new HttpError(502, "CASE_ASSISTANT_FAILED", "case facts are unavailable");
+			}
+			// One abort path: the inbound disconnect plus the run timeout.
+			const timeoutSignal = AbortSignal.timeout(env.caseAssistantTimeoutMs);
+			const inbound = c.req.raw.signal;
+			const signal =
+				typeof AbortSignal.any === "function" && inbound
+					? AbortSignal.any([inbound, timeoutSignal])
+					: timeoutSignal;
+			const assistant = deps.caseAssistant ?? unavailableCaseAssistantRunner;
+			try {
+				const out = await assistant.run({
+					applicationId,
+					caseFacts,
+					asOfDate: submittedAt.slice(0, 10),
+					question: parsed.data.question,
+					history,
+					actorId: me.id,
+					actorRole: me.role,
+					signal,
+					runId: applicationId,
+				});
+				return c.json({ ...out, latencyMs: Date.now() - startedAt });
+			} catch (err) {
+				if (err instanceof CaseAssistantError) {
+					// Sanitized envelope only: static messages, ids, and codes —
+					// never the question, answer, or tool results.
+					logger.error(
+						{ applicationId, code: err.code, reason: err.message },
+						"case assistant failed",
+					);
+					switch (err.code) {
+						case "UNSAFE_OUTPUT":
+						case "INVALID_OUTPUT":
+							throw new HttpError(422, err.code, "assistant output failed validation");
+						case "CASE_ASSISTANT_TIMEOUT":
+							throw new HttpError(504, err.code, "assistant run timed out");
+						case "CASE_ASSISTANT_UNAVAILABLE":
+							throw new HttpError(503, err.code, "assistant model is unavailable");
+						default:
+							throw new HttpError(502, err.code, "assistant run failed");
+					}
+				}
+				throw err;
+			}
+		},
+	);
+
 	return app;
 }
-

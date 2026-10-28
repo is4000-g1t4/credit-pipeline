@@ -28,12 +28,36 @@ import { z } from "zod";
 
 const viewSchema = z.object({ runId: z.uuid() }).strict();
 
+/** The research assistant runs a bounded tool loop (45s server-side); the
+ * proxy bound stays above it. The default internalFetch cap is 5s. */
+const CASE_ASSISTANT_TIMEOUT_MS = 60_000;
+
 const findingReviewSchema = z
 	.object({
 		action: z.enum(["accepted", "rejected"]),
 		note: z.string().max(1000).optional(),
 	})
 	.strict();
+
+// Case-assistant question (officer Q&A over the case file): bounded
+// question plus a short trailing history. The 6000-char history cap is
+// enforced on the summed text length, not per message.
+const assistantMessageSchema = z
+	.object({
+		role: z.enum(["user", "assistant"]),
+		text: z.string(),
+	})
+	.strict();
+
+const assistantSchema = z
+	.object({
+		question: z.string().min(3).max(1000),
+		history: z.array(assistantMessageSchema).max(8).optional(),
+	})
+	.strict()
+	.refine((v) => (v.history ?? []).reduce((n, m) => n + m.text.length, 0) <= 6000, {
+		message: "history too long",
+	});
 
 export interface ReviewRouteDeps {
 	gateway: WorkflowGateway;
@@ -44,6 +68,8 @@ export interface ReviewRouteDeps {
 	/** Gates the officer research routes (SPEC §10). */
 	agentsEnabled: boolean;
 	caseBriefEnabled: boolean;
+	/** Gates the case-assistant proxy (own flag, off by default). */
+	caseAssistantEnabled: boolean;
 	internalSecret: string;
 	fetchImpl?: typeof fetch;
 }
@@ -86,8 +112,15 @@ export function reviewRoutes(deps: ReviewRouteDeps): ServiceApp {
 		path: string,
 		user: ServiceVariables["user"],
 		body: unknown,
+		timeoutMs?: number,
 	): Promise<Response> =>
-		internalFetch(baseUrl, path, user, { method: "POST", body, secret: internalSecret, fetchImpl });
+		internalFetch(baseUrl, path, user, {
+			method: "POST",
+			body,
+			secret: internalSecret,
+			fetchImpl,
+			...(timeoutMs === undefined ? {} : { timeoutMs }),
+		});
 
 	app.get("/api/review/queue", requireOfficer, async (c) => {
 		const res = await get(applicationsUrl, "/internal/review/queue", c.var.user);
@@ -396,6 +429,35 @@ export function reviewRoutes(deps: ReviewRouteDeps): ServiceApp {
 			return c.json(await readUpstream(res), 201);
 		},
 	);
+
+	// Case assistant (officer Q&A over the case file): officer-only,
+	// gated on its own flag, then proxied to the research service with
+	// the same officer identity. Upstream errors pass through with the
+	// shared readUpstream semantics (4xx untouched, 5xx → 502).
+	app.post("/api/review/:id/assistant", requireOfficer, async (c) => {
+		const id = c.req.param("id");
+		if (!UUID_RE.test(id)) throw new HttpError(404, "NOT_FOUND", "not found");
+		if (!deps.caseAssistantEnabled) {
+			throw new HttpError(404, "CASE_ASSISTANT_DISABLED", "case assistant is disabled");
+		}
+		const parsed = assistantSchema.safeParse(await readJson(c));
+		if (!parsed.success) {
+			throw new HttpError(
+				422,
+				"VALIDATION_ERROR",
+				"invalid assistant request",
+				zodFields(parsed.error),
+			);
+		}
+		const res = await post(
+			researchUrl,
+			`/internal/research/applications/${id}/assistant`,
+			c.var.user,
+			parsed.data,
+			CASE_ASSISTANT_TIMEOUT_MS,
+		);
+		return c.json(await readUpstream(res));
+	});
 
 	return app;
 }

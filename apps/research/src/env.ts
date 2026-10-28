@@ -109,6 +109,18 @@ export const researchServerSchema = {
 	POLICY_CASE_TOKEN_TTL_SECONDS: z.coerce.number().int().min(1).max(3_600).default(120),
 	POLICY_CASE_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(45_000),
 	POLICY_CASE_MAX_COST_USD: z.coerce.number().min(0).default(0.2),
+	// Case-scoped read-only assistant (officer Q&A over case tools +
+	// policy search). Off by default; the route 404s without it.
+	CASE_ASSISTANT_ENABLED: z.string().default("false"),
+	CASE_ASSISTANT_MODEL: z.enum(ALLOWED_MODELS).default("openai/gpt-6.1-terra"),
+	CASE_ASSISTANT_MAX_TURNS: z.coerce.number().int().min(2).max(24).default(6),
+	CASE_ASSISTANT_MAX_TOOL_CALLS: z.coerce.number().int().min(1).max(40).default(12),
+	CASE_ASSISTANT_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(256).max(8_000).default(1200),
+	CASE_ASSISTANT_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(50_000).default(45_000),
+	CASE_ASSISTANT_TEMPERATURE: z.coerce.number().min(0).max(1).default(0.1),
+	CASE_ASSISTANT_MAX_QUESTION_CHARS: z.coerce.number().int().min(1).max(1000).default(1000),
+	CASE_ASSISTANT_MAX_HISTORY_MESSAGES: z.coerce.number().int().min(0).max(8).default(8),
+	CASE_ASSISTANT_MAX_HISTORY_CHARS: z.coerce.number().int().min(0).max(6000).default(6000),
 };
 
 const parsed = createEnv({
@@ -150,8 +162,7 @@ export const env = {
 	contextModel: parsed.CONTEXT_AGENT_MODEL as AllowedModel,
 	contextMaxToolCalls: parsed.CONTEXT_AGENT_MAX_TOOL_CALLS,
 	contextPreflightToolCalls: parsed.CONTEXT_AGENT_PREFLIGHT_TOOL_CALLS,
-	contextPreflightEnabled:
-		parsed.CONTEXT_AGENT_PREFLIGHT_ENABLED.trim().toLowerCase() === "true",
+	contextPreflightEnabled: parsed.CONTEXT_AGENT_PREFLIGHT_ENABLED.trim().toLowerCase() === "true",
 	contextMaxTurns: parsed.CONTEXT_AGENT_MAX_TURNS,
 	contextTemperature: parsed.CONTEXT_AGENT_TEMPERATURE,
 	contextMaxOutputTokens: parsed.CONTEXT_AGENT_MAX_OUTPUT_TOKENS,
@@ -165,6 +176,16 @@ export const env = {
 	policyCaseTokenTtlSeconds: parsed.POLICY_CASE_TOKEN_TTL_SECONDS,
 	policyCaseTimeoutMs: parsed.POLICY_CASE_TIMEOUT_MS,
 	policyCaseMaxCostUsd: parsed.POLICY_CASE_MAX_COST_USD,
+	caseAssistantEnabled: parsed.CASE_ASSISTANT_ENABLED.trim().toLowerCase() === "true",
+	caseAssistantModel: parsed.CASE_ASSISTANT_MODEL as AllowedModel,
+	caseAssistantMaxTurns: parsed.CASE_ASSISTANT_MAX_TURNS,
+	caseAssistantMaxToolCalls: parsed.CASE_ASSISTANT_MAX_TOOL_CALLS,
+	caseAssistantMaxOutputTokens: parsed.CASE_ASSISTANT_MAX_OUTPUT_TOKENS,
+	caseAssistantTimeoutMs: parsed.CASE_ASSISTANT_TIMEOUT_MS,
+	caseAssistantTemperature: parsed.CASE_ASSISTANT_TEMPERATURE,
+	caseAssistantMaxQuestionChars: parsed.CASE_ASSISTANT_MAX_QUESTION_CHARS,
+	caseAssistantMaxHistoryMessages: parsed.CASE_ASSISTANT_MAX_HISTORY_MESSAGES,
+	caseAssistantMaxHistoryChars: parsed.CASE_ASSISTANT_MAX_HISTORY_CHARS,
 };
 
 export type ResearchEnv = typeof env;

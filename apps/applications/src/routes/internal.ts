@@ -5,6 +5,7 @@
 import {
 	applications,
 	decisions,
+	documentFiles,
 	policyEvaluations,
 	scores,
 	type Db,
@@ -18,7 +19,7 @@ import {
 	type ServiceApp,
 } from "@credit/service-kit";
 import { caseFactsSchema, reportingDay, type CaseFacts } from "@credit/core";
-import { asc, count, eq, inArray, ne } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, ne } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Sql } from "postgres";
 import { z } from "zod";
@@ -40,6 +41,7 @@ import {
 	LockTimeout,
 } from "../documents/index.js";
 import type { ContextConfig } from "../context/index.js";
+import { requireAssistCaseAccess } from "../assist/access.js";
 import { internalContextRoutes } from "./internal-context.js";
 import { internalPolicyRoutes } from "./internal-policy.js";
 
@@ -245,6 +247,108 @@ export function internalRoutes(deps: InternalRouteDeps): ServiceApp {
 			caseFacts: buildCaseFacts(row),
 			applicantUserId: row.applicantUserId,
 			contextAnalysisConsent: row.contextAnalysisConsent,
+		});
+	});
+
+	// Case-assistant need-to-know check (officer-signed). Research calls this
+	// before the model runs so the Ask tab follows the same rule as the other
+	// case-assist routes: any non-draft case, except one actively assigned to
+	// another officer (non-leaking 404) or a revoked officer.
+	app.get("/internal/applications/:id/assistant-access", officer, async (c) => {
+		const id = c.req.param("id");
+		if (!isUuid(id)) throw new HttpError(404, "NOT_FOUND", "not found");
+		await requireAssistCaseAccess(db, id, c.var.user);
+		return c.json({ applicationId: id });
+	});
+
+	// Case-assistant assessment context (service-only): latest score,
+	// policy evaluation, and the unique decision plus live document
+	// metadata. No PII, no document text, no filenames/hashes/keys.
+	// Drafts 404 like the other case reads.
+	app.get("/internal/applications/:id/assistant-context", requireService, async (c) => {
+		const id = c.req.param("id");
+		if (!isUuid(id)) throw new HttpError(404, "NOT_FOUND", "not found");
+		const rows = await db.select().from(applications).where(eq(applications.id, id));
+		const row = rows[0];
+		if (!row || row.status === "draft") throw new HttpError(404, "NOT_FOUND", "not found");
+		const [scoreRows, policyRows, decisionRows, docRows] = await Promise.all([
+			db
+				.select()
+				.from(scores)
+				.where(eq(scores.applicationId, id))
+				.orderBy(desc(scores.createdAt))
+				.limit(1),
+			db.select().from(policyEvaluations).where(eq(policyEvaluations.applicationId, id)),
+			db.select().from(decisions).where(eq(decisions.applicationId, id)).limit(1),
+			db
+				.select({
+					id: documentFiles.id,
+					kind: documentFiles.kind,
+					status: documentFiles.status,
+					ocrStatus: documentFiles.ocrStatus,
+					pageCount: documentFiles.pageCount,
+					documentDate: documentFiles.documentDate,
+					periodEnd: documentFiles.periodEnd,
+					uploadedAt: documentFiles.uploadedAt,
+				})
+				.from(documentFiles)
+				.where(and(eq(documentFiles.applicationId, id), ne(documentFiles.status, "deleted")))
+				.orderBy(desc(documentFiles.uploadedAt))
+				.limit(50),
+		]);
+		const score = scoreRows[0];
+		// evaluatedAt is null on legacy rows — compare on the effective
+		// evaluation time so a null row never beats a newer evaluation.
+		const policy = policyRows.sort((a, b) => {
+			const at = (a.evaluatedAt ?? a.createdAt).getTime();
+			const bt = (b.evaluatedAt ?? b.createdAt).getTime();
+			return bt - at || b.createdAt.getTime() - a.createdAt.getTime();
+		})[0];
+		const decision = decisionRows[0];
+		return c.json({
+			applicationId: row.id,
+			status: row.status,
+			submittedAt: row.submittedAt?.toISOString() ?? null,
+			decidedAt: row.decidedAt?.toISOString() ?? null,
+			score: score
+				? {
+						score: score.score,
+						grade: score.grade,
+						modelVersion: score.modelVersion,
+						factors: score.factors,
+						affordability: score.affordability,
+					}
+				: null,
+			policyEvaluation: policy
+				? {
+						policyVersion: policy.policyVersion,
+						outcome: policy.outcome,
+						reasons: policy.reasons,
+						maxAmountCents: policy.maxAmountCents,
+						evaluatedAt: (policy.evaluatedAt ?? policy.createdAt).toISOString(),
+					}
+				: null,
+			decision: decision
+				? {
+						outcome: decision.outcome,
+						decidedBy: decision.decidedBy,
+						approvedAmountCents: decision.approvedAmountCents,
+						termMonths: decision.termMonths,
+						rateBps: decision.rateBps,
+						reasons: decision.reasons,
+						decidedAt: decision.decidedAt.toISOString(),
+					}
+				: null,
+			documents: docRows.map((d) => ({
+				id: d.id,
+				kind: d.kind,
+				status: d.status,
+				ocrStatus: d.ocrStatus,
+				pageCount: d.pageCount,
+				documentDate: d.documentDate,
+				periodEnd: d.periodEnd,
+				uploadedAt: d.uploadedAt.toISOString(),
+			})),
 		});
 	});
 

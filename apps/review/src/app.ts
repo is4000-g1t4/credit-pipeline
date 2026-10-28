@@ -24,6 +24,7 @@ export function createApp(deps: ReviewDeps): ServiceApp {
 		researchUrl: deps.env.researchUrl,
 		agentsEnabled: deps.env.agentsEnabled,
 		caseBriefEnabled: deps.env.caseBriefEnabled,
+		caseAssistantEnabled: deps.env.caseAssistantEnabled,
 		internalSecret: deps.env.internalSecret,
 		fetchImpl: deps.fetchImpl,
 	});

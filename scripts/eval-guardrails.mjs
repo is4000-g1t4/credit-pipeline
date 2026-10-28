@@ -27,6 +27,16 @@ const FEATURES = [
 		maxTotalCostUsd: 6,
 	},
 	{
+		name: "case-assistant",
+		dir: "apps/research/eval/results",
+		prefix: "case-assistant-",
+		minRuns: 40,
+		minPassAt1: 0.9,
+		maxMeanLatencyMs: 30_000,
+		maxP95LatencyMs: 45_000,
+		maxTotalCostUsd: 5,
+	},
+	{
 		name: "answers",
 		dir: "apps/policy/eval/results",
 		prefix: "answers-",
