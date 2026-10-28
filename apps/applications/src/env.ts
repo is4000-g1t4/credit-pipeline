@@ -99,7 +99,7 @@ const parsed = createEnv({
 		// runs the bounded OpenRouter tool loop; default stays deterministic.
 		ASSIST_MEMO_WRITER: z.enum(["deterministic", "agent"]).default("deterministic"),
 		// Not model-compared: the memo eval is scripted
-		// (apps/applications/eval/MEMO-AGENT-RESULTS.md).
+		// (docs/eval/applications/MEMO-AGENT-RESULTS.md).
 		ASSIST_MEMO_MODEL: z.string().min(1).default("openai/gpt-6.1-sol"),
 		ASSIST_MEMO_PROMPT_VERSION: z.string().min(1).default("memo-agent-v1"),
 		ASSIST_MEMO_AGENT_VERSION: z.string().min(1).default("memo-agent-v1"),
@@ -131,7 +131,7 @@ const parsed = createEnv({
 		POLICY_AUDIT_HASH_SECRET: optionalSecret,
 		ASSIST_POLICY_TIMEOUT_MS: z.coerce.number().int().min(500).max(30_000).default(10_000),
 		// Tie with Sol on quality; Terra is the cost pick:
-		// apps/applications/eval/POLICY-EXCEPTION-MODELS-RESULTS.md.
+		// docs/eval/applications/POLICY-EXCEPTION-MODELS-RESULTS.md.
 		POLICY_EXCEPTION_MODEL: z.string().min(1).default("openai/gpt-6.1-terra"),
 		POLICY_EXCEPTION_PROMPT_VERSION: z.string().min(1).default("policy-exception-v1"),
 		POLICY_EXCEPTION_AGENT_VERSION: z.string().min(1).default("policy-exception-agent-v1"),
@@ -150,7 +150,7 @@ const parsed = createEnv({
 		DOCUMENT_INTEGRITY_AGENT_ENABLED: z.enum(["true", "false"]).default("false"),
 		DOCUMENT_INTEGRITY_TRIAGE_ENABLED: z.enum(["true", "false"]).default("false"),
 		// Document-integrity winner:
-		// apps/applications/eval/INTEGRITY-MODELS-RESULTS.md.
+		// docs/eval/applications/INTEGRITY-MODELS-RESULTS.md.
 		DOCUMENT_INTEGRITY_MODEL: z.string().min(1).default("openai/gpt-6.1-sol"),
 		DOCUMENT_INTEGRITY_PROMPT_VERSION: z.string().min(1).default("integrity-analysis-v1"),
 		DOCUMENT_INTEGRITY_AGENT_VERSION: z.string().min(1).default("integrity-agent-v1"),

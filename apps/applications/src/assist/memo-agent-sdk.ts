@@ -102,7 +102,7 @@ function readCostUsd(result: unknown, inputTokens: number, outputTokens: number)
 }
 
 // Model + scripted eval (not model-compared):
-// apps/applications/eval/MEMO-AGENT-RESULTS.md.
+// docs/eval/applications/MEMO-AGENT-RESULTS.md.
 export function createAgentsMemoRunner(opts: AgentsMemoRunnerOptions): MemoAgentRunner {
 	return {
 		async run(input): Promise<MemoAgentRunResult> {

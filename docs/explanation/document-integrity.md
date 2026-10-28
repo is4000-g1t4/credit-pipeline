@@ -290,7 +290,7 @@ PII. Events: `integrity.flag_opened/flag_updated`,
 `false`. Off means routes 404. The agent additionally needs
 `OPENROUTER_API_KEY` (shared with the memo writer). Model/provenance defaults:
 `DOCUMENT_INTEGRITY_MODEL` (`openai/gpt-6.1-sol`; winner:
-`apps/applications/eval/INTEGRITY-MODELS-RESULTS.md`),
+`docs/eval/applications/INTEGRITY-MODELS-RESULTS.md`),
 `DOCUMENT_INTEGRITY_PROMPT_VERSION` (`integrity-analysis-v1`),
 `DOCUMENT_INTEGRITY_AGENT_VERSION` (`integrity-agent-v1`),
 `DOCUMENT_INTEGRITY_TRIAGE_PROMPT_VERSION` (`integrity-triage-v1`, retained for

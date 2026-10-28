@@ -518,7 +518,7 @@ async function runContextModel(
 		),
 	];
 	const agent = new Agent({
-		// Model + eval: apps/research/eval/CONTEXT-MODELS-RESULTS.md.
+		// Model + eval: docs/eval/research/CONTEXT-MODELS-RESULTS.md.
 		name: "context-analyst",
 		instructions: CONTEXT_SYSTEM,
 		model: new OpenAIChatCompletionsModel(

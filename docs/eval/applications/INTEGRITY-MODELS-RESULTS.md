@@ -9,7 +9,7 @@ pnpm --filter @credit/applications eval:integrity -- --trials=3 --split=all --bu
 # sweep: DOCUMENT_INTEGRITY_MODEL=<model>
 ```
 
-Raw results: `eval/results/integrity-2026-10-28T05-*.json` (local, gitignored).
+Raw results: `apps/applications/eval/results/integrity-2026-10-28T05-*.json` (local, gitignored).
 
 ## Results
 
@@ -66,7 +66,7 @@ Sol, 35 cases × 3 trials:
   triage `missingEvidence` code), and `ocr_unsupported` yields no extractable
   fields, so those cases assert a cited gap rather than extraction.
 
-Raw: `eval/results/integrity-2026-10-28T13-45-26-869Z.json`.
+Raw: `apps/applications/eval/results/integrity-2026-10-28T13-45-26-869Z.json`.
 
 ## Verdict
 

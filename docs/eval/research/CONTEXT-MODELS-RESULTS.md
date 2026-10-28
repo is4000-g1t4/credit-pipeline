@@ -8,7 +8,7 @@ K3.1 Pro were dropped from the previous sweep; GPT-6.1 Terra was added.
 pnpm --filter @credit/research eval:context-models -- --trials=3 --max-spend=50 --concurrency=3
 ```
 
-Raw result: `eval/results/context-models-2026-10-28T05-38-14-963Z.json` (local,
+Raw result: `apps/research/eval/results/context-models-2026-10-28T05-38-14-963Z.json` (local,
 gitignored). Dataset: `eval/context-models-cases.json`. Prompt `context-v5`,
 validator `context-v4`, temperature 0.1, max 6,000 output tokens, 16 turns,
 16 tool calls, 6-month window.
@@ -120,7 +120,7 @@ After the comparison, the context preflight snapshot was removed from the
 default path. Same 30/30, but narrative drops fell from 0.83 to 0.29 per run,
 tool calls from 23.6 to 12.8, and cost from $1.30 to $1.09. The preflight
 remains available with `CONTEXT_AGENT_PREFLIGHT_ENABLED=true`. Full A/B:
-`apps/research/eval/TUNING-2026-10-28.md`.
+`docs/eval/TUNING-2026-10-28.md`.
 
 ## Verdict
 

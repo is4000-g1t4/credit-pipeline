@@ -28,8 +28,8 @@ Config: `deepseek/deepseek-v4.1-flash-1017`, temperature 0, combined
 run ($0.25 production cap), 4000 output tokens. `asOf` 2026-06-30.
 
 Raw results JSON (local/gitignored):
-`eval/results/integrity-2026-10-26T06-01-44-874Z.json` (dev),
-`eval/results/integrity-2026-10-26T06-03-59-730Z.json` (held-out).
+`apps/applications/eval/results/integrity-2026-10-26T06-01-44-874Z.json` (dev),
+`apps/applications/eval/results/integrity-2026-10-26T06-03-59-730Z.json` (held-out).
 
 ## Metrics
 

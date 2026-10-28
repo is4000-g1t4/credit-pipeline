@@ -11,7 +11,7 @@ $env:POLICY_EXCEPTION_JUDGE_MODEL='openai/gpt-5.6-terra'
 pnpm --filter @credit/applications eval:policy-exception -- --trials=3 --split=all --budget-usd=8
 ```
 
-Raw results: `eval/results/policy-exception-2026-10-28T07-59-37-553Z.json`
+Raw results: `apps/applications/eval/results/policy-exception-2026-10-28T07-59-37-553Z.json`
 (Terra), `...T08-00-54-653Z.json` (Sol) — local, gitignored. The 24-case
 comparison judge is **GPT-5.6 Terra**, independent of both answerers. The
 29-case hard-case extension at `...T14-19-02-864Z.json` uses GPT-6.1 Terra
@@ -73,7 +73,7 @@ Budget/timeout case: not added. The global budget path is covered by the
 harness and route tests; forcing a per-case budget breach needs a model to
 overspend unpredictably, so it would not be a stable case.
 
-Raw: `eval/results/policy-exception-2026-10-28T14-19-02-864Z.json`. The Sol
+Raw: `apps/applications/eval/results/policy-exception-2026-10-28T14-19-02-864Z.json`. The Sol
 column in the comparison remains the 24-case run; Sol was not rerun on the new
 held-out cases to avoid consuming the split twice.
 

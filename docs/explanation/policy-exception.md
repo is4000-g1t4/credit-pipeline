@@ -5,7 +5,7 @@ exception/approval path, and a draft `policy_exception_memo`. Audience:
 developers extending the navigator or adding a rule. Outcome: you know what
 is deterministic, what the model may write, and what must fail closed.
 
-Related: [eval design](eval-design.md#45-feature-registry) (registry row and
+Related: [eval design](../eval/eval-design.md#45-feature-registry) (registry row and
 results), the implementation plan
 (historical plan path, not in repo:
 `.scratch/plans/en06-en07-e3-policy-exception-navigator.md`).

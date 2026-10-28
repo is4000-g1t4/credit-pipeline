@@ -11,13 +11,13 @@ not recommended as defaults for the reasons below.
 
 | Agent | Dataset | Trials | Report |
 |---|---|---:|---|
-| Context analyst | 37 cases (30 windows + 7 cases over 5 independent customers) | 3 | `apps/research/eval/CONTEXT-MODELS-RESULTS.md` |
-| Policy navigator | 43 cases | 3 | `apps/policy/eval/ANSWER-MODELS-RESULTS.md` |
-| Document integrity | 35 cases (28 comparison + 7 hard-doc) | 3 | `apps/applications/eval/INTEGRITY-MODELS-RESULTS.md` |
-| External case brief | 20 fixture cases | 3 | `apps/research/eval/BRIEF-MODELS-RESULTS.md` |
-| Policy exception | 28 valid cases (24 comparison + 4 hard) | 3 | `apps/applications/eval/POLICY-EXCEPTION-MODELS-RESULTS.md` |
-| Credit memo (live) | 22 evidence bundles | 2 | `apps/applications/eval/MEMO-LIVE-RESULTS.md` |
-| Case policy review | 22 structured case contexts | 2 | `apps/policy/eval/CASE-REVIEW-RESULTS.md` |
+| Context analyst | 37 cases (30 windows + 7 cases over 5 independent customers) | 3 | `docs/eval/research/CONTEXT-MODELS-RESULTS.md` |
+| Policy navigator | 43 cases | 3 | `docs/eval/policy/ANSWER-MODELS-RESULTS.md` |
+| Document integrity | 35 cases (28 comparison + 7 hard-doc) | 3 | `docs/eval/applications/INTEGRITY-MODELS-RESULTS.md` |
+| External case brief | 20 fixture cases | 3 | `docs/eval/research/BRIEF-MODELS-RESULTS.md` |
+| Policy exception | 28 valid cases (24 comparison + 4 hard) | 3 | `docs/eval/applications/POLICY-EXCEPTION-MODELS-RESULTS.md` |
+| Credit memo (live) | 22 evidence bundles | 2 | `docs/eval/applications/MEMO-LIVE-RESULTS.md` |
+| Case policy review | 22 structured case contexts | 2 | `docs/eval/policy/CASE-REVIEW-RESULTS.md` |
 
 All runners use the production prompt, tools/fixtures, and validator. Costs are
 OpenRouter list prices projected from token usage, not billed. The 24-case
@@ -97,7 +97,7 @@ The production agent defaults now follow these results (overrides remain):
 | `POLICY_AGENT_MODEL` | `openai/gpt-6.1-terra` | `ANSWER-MODELS-RESULTS.md` |
 | `POLICY_EXCEPTION_MODEL` | `openai/gpt-6.1-terra` (tie with Sol; cost pick) | `POLICY-EXCEPTION-MODELS-RESULTS.md` |
 | `DOCUMENT_INTEGRITY_MODEL` | `openai/gpt-6.1-sol` | `INTEGRITY-MODELS-RESULTS.md` |
-| `ASSIST_MEMO_MODEL` | `openai/gpt-6.1-sol` (live eval winner) | `apps/applications/eval/MEMO-LIVE-RESULTS.md` |
+| `ASSIST_MEMO_MODEL` | `openai/gpt-6.1-sol` (live eval winner) | `docs/eval/applications/MEMO-LIVE-RESULTS.md` |
 
 ## Cost
 
@@ -155,7 +155,7 @@ lower consistency and gap coverage).
 - **Brief:** removing the preflight was worse (entity 0.72 vs 0.83, cost $0.27
   vs $0.18), so it stays. Prompt `v7` raised Sol's entity match 0.833 → 1.000
   on the same 9 trials.
-- Full A/B: `apps/research/eval/TUNING-2026-10-28.md`.
+- Full A/B: `docs/eval/TUNING-2026-10-28.md`.
 
 ## Caveats
 

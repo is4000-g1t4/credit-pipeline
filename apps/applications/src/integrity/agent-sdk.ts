@@ -242,7 +242,7 @@ export function createAgentsIntegrityRunner(
 			});
 
 			const agent = new Agent({
-				// Model + eval: apps/applications/eval/INTEGRITY-MODELS-RESULTS.md.
+				// Model + eval: docs/eval/applications/INTEGRITY-MODELS-RESULTS.md.
 				name: "document-integrity-agent",
 				instructions: generateBrief
 					? `${ANALYSIS_SYSTEM_PROMPT}\n\n${BRIEF_RULES}`

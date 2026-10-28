@@ -9,7 +9,7 @@ pnpm --filter @credit/policy eval:answers -- --trials=3 --split=all --delay=0
 # sweep: POLICY_AGENT_MODEL=<model> POLICY_EVAL_JUDGE_MODEL=openai/gpt-6.1-terra
 ```
 
-Raw results: `eval/results/answers-2026-10-28T05-*.json` (local, gitignored).
+Raw results: `apps/policy/eval/results/answers-2026-10-28T05-*.json` (local, gitignored).
 
 ## Results
 

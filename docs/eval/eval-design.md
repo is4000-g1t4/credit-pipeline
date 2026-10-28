@@ -33,7 +33,7 @@ makes the result reviewable.
 | Dataset      | 20–30 cases with inputs, expected outcome, split, tags           | `apps/<app>/eval/cases.json` |
 | Runner       | Real production prompt, model, tools, and validator; one command | `apps/<app>/eval/*-eval.ts`  |
 | Graders      | Code first, then at most one semantic judge per dimension        | The runner                   |
-| Report       | `pass@1`, `pass^3`, n, cost, latency, failure clusters, caveats  | `apps/<app>/eval/RESULTS.md` |
+| Report       | `pass@1`, `pass^3`, n, cost, latency, failure clusters, caveats  | `docs/eval/<app>/RESULTS.md` |
 | Registry row | Feature, archetype, dataset, command, owner, status              | §4.5 table                   |
 
 If a feature cannot fill the contract, it is not ready to be called “done”.
@@ -189,7 +189,7 @@ The validators are already the best deterministic graders we have:
 
 Existing evals:
 
-- `apps/policy/eval/embedding-eval.ts` + `queries.json` + `RESULTS.md` —
+- `apps/policy/eval/embedding-eval.ts` + `queries.json` + `docs/eval/policy/RESULTS.md` -
   retrieval-only, 30 dev / 30 frozen held-out, recall@5, MRR, nDCG@5,
   exact-section hit, Wilson 95% CI. This is the model to copy for dataset
   discipline and reporting.
@@ -203,9 +203,9 @@ Existing evals:
   production validator.
 - `apps/research/eval/context-eval.ts` — real context agent/tools/validator
   against eval-owned demo applications.
-- Results: `apps/policy/eval/ANSWER-RESULTS.md`,
-  `apps/research/eval/BRIEF-RESULTS.md`,
-  `apps/research/eval/CONTEXT-RESULTS.md`.
+- Results: `docs/eval/policy/ANSWER-RESULTS.md`,
+  `docs/eval/research/BRIEF-RESULTS.md`,
+  `docs/eval/research/CONTEXT-RESULTS.md`.
 
 Gaps worth closing, in order (updated 2026-10-28):
 
@@ -250,19 +250,19 @@ a supported capability.
 Update the status column to `baseline`, `passing`, `saturated`, or
 `directional` after each run. Keep the command in the row so the next person
 does not have to guess. Combined model comparison:
-[docs/explanation/model-comparison-2026-10-28.md](model-comparison-2026-10-28.md).
+[docs/eval/model-comparison-2026-10-28.md](model-comparison-2026-10-28.md).
 Results:
-`apps/policy/eval/ANSWER-RESULTS.md`,
-`apps/research/eval/BRIEF-RESULTS.md`,
-`apps/research/eval/CONTEXT-RESULTS.md`,
-`apps/applications/eval/POLICY-EXCEPTION-RESULTS.md`.
+`docs/eval/policy/ANSWER-RESULTS.md`,
+`docs/eval/research/BRIEF-RESULTS.md`,
+`docs/eval/research/CONTEXT-RESULTS.md`,
+`docs/eval/applications/POLICY-EXCEPTION-RESULTS.md`.
 
 Model comparisons:
-`apps/policy/eval/ANSWER-MODELS-RESULTS.md`,
-`apps/research/eval/BRIEF-MODELS-RESULTS.md`,
-`apps/research/eval/CONTEXT-MODELS-RESULTS.md`,
-`apps/applications/eval/INTEGRITY-MODELS-RESULTS.md`,
-`apps/applications/eval/POLICY-EXCEPTION-MODELS-RESULTS.md`.
+`docs/eval/policy/ANSWER-MODELS-RESULTS.md`,
+`docs/eval/research/BRIEF-MODELS-RESULTS.md`,
+`docs/eval/research/CONTEXT-MODELS-RESULTS.md`,
+`docs/eval/applications/INTEGRITY-MODELS-RESULTS.md`,
+`docs/eval/applications/POLICY-EXCEPTION-MODELS-RESULTS.md`.
 
 ### 4.6 Adding a new AI feature
 
@@ -293,7 +293,7 @@ tooling changes. Model defaults are pinned to the agent winners:
 `openai/gpt-6.1-sol` for case brief and document integrity. Overrides remain
 available, and evals must record the model and must not silently swap it. See
 the per-agent reports and
-[docs/explanation/model-comparison-2026-10-28.md](model-comparison-2026-10-28.md).
+[docs/eval/model-comparison-2026-10-28.md](model-comparison-2026-10-28.md).
 
 ## 5. The suite
 
@@ -330,7 +330,7 @@ Rules:
 - **Isolation.** A scratch DB or eval-owned rows; delete them by
   `fixture_key` like `settings-eval.ts` does. Fake Tavily for regression; no
   live web.
-- **Artifacts.** `eval/results/<feature>-<timestamp>.json` plus a
+- **Artifacts.** `apps/<app>/eval/results/<feature>-<timestamp>.json` plus a
   `RESULTS.md` with the decision, caveats, `n`, and cost. Raw result JSON is
   local/gitignored, as the policy embedding eval already does.
 - **Cost.** A 24-case suite should run for well under $1, so it is cheap
@@ -402,7 +402,7 @@ model-quality number.
 Harness: `apps/policy/eval/case-review-eval.ts`. It calls the production
 `answerCase`, retrieval, and `validateCaseAnswer` directly. Consent, case-token,
 budget, retry, and lease behavior stay in the route/integration tests; this eval
-measures the model. Results: `apps/policy/eval/CASE-REVIEW-RESULTS.md`.
+measures the model. Results: `docs/eval/policy/CASE-REVIEW-RESULTS.md`.
 
 ### 5.4 External case brief
 
@@ -450,7 +450,7 @@ it is a sanity check, not an independent quality signal.
 Model comparison: `apps/research/eval/context-models-eval.ts` runs 37 cases
 (30 windows + 7 over 5 independent customers) per model in parallel through the
 same runner and validator, with a spend cap. Results:
-`apps/research/eval/CONTEXT-MODELS-RESULTS.md`.
+`docs/eval/research/CONTEXT-MODELS-RESULTS.md`.
 
 ### 5.6 Cross-cutting: the advisory-only invariant
 
@@ -489,10 +489,10 @@ already isolated.
 | Document integrity         | 28 cases × 3 trials            | dev 19/19 pass^3; held-out 9/9 pass^3; 0 safety failures; $0.67 total                                                                  | $0.6737 | synthetic fixtures; judge-free code graders; combined extraction+brief; held-out inspected once                                     |
 | Policy exception navigator | 17 dev + 7 held-out × 3 trials | dev live pass@1 0.804 / pass^3 0.647; held-out live pass@1 0.905 / pass^3 0.714; mapping/fidelity 1.0; citation coverage 1.0; safety 0 | $0.2003 | same-family judge (agreement 0.95); fixture policy client; direct draft over deterministic tool prefetch; 10 invalid/semantic fails |
 
-Details: `apps/policy/eval/ANSWER-RESULTS.md`,
-`apps/research/eval/BRIEF-RESULTS.md`,
-`apps/research/eval/CONTEXT-RESULTS.md`,
-`apps/applications/eval/INTEGRITY-RESULTS.md`.
+Details: `docs/eval/policy/ANSWER-RESULTS.md`,
+`docs/eval/research/BRIEF-RESULTS.md`,
+`docs/eval/research/CONTEXT-RESULTS.md`,
+`docs/eval/applications/INTEGRITY-RESULTS.md`.
 
 ## 6. Graders
 
@@ -679,5 +679,5 @@ Return: {"evidence": "<one sentence>", "verdict": "supported|partial|unsupported
   export, experiments.
 - Repo: `apps/policy/README.md`, the T03/T04 spec (historical plan path, not in repo:
   `.scratch/specs/t03-t04-policy-corpus-and-navigator.md`) §7.4 for retrieval
-  eval design and the held-out rule, `apps/policy/eval/RESULTS.md`, and
+  eval design and the held-out rule, `docs/eval/policy/RESULTS.md`, and
   `apps/research/eval/settings-eval.ts`.

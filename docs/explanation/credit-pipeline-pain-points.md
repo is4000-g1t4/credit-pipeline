@@ -84,7 +84,7 @@ Do not rebuild these:
 | Automatic case policy review                                              | research → policy stage                                                                           | Coverage/drop-rate eval; exception mapping                            |
 | External adverse-media brief                                              | `apps/research`                                                                                   | More source categories, stale-source handling                         |
 | Internal context analyst                                                  | `apps/research`                                                                                   | Covenant/EWS integration                                              |
-| Advisory-only decision guardrails + evals                                 | worker/review, `docs/explanation/eval-design.md`                                                  | Flags-on/off invariant e2e                                            |
+| Advisory-only decision guardrails + evals                                 | worker/review, `docs/eval/eval-design.md`                                                  | Flags-on/off invariant e2e                                            |
 
 The document-collection pain is therefore **partly solved**. The remaining
 high-value work is not another checklist; it is document intelligence, memo

@@ -93,7 +93,7 @@ const CONFIG: IntegrityConfig = {
 	fraudReviewEnabled: true,
 	agentEnabled: true,
 	triageEnabled: true,
-	// Document-integrity winner: apps/applications/eval/INTEGRITY-MODELS-RESULTS.md.
+	// Document-integrity winner: docs/eval/applications/INTEGRITY-MODELS-RESULTS.md.
 	model: envStr("DOCUMENT_INTEGRITY_MODEL", "openai/gpt-6.1-sol"),
 	promptVersion: envStr("DOCUMENT_INTEGRITY_PROMPT_VERSION", "integrity-analysis-v1"),
 	agentVersion: envStr("DOCUMENT_INTEGRITY_AGENT_VERSION", "integrity-agent-v1"),

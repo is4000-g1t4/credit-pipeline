@@ -299,7 +299,7 @@ export function createRealRunner(opts: {
 			const userPrompt = `${buildUserPrompt(input.caseFacts)}${preflightBlock}`;
 
 			const agent = new Agent({
-				// Model + eval: apps/research/eval/BRIEF-MODELS-RESULTS.md.
+				// Model + eval: docs/eval/research/BRIEF-MODELS-RESULTS.md.
 				name: "case-brief",
 				instructions: SYSTEM_TEMPLATE,
 				model,

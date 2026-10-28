@@ -30,7 +30,7 @@ and no-failed-rule cases.
 
 Labels and cases are co-located in one file (repo convention). Held-out
 discipline rests on the manifest written to
-`eval/results/policy-exception-heldout.json` (dataset hash
+`apps/applications/eval/results/policy-exception-heldout.json` (dataset hash
 `1591a95a…`) and one live held-out run after dev tuning. The earlier held-out
 run from before the final runner/fixture revision is superseded and was not
 used for tuning.
@@ -153,13 +153,13 @@ suite:
 The engine cases confirm the new 9.x sections are retrievable and cited;
 two dev engine answers are rated partial for completeness and one misses the
 5.2 citation. Details are appended to
-[`apps/policy/eval/ANSWER-RESULTS.md`](../../policy/eval/ANSWER-RESULTS.md).
+[`docs/eval/policy/ANSWER-RESULTS.md`](../policy/ANSWER-RESULTS.md).
 
 ## Artifacts
 
-- Raw dev result: `eval/results/policy-exception-2026-10-26T22-33-41-452Z.json`
-- Raw held-out result: `eval/results/policy-exception-2026-10-26T21-49-49-330Z.json`
-- Held-out manifest: `eval/results/policy-exception-heldout.json`
+- Raw dev result: `apps/applications/eval/results/policy-exception-2026-10-26T22-33-41-452Z.json`
+- Raw held-out result: `apps/applications/eval/results/policy-exception-2026-10-26T21-49-49-330Z.json`
+- Held-out manifest: `apps/applications/eval/results/policy-exception-heldout.json`
   (dataset hash `1591a95a19aa08155d256a2325b59cb2994f84d502e40d56deb6ea85087b1d7f`)
 - Judge rubric and calibration: `eval/judges/claim-support.md`,
   `eval/judges/calibration.json`

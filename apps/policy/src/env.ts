@@ -28,7 +28,7 @@ const schema = {
 	OPENROUTER_API_KEY: z.string().default(""),
 	OPENROUTER_BASE_URL: z.string().url().default("https://openrouter.ai/api/v1"),
 	POLICY_ASSIST_ENABLED: z.string().default("false"),
-	// Policy-navigator winner: apps/policy/eval/ANSWER-MODELS-RESULTS.md.
+	// Policy-navigator winner: docs/eval/policy/ANSWER-MODELS-RESULTS.md.
 	POLICY_AGENT_MODEL: z.string().min(1).default("openai/gpt-6.1-terra"),
 	POLICY_AGENT_TEMPERATURE: z.coerce.number().min(0).max(1).default(0),
 	// DeepSeek emits reasoning tokens; 2k was exhausted on multi-section

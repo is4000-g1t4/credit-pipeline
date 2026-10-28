@@ -10,7 +10,7 @@ pnpm --filter @credit/research eval:brief -- --trials=3
 # per-model sweep: BRIEF_EVAL_MODEL=<model> BRIEF_EVAL_JUDGE_MODEL=openai/gpt-6.1-terra
 ```
 
-Raw results: `eval/results/brief-2026-10-28T05-*.json` (local, gitignored).
+Raw results: `apps/research/eval/results/brief-2026-10-28T05-*.json` (local, gitignored).
 
 ## Results
 
@@ -56,7 +56,7 @@ A brief-preflight ablation was worse (entity 0.72 vs 0.83, cost $0.27 vs
 $0.18), so the mandatory server-side adverse/registry preflight stays. Prompt
 `v7` added the registration-number rule; on the same 3 cases × 3 trials Sol
 kept 9/9 pass and entity match rose from 0.833 to **1.000**. See
-`apps/research/eval/TUNING-2026-10-28.md`.
+`docs/eval/TUNING-2026-10-28.md`.
 
 ## Extended suite (20 cases)
 

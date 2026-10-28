@@ -17,9 +17,9 @@ export const ALLOWED_MODELS = [
 
 export type AllowedModel = (typeof ALLOWED_MODELS)[number];
 
-// Case-brief winner: apps/research/eval/BRIEF-MODELS-RESULTS.md.
+// Case-brief winner: docs/eval/research/BRIEF-MODELS-RESULTS.md.
 export const DEFAULT_MODEL: AllowedModel = "openai/gpt-6.1-sol";
-// Context-analyst winner: apps/research/eval/CONTEXT-MODELS-RESULTS.md.
+// Context-analyst winner: docs/eval/research/CONTEXT-MODELS-RESULTS.md.
 export const DEFAULT_CONTEXT_MODEL: AllowedModel = "openai/gpt-6.1-terra";
 
 // Exported for the Phase 1 bootstrap test: validation must pass with only
@@ -36,7 +36,7 @@ export const researchServerSchema = {
 	PORT: z.coerce.number().int().min(1).max(65_535).default(4005),
 	HOST: z.string().min(1).default("127.0.0.1"),
 	// Allowed model IDs; unknown fails startup. Default is the case-brief
-	// winner (apps/research/eval/BRIEF-MODELS-RESULTS.md).
+	// winner (docs/eval/research/BRIEF-MODELS-RESULTS.md).
 	AGENT_MODEL: z.enum(ALLOWED_MODELS).default(DEFAULT_MODEL),
 	// Empty by default so tests/health boot without keys; a run fails
 	// closed with config_error when the key it needs is missing.
@@ -49,7 +49,7 @@ export const researchServerSchema = {
 	AGENT_MAX_FETCHES: z.coerce.number().int().min(1).max(20).default(4),
 	AGENT_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(600_000).default(90_000),
 	// Web-agent model controls. Default model is the case-brief winner
-	// (apps/research/eval/BRIEF-MODELS-RESULTS.md); the brief eval exercises
+	// (docs/eval/research/BRIEF-MODELS-RESULTS.md); the brief eval exercises
 	// the production validator.
 	// 3000 output tokens fit the collision fixture without truncating JSON.
 	AGENT_TEMPERATURE: z.coerce.number().min(0).max(1).default(0.1),
@@ -77,7 +77,7 @@ export const researchServerSchema = {
 	AUTO_TRIGGER_DAILY_COST_BUDGET_USD: z.coerce.number().min(0).default(10),
 	// T18 context analyst stage (SPEC-t17-t18 §3/§5, D3b). Off by default;
 	// the stage never runs without it. Default is the context-analyst winner
-	// (apps/research/eval/CONTEXT-MODELS-RESULTS.md); the stage budget must
+	// (docs/eval/research/CONTEXT-MODELS-RESULTS.md); the stage budget must
 	// not exceed the external budget (boot refuses otherwise — see
 	// checkConfig in app.ts).
 	CONTEXT_ANALYST_ENABLED: z.string().default("false"),
@@ -89,7 +89,7 @@ export const researchServerSchema = {
 	// Server-side officer-screen snapshot injected into the context prompt.
 	// Default off: the model calls the context tools itself. The 2026-10-28
 	// ablation kept 30/30 while cutting drops, tool calls, and cost; see
-	// apps/research/eval/TUNING-2026-10-28.md. Set true to restore the
+	// docs/eval/TUNING-2026-10-28.md. Set true to restore the
 	// bounded preflight fallback for a weaker model.
 	CONTEXT_AGENT_PREFLIGHT_ENABLED: z.string().default("false"),
 	CONTEXT_AGENT_MAX_TURNS: z.coerce.number().int().min(2).max(40).default(16),
