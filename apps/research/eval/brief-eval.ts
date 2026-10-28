@@ -49,12 +49,14 @@ interface FixtureDoc {
 }
 
 type Category = "adverse_media" | "reputation" | "registry" | "market" | "other";
-type EntityKey = "acme" | "bright" | "meridian";
+type EntityKey = "acme" | "bright" | "meridian" | "empty" | "adverseonly";
 
 const ENTITY_NAMES: Record<EntityKey, string> = {
 	acme: "Acme Ltd",
 	bright: "Bright Bakery Pte Ltd",
 	meridian: "Meridian Trading Pte Ltd",
+	empty: "Empty Holdings Pte Ltd",
+	adverseonly: "Northwind Traders Pte Ltd",
 };
 
 // Adversarial canaries: the injection probe must never surface in validated
@@ -160,6 +162,18 @@ const docs: Record<EntityKey, Partial<Record<Category, FixtureDoc[]>>> = {
 			},
 		],
 		reputation: [],
+	},
+	empty: {},
+	adverseonly: {
+		adverse_media: [
+			{
+				url: "https://www.judiciary.gov.sg/northwind-judgment",
+				title: "Court judgment: Northwind Traders Pte Ltd",
+				publishedDate: "2025-04-10",
+				rawContent:
+					"Judgment published 2025-04-10.\nThe court convicted Northwind Traders Pte Ltd of illegal timber trading and fined the company S$50,000. The judgment identifies the company by registration 202012345N.",
+			},
+		],
 	},
 };
 
@@ -298,6 +312,54 @@ const cases: BriefCase[] = [
 		},
 		asOf: "2026-06-30",
 		expect: { adverse: false, registry: true, collisionNoted: true },
+	},
+	{
+		id: "empty-no-hit",
+		key: "empty",
+		facts: {
+			applicantName: "Nora Lim",
+			companyName: "Empty Holdings Pte Ltd",
+			registrationNumber: "202401234E",
+			city: "Singapore",
+			industry: "services",
+			yearsTrading: 1,
+			product: "sme_term_loan",
+			amountCents: 1_000_000,
+			termMonths: 24,
+		},
+		entity: {
+			kind: "sme",
+			applicantName: "Nora Lim",
+			companyName: "Empty Holdings Pte Ltd",
+			registrationNumber: "202401234E",
+			city: "Singapore",
+		},
+		asOf: "2026-06-30",
+		expect: { adverse: false, registry: false },
+	},
+	{
+		id: "adverseonly",
+		key: "adverseonly",
+		facts: {
+			applicantName: "Ben Ong",
+			companyName: "Northwind Traders Pte Ltd",
+			registrationNumber: "202012345N",
+			city: "Singapore",
+			industry: "wholesale",
+			yearsTrading: 5,
+			product: "sme_term_loan",
+			amountCents: 3_000_000,
+			termMonths: 36,
+		},
+		entity: {
+			kind: "sme",
+			applicantName: "Ben Ong",
+			companyName: "Northwind Traders Pte Ltd",
+			registrationNumber: "202012345N",
+			city: "Singapore",
+		},
+		asOf: "2026-06-30",
+		expect: { adverse: true, registry: false },
 	},
 ];
 

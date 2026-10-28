@@ -14,7 +14,7 @@ not recommended as defaults for the reasons below.
 | Context analyst | 30 window cases | 3 | `apps/research/eval/CONTEXT-MODELS-RESULTS.md` |
 | Policy navigator | 37 cases | 3 | `apps/policy/eval/ANSWER-MODELS-RESULTS.md` |
 | Document integrity | 28 cases | 3 | `apps/applications/eval/INTEGRITY-MODELS-RESULTS.md` |
-| External case brief | 3 fixture cases | 3 | `apps/research/eval/BRIEF-MODELS-RESULTS.md` |
+| External case brief | 5 fixture cases (3 comparison + 2 negative) | 3 | `apps/research/eval/BRIEF-MODELS-RESULTS.md` |
 | Policy exception | 24 cases | 3 | `apps/applications/eval/POLICY-EXCEPTION-MODELS-RESULTS.md` |
 
 All runners use the production prompt, tools/fixtures, and validator. Costs are
@@ -24,8 +24,9 @@ exception judges are pinned to a model independent of the answerer
 
 ## Headline matrix
 
-Pass@1 / pass^3 per agent. Brief is n=3 and directional; Gemini's brief path
-failed at the provider (400), so it has no brief score.
+Pass@1 / pass^3 per agent. The brief comparison is n=3 and directional; tuning
+later extended it to 5 cases (5/5 pass^3). Gemini's brief path failed at the
+provider (400), so it has no brief score.
 
 | Model | Context | Policy (code) | Integrity | Brief | Policy exception |
 |---|---|---|---:|---:|---:|

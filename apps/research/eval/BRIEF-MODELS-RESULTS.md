@@ -1,9 +1,10 @@
 # External case-brief model comparison — 2026-10-28
 
 Six models through the production case-brief agent, frozen Tavily fixture, and
-production `validateAndBuild` pipeline. 3 cases × 3 trials = 54 runs; this
-suite is directional (the dataset is the existing 3-case in-sample fixture,
-not 30 cases). GLM 5.3 and Kimi K3.1 Pro were dropped; GPT-6.1 Terra added.
+production `validateAndBuild` pipeline. The model comparison used 3 cases × 3
+trials = 54 runs; tuning later added two negative fixtures for 5 cases. The
+suite remains directional (in-sample, not 30 cases). GLM 5.3 and Kimi K3.1 Pro
+were dropped; GPT-6.1 Terra added.
 
 ```powershell
 pnpm --filter @credit/research eval:brief -- --trials=3
@@ -57,6 +58,19 @@ $0.18), so the mandatory server-side adverse/registry preflight stays. Prompt
 `v7` added the registration-number rule; on the same 3 cases × 3 trials Sol
 kept 9/9 pass and entity match rose from 0.833 to **1.000**. See
 `apps/research/eval/TUNING-2026-10-28.md`.
+
+## Hard-case extension (5 cases)
+
+Added two negative/edge fixtures: `empty-no-hit` (no documents at all) and
+`adverseonly` (adverse finding, no registry filing). Sol, preflight on, prompt
+`v7`, 3 trials:
+
+- **15/15 pass**, **5/5 pass^3**, $0.346 total, 17.9s mean.
+- `empty-no-hit`: 0 findings, no invented facts, clean citation/safety.
+- `adverseonly`: 1 adverse finding, bootstrap registry left absent.
+
+This is still a small suite (5, not 20–30), but it adds the first real
+negative case. Raw: `brief-2026-10-28T12-43-00-996Z.json`.
 
 ## Verdict
 
