@@ -26,12 +26,18 @@ import { scanForbidden, scanProtected, type CaseEntity } from "../src/validator.
 import { arg, mean, p95, wilson, writeResults } from "./lib.js";
 
 const env = loadEnv();
+// Model sweep support: the production path uses `evalEnv` (answerer model),
+// while the support/repair/summary judges can be pinned independently.
+const evalEnv = process.env.BRIEF_EVAL_MODEL
+	? { ...env, agentModel: process.env.BRIEF_EVAL_MODEL as typeof env.agentModel }
+	: env;
+const judgeModel = process.env.BRIEF_EVAL_JUDGE_MODEL || evalEnv.agentModel;
 const openai = new OpenAI({
 	apiKey: env.openrouterApiKey || "unconfigured",
 	baseURL: OPENROUTER_BASE_URL,
 });
-const judge = createLlmSupportJudge(openai, env.agentModel, { observability: getObservability() });
-const repair = createLlmLanguageRepair(openai, env.agentModel, {
+const judge = createLlmSupportJudge(openai, judgeModel, { observability: getObservability() });
+const repair = createLlmLanguageRepair(openai, judgeModel, {
 	observability: getObservability(),
 });
 
@@ -365,7 +371,7 @@ async function judgeSummary(
 		};
 	try {
 		const res = await openai.chat.completions.create({
-			model: env.agentModel,
+			model: judgeModel,
 			temperature: 0,
 			max_tokens: 2_000,
 			response_format: { type: "json_object" },
@@ -412,7 +418,7 @@ async function runTrial(c: BriefCase, trial: number): Promise<TrialRow> {
 	const runId = `brief-eval:${c.id}:${trial}`;
 	const tavilyMisses: string[] = [];
 	const runner = createRealRunner({
-		env: { ...env, tavilyApiKey: env.tavilyApiKey || "fixture" },
+		env: { ...evalEnv, tavilyApiKey: env.tavilyApiKey || "fixture" },
 		tavily: createFakeTavily(c.key, tavilyMisses),
 		openai,
 	});
@@ -438,7 +444,7 @@ async function runTrial(c: BriefCase, trial: number): Promise<TrialRow> {
 					runId,
 					asOf: c.asOf,
 					promptVersion: PROMPT_VERSION,
-					model: env.agentModel,
+					model: evalEnv.agentModel,
 				}),
 			observability,
 			runId,
@@ -640,7 +646,7 @@ const trials = Math.max(1, Number(arg("trials", "3")) || 3);
 const only = arg("case", "");
 const selected = only ? cases.filter((c) => c.id === only) : cases;
 console.log(
-	`brief eval: ${selected.length} cases x ${trials} trials, model=${env.agentModel}, temp=${env.agentTemperature}, tokens=${env.agentMaxOutputTokens}, turns=${env.agentMaxTurns}, tools=${env.agentMaxToolCalls}`,
+	`brief eval: ${selected.length} cases x ${trials} trials, model=${evalEnv.agentModel}, temp=${env.agentTemperature}, tokens=${env.agentMaxOutputTokens}, turns=${env.agentMaxTurns}, tools=${env.agentMaxToolCalls}`,
 );
 const rows: TrialRow[] = [];
 for (const c of selected) {
@@ -717,7 +723,7 @@ if (passCount < rows.length) {
 }
 const file = writeResults("brief", {
 	meta: {
-		model: env.agentModel,
+		model: evalEnv.agentModel,
 		promptVersion: PROMPT_VERSION,
 		validatorVersion: VALIDATOR_VERSION,
 		temperature: env.agentTemperature,

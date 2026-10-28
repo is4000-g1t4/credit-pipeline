@@ -15,6 +15,7 @@ Start here. Each section names one audience and the page that serves it.
 - [Architecture](explanation/architecture.md) — explanation. Components, request flow, trust boundary, and failure domains.
 - [Lifecycle](explanation/lifecycle.md) — explanation. Status machines, expiry, the booking saga, and alert behavior.
 - [Eval design](explanation/eval-design.md) - guideline. Lab practices, a small suite per AI feature, and the Grafana split.
+- [Model comparison 2026-10-28](explanation/model-comparison-2026-10-28.md) - report. Five credit agents across six models: winners, costs, and caveats.
 - [Adverse action](explanation/adverse-action.md) - explanation. EN-08 taxonomy, jurisdiction profiles, fair-lending gates, and letter provenance.
 - [Policy exception](explanation/policy-exception.md) - explanation. EN-06/EN-07 case-policy review, exception path, and memo provenance.
 - [Document integrity](explanation/document-integrity.md) — explanation. Fingerprint/provenance, signals, combined extraction/consistency/brief pass, and fraud review.

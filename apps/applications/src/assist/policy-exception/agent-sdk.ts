@@ -144,6 +144,7 @@ interface CompletionResult {
 	usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number };
 }
 
+// Model + eval: apps/applications/eval/POLICY-EXCEPTION-MODELS-RESULTS.md.
 export function createAgentsPolicyExceptionRunner(
 	opts: PolicyExceptionSdkOptions,
 ): PolicyExceptionAgentRunner {

@@ -144,7 +144,7 @@ function toolConfig(name: (typeof INTEGRITY_TOOL_NAMES)[number]): {
 			return {
 				parameters: searchPagesParams,
 				description:
-					"Case-insensitive search over case and same-customer page text. Returns bounded excerpts and code-point offsets.",
+					"Case-insensitive search over case and same-customer page text. Returns bounded excerpts and code-point offsets. Pass limit 1-10; use 5 unless you need more.",
 			};
 		case "get_page":
 			return {
@@ -242,6 +242,7 @@ export function createAgentsIntegrityRunner(
 			});
 
 			const agent = new Agent({
+				// Model + eval: apps/applications/eval/INTEGRITY-MODELS-RESULTS.md.
 				name: "document-integrity-agent",
 				instructions: generateBrief
 					? `${ANALYSIS_SYSTEM_PROMPT}\n\n${BRIEF_RULES}`

@@ -35,7 +35,9 @@ export const listDocumentsParams = z.object({}).strict();
 export const searchPagesParams = z
 	.object({
 		query: z.string().min(1).max(100),
-		limit: z.number().int().min(1).max(10).optional(),
+		// Strict OpenAI-compatible providers require every property in
+		// `required`; keep this mandatory and let the model pass 5 by default.
+		limit: z.number().int().min(1).max(10),
 	})
 	.strict();
 export const getPageParams = z

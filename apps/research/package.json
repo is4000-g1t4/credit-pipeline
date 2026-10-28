@@ -11,7 +11,8 @@
 		"test:integration": "vitest run --config vitest.integration.config.ts",
 		"eval:settings": "tsx eval/settings-eval.ts",
 		"eval:brief": "tsx eval/brief-eval.ts",
-		"eval:context": "tsx eval/context-eval.ts"
+		"eval:context": "tsx eval/context-eval.ts",
+		"eval:context-models": "tsx eval/context-models-eval.ts"
 	},
 	"dependencies": {
 		"@credit/agent-observability": "workspace:*",

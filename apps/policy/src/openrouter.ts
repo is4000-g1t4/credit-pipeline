@@ -174,6 +174,7 @@ const SYSTEM = `You are an internal credit-policy navigator for bank officers. A
 const CASE_SYSTEM = `You are an internal credit-policy reviewer for a bank officer. Explain how supplied credit-policy sections apply to structured case signals/document findings. Do not decide, approve, decline, score, price, set terms, or infer facts. Each item must use one of the supplied refs; each explanation segment must be one claim with 1-3 citationIndexes; each quote must be an exact substring (>=20 chars) of the supplied section body. Copy quotes verbatim: never insert, remove, or reorder words inside a quote; a quote may span a hard-wrapped line, so copy it as continuous text. If no section applies, status "no_match"; if you cannot cite safely, status "needs_policy_owner". Return only JSON:
 {"status":"succeeded|no_match|needs_policy_owner","summary":"optional","items":[{"ref":"signal:...","explanationSegments":[{"text":"one claim","citationIndexes":[0]}],"citations":[{"policyKey":"POL-CR-001","sectionId":"4.2","version":"v1","quote":"exact text"}],"confidence":"low|medium|high"}],"limitations":[]}`;
 
+// Model + eval: apps/policy/eval/ANSWER-MODELS-RESULTS.md.
 export function createOpenRouterAnswerer(config: OpenRouterConfig): PolicyAnswerer {
 	const fetchImpl = config.fetchImpl ?? fetch;
 	const provider =

@@ -11,11 +11,16 @@ dotenv.config({
 export const ALLOWED_MODELS = [
 	"deepseek/deepseek-v4.1-flash-1017",
 	"meta/muse-spark-1.3-contributor",
+	"openai/gpt-6.1-sol",
+	"openai/gpt-6.1-terra",
 ] as const;
 
 export type AllowedModel = (typeof ALLOWED_MODELS)[number];
 
-export const DEFAULT_MODEL: AllowedModel = "deepseek/deepseek-v4.1-flash-1017";
+// Case-brief winner: apps/research/eval/BRIEF-MODELS-RESULTS.md.
+export const DEFAULT_MODEL: AllowedModel = "openai/gpt-6.1-sol";
+// Context-analyst winner: apps/research/eval/CONTEXT-MODELS-RESULTS.md.
+export const DEFAULT_CONTEXT_MODEL: AllowedModel = "openai/gpt-6.1-terra";
 
 // Exported for the Phase 1 bootstrap test: validation must pass with only
 // INTERNAL_SECRET set (dotenv fills the rest from the root .env in prod).
@@ -30,7 +35,8 @@ export const researchServerSchema = {
 	INTERNAL_SECRET: z.string().min(1),
 	PORT: z.coerce.number().int().min(1).max(65_535).default(4005),
 	HOST: z.string().min(1).default("127.0.0.1"),
-	// Hard constraint (§6.1): exactly these two IDs; unknown fails startup.
+	// Allowed model IDs; unknown fails startup. Default is the case-brief
+	// winner (apps/research/eval/BRIEF-MODELS-RESULTS.md).
 	AGENT_MODEL: z.enum(ALLOWED_MODELS).default(DEFAULT_MODEL),
 	// Empty by default so tests/health boot without keys; a run fails
 	// closed with config_error when the key it needs is missing.
@@ -42,8 +48,9 @@ export const researchServerSchema = {
 	AGENT_MAX_SOURCES: z.coerce.number().int().min(1).max(20).default(6),
 	AGENT_MAX_FETCHES: z.coerce.number().int().min(1).max(20).default(4),
 	AGENT_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(600_000).default(90_000),
-	// Web-agent model controls. Defaults come from eval/brief-eval.ts and the
-	// earlier settings sweep; the brief eval exercises the production validator.
+	// Web-agent model controls. Default model is the case-brief winner
+	// (apps/research/eval/BRIEF-MODELS-RESULTS.md); the brief eval exercises
+	// the production validator.
 	// 3000 output tokens fit the collision fixture without truncating JSON.
 	AGENT_TEMPERATURE: z.coerce.number().min(0).max(1).default(0.1),
 	AGENT_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(256).max(8_000).default(3_000),
@@ -69,11 +76,12 @@ export const researchServerSchema = {
 	AUTO_TRIGGER_MAX_RUNS_PER_DAY: z.coerce.number().int().min(0).default(50),
 	AUTO_TRIGGER_DAILY_COST_BUDGET_USD: z.coerce.number().min(0).default(10),
 	// T18 context analyst stage (SPEC-t17-t18 §3/§5, D3b). Off by default;
-	// the stage never runs without it. Model defaults to the external agent
-	// model; the stage budget must not exceed the external budget (boot
-	// refuses otherwise — see checkConfig in app.ts).
+	// the stage never runs without it. Default is the context-analyst winner
+	// (apps/research/eval/CONTEXT-MODELS-RESULTS.md); the stage budget must
+	// not exceed the external budget (boot refuses otherwise — see
+	// checkConfig in app.ts).
 	CONTEXT_ANALYST_ENABLED: z.string().default("false"),
-	CONTEXT_AGENT_MODEL: z.enum(ALLOWED_MODELS).optional(),
+	CONTEXT_AGENT_MODEL: z.enum(ALLOWED_MODELS).default(DEFAULT_CONTEXT_MODEL),
 	// Model-only tool loop cap: the bounded officer-screen preflight runs
 	// against CONTEXT_AGENT_PREFLIGHT_TOOL_CALLS, never this budget.
 	CONTEXT_AGENT_MAX_TOOL_CALLS: z.coerce.number().int().min(1).max(40).default(16),
@@ -133,7 +141,7 @@ export const env = {
 	autoTriggerMaxRunsPerDay: parsed.AUTO_TRIGGER_MAX_RUNS_PER_DAY,
 	autoTriggerDailyCostBudgetUsd: parsed.AUTO_TRIGGER_DAILY_COST_BUDGET_USD,
 	contextEnabled: parsed.CONTEXT_ANALYST_ENABLED.trim().toLowerCase() === "true",
-	contextModel: (parsed.CONTEXT_AGENT_MODEL ?? parsed.AGENT_MODEL) as AllowedModel,
+	contextModel: parsed.CONTEXT_AGENT_MODEL as AllowedModel,
 	contextMaxToolCalls: parsed.CONTEXT_AGENT_MAX_TOOL_CALLS,
 	contextPreflightToolCalls: parsed.CONTEXT_AGENT_PREFLIGHT_TOOL_CALLS,
 	contextMaxTurns: parsed.CONTEXT_AGENT_MAX_TURNS,

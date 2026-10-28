@@ -92,7 +92,9 @@ function envStr(name: string, fallback: string): string {
 
 const API_KEY = process.env["OPENROUTER_API_KEY"] ?? "";
 const BASE_URL = envStr("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1");
-const MODEL = envStr("POLICY_EXCEPTION_MODEL", "deepseek/deepseek-v4.1-flash-1017");
+// Tie with Sol; Terra is the cost pick:
+// apps/applications/eval/POLICY-EXCEPTION-MODELS-RESULTS.md.
+const MODEL = envStr("POLICY_EXCEPTION_MODEL", "openai/gpt-6.1-terra");
 const PROMPT_VERSION = envStr("POLICY_EXCEPTION_PROMPT_VERSION", "policy-exception-v1");
 const AGENT_VERSION = envStr("POLICY_EXCEPTION_AGENT_VERSION", "policy-exception-agent-v1");
 const VALIDATOR_VERSION = envStr(

@@ -159,6 +159,8 @@ drafts a `policy_exception_memo` the officer edits and approves; see
 [docs/explanation/policy-exception.md](docs/explanation/policy-exception.md)
 and `apps/applications/eval/POLICY-EXCEPTION-RESULTS.md`
 (`pnpm --filter @credit/applications eval:policy-exception`).
+Model comparison across the five live agents (context, policy, integrity,
+brief, exception): [docs/explanation/model-comparison-2026-10-28.md](docs/explanation/model-comparison-2026-10-28.md).
 Generic artifact routes are under `/api/assist/cases/:id/artifacts` and
 `/api/assist/artifacts/:id` (`PATCH`, `/approve`, `/tombstone`). All routes are
 officer-only; applicants get 403 and another officer's assigned case is a

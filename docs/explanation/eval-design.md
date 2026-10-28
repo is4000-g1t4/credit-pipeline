@@ -231,24 +231,33 @@ a supported capability.
 
 | Feature                                          | Archetype                                | Dataset                                                   | Command                                                    | Status                                                                     |
 | ------------------------------------------------ | ---------------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Policy navigator (`apps/policy`)                 | Retrieval-augmented answer               | `apps/policy/eval/answer-cases.json` (33 cases)           | `pnpm --filter @credit/policy eval:answers`                | passing: held-out 8/8, dev 22/25 at pass^3                                 |
+| Policy navigator (`apps/policy`)                 | Retrieval-augmented answer               | `apps/policy/eval/answer-cases.json` (37 cases)           | `pnpm --filter @credit/policy eval:answers`                | passing: held-out 8/8, dev 22/25 at pass^3; model comparison Terra best (`ANSWER-MODELS-RESULTS.md`) |
 | Case policy review (`apps/research` → policy)    | Explain/classify                         | inline demo personas + edge case                          | `pnpm --filter @credit/research eval:policy`               | planned                                                                    |
-| External case brief (`apps/research`)            | Tool-using research                      | inline 3-case fixture in `brief-eval.ts`                  | `pnpm --filter @credit/research eval:brief`                | passing: 9/9, in-sample                                                    |
-| Context analyst (`apps/research`)                | Structured extraction/selection          | demo personas in `fixtures.ts`                            | `pnpm --filter @credit/research eval:context`              | passing: 9/9, in-sample                                                    |
+| External case brief (`apps/research`)            | Tool-using research                      | inline 3-case fixture in `brief-eval.ts`                  | `pnpm --filter @credit/research eval:brief`                | passing: 9/9, in-sample; model comparison Sol best (`BRIEF-MODELS-RESULTS.md`) |
+| Context analyst (`apps/research`)                | Structured extraction/selection          | demo personas in `fixtures.ts` + 30 window cases in `eval/context-models-cases.json` | `pnpm --filter @credit/research eval:context` / `eval:context-models` | passing: 9/9 in-sample; model comparison 30 cases × 3 trials, GPT-6.1 Terra best (`CONTEXT-MODELS-RESULTS.md`) |
 | Advisory-only invariant                          | System invariant                         | demo personas                                             | existing e2e/demo suite                                    | partial: snapshot test only                                                |
 | Case-assist validator (`apps/applications`)      | Pure gate/classifier                     | 27 code-defined cases in `eval/assist-eval.ts`            | `pnpm --filter @credit/applications eval:assist`           | passing: 27/27 at pass^3, 0 unsafe pass-through                            |
 | Adverse-action letter (`apps/applications`)      | Pure gate/classifier                     | 19 code-defined cases in `eval/adverse-eval.ts`           | `pnpm --filter @credit/applications eval:adverse`          | passing: 19/19 at pass^3, 0 unsafe pass-through                            |
-| Document integrity (`apps/applications`)         | Explain/classify + structured extraction | `apps/applications/eval/integrity-cases.json` (28)        | `pnpm --filter @credit/applications eval:integrity`        | passing: dev 19/19, held-out 9/9 at pass^3                                 |
-| Policy exception navigator (`apps/applications`) | Explain/classify                         | `apps/applications/eval/policy-exception-cases.json` (24) | `pnpm --filter @credit/applications eval:policy-exception` | passing: dev 0.804 pass@1 / 0.647 pass^3; held-out 0.905 / 0.714; 0 safety |
+| Document integrity (`apps/applications`)         | Explain/classify + structured extraction | `apps/applications/eval/integrity-cases.json` (28)        | `pnpm --filter @credit/applications eval:integrity`        | passing: dev 19/19, held-out 9/9 at pass^3; model comparison Sol best (`INTEGRITY-MODELS-RESULTS.md`) |
+| Policy exception navigator (`apps/applications`) | Explain/classify                         | `apps/applications/eval/policy-exception-cases.json` (24) | `pnpm --filter @credit/applications eval:policy-exception` | passing: dev 0.804 pass@1 / 0.647 pass^3; held-out 0.905 / 0.714; 0 safety; model comparison Terra/Sol 0.972 / 0.917, Terra cheaper (`POLICY-EXCEPTION-MODELS-RESULTS.md`) |
 | Future feature                                   | Pick §1.2                                | `apps/<app>/eval/cases.json`                              | `pnpm --filter @credit/<app> eval:<feature>`               | required                                                                   |
 
 Update the status column to `baseline`, `passing`, `saturated`, or
 `directional` after each run. Keep the command in the row so the next person
-does not have to guess. Results:
+does not have to guess. Combined model comparison:
+[docs/explanation/model-comparison-2026-10-28.md](model-comparison-2026-10-28.md).
+Results:
 `apps/policy/eval/ANSWER-RESULTS.md`,
 `apps/research/eval/BRIEF-RESULTS.md`,
 `apps/research/eval/CONTEXT-RESULTS.md`,
 `apps/applications/eval/POLICY-EXCEPTION-RESULTS.md`.
+
+Model comparisons:
+`apps/policy/eval/ANSWER-MODELS-RESULTS.md`,
+`apps/research/eval/BRIEF-MODELS-RESULTS.md`,
+`apps/research/eval/CONTEXT-MODELS-RESULTS.md`,
+`apps/applications/eval/INTEGRITY-MODELS-RESULTS.md`,
+`apps/applications/eval/POLICY-EXCEPTION-MODELS-RESULTS.md`.
 
 ### 4.6 Adding a new AI feature
 
@@ -274,9 +283,12 @@ does not have to guess. Results:
    caveats is a marketing claim.
 
 The same rules apply to a future feature even if its model, provider, or
-tooling changes. The only hard model constraint in this repo is cost:
-OpenRouter-backed agents use `deepseek/deepseek-v4.1-flash-1017`. Evals must
-record the model and must not silently swap in a more expensive one.
+tooling changes. Model defaults are pinned to the agent winners:
+`openai/gpt-6.1-terra` for context, policy, and policy exception;
+`openai/gpt-6.1-sol` for case brief and document integrity. Overrides remain
+available, and evals must record the model and must not silently swap it. See
+the per-agent reports and
+[docs/explanation/model-comparison-2026-10-28.md](model-comparison-2026-10-28.md).
 
 ## 5. The suite
 
@@ -420,6 +432,10 @@ real read-only tools, and the production validator against eval-owned
 applications (`fixture_key LIKE 'eval-%'`). It requires Postgres, seeded demo
 fixtures, and applications/loans services. Coverage is validator-enforced, so
 it is a sanity check, not an independent quality signal.
+
+Model comparison: `apps/research/eval/context-models-eval.ts` runs 30 window
+cases per model in parallel through the same runner and validator, with a
+spend cap. Results: `apps/research/eval/CONTEXT-MODELS-RESULTS.md`.
 
 ### 5.6 Cross-cutting: the advisory-only invariant
 

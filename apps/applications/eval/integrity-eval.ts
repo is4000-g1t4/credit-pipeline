@@ -93,7 +93,8 @@ const CONFIG: IntegrityConfig = {
 	fraudReviewEnabled: true,
 	agentEnabled: true,
 	triageEnabled: true,
-	model: envStr("DOCUMENT_INTEGRITY_MODEL", "deepseek/deepseek-v4.1-flash-1017"),
+	// Document-integrity winner: apps/applications/eval/INTEGRITY-MODELS-RESULTS.md.
+	model: envStr("DOCUMENT_INTEGRITY_MODEL", "openai/gpt-6.1-sol"),
 	promptVersion: envStr("DOCUMENT_INTEGRITY_PROMPT_VERSION", "integrity-analysis-v1"),
 	agentVersion: envStr("DOCUMENT_INTEGRITY_AGENT_VERSION", "integrity-agent-v1"),
 	triagePromptVersion: envStr("DOCUMENT_INTEGRITY_TRIAGE_PROMPT_VERSION", "integrity-triage-v1"),

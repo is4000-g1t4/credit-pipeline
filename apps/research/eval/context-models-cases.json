@@ -1,0 +1,323 @@
+{
+	"feature": "context_analyst",
+	"version": 1,
+	"description": "30 context-analyst cases: the three demo personas (BreadTalk SME, Alex individual, Sparse no-accounts) across distinct observation windows. The as-of date is the application submitted_at, so each case changes the deterministic candidate set the model must select and explain. Expected types come from computeCandidateSignals for the window; the production validator enforces exact tuple coverage.",
+	"asOfRule": "per case; application submitted_at",
+	"trials": 3,
+	"cases": [
+		{
+			"id": "breadtalk-2026-01-10",
+			"persona": "breadtalk",
+			"asOf": "2026-01-10",
+			"split": "dev",
+			"tags": ["sme", "thin-window", "declared-vs-observed"],
+			"expectedTypes": ["declared_vs_observed_cashflow"],
+			"requiresDataGap": false,
+			"notes": "Window contains one early income row; tests a single low-confidence declared-vs-observed candidate."
+		},
+		{
+			"id": "breadtalk-2026-01-31",
+			"persona": "breadtalk",
+			"asOf": "2026-01-31",
+			"split": "dev",
+			"tags": ["sme", "thin-window", "declared-vs-observed"],
+			"expectedTypes": ["declared_vs_observed_cashflow"],
+			"requiresDataGap": false,
+			"notes": "January only; cash share stays below the 25% threshold."
+		},
+		{
+			"id": "breadtalk-2026-02-04",
+			"persona": "breadtalk",
+			"asOf": "2026-02-04",
+			"split": "dev",
+			"tags": ["sme", "boundary", "declared-vs-observed"],
+			"expectedTypes": ["declared_vs_observed_cashflow"],
+			"requiresDataGap": false,
+			"notes": "First transfer pair is incomplete at the cutoff; round_trip needs two pairs."
+		},
+		{
+			"id": "breadtalk-2026-02-10",
+			"persona": "breadtalk",
+			"asOf": "2026-02-10",
+			"split": "dev",
+			"tags": ["sme", "boundary", "declared-vs-observed"],
+			"expectedTypes": ["declared_vs_observed_cashflow"],
+			"requiresDataGap": false,
+			"notes": "Second cash deposit lands; still below the cash-share threshold."
+		},
+		{
+			"id": "breadtalk-2026-02-28",
+			"persona": "breadtalk",
+			"asOf": "2026-02-28",
+			"split": "dev",
+			"tags": ["sme", "thin-window", "declared-vs-observed"],
+			"expectedTypes": ["declared_vs_observed_cashflow"],
+			"requiresDataGap": false,
+			"notes": "February close; only one round-trip pair exists."
+		},
+		{
+			"id": "breadtalk-2026-03-15",
+			"persona": "breadtalk",
+			"asOf": "2026-03-15",
+			"split": "heldout",
+			"tags": ["sme", "multi-signal", "revenue-concentration", "round-trip"],
+			"expectedTypes": [
+				"revenue_concentration",
+				"round_trip",
+				"declared_vs_observed_cashflow"
+			],
+			"requiresDataGap": false,
+			"notes": "Three signals: the only window where NETS settlement concentration crosses 40%."
+		},
+		{
+			"id": "breadtalk-2026-03-31",
+			"persona": "breadtalk",
+			"asOf": "2026-03-31",
+			"split": "dev",
+			"tags": ["sme", "multi-signal", "round-trip"],
+			"expectedTypes": ["round_trip", "declared_vs_observed_cashflow"],
+			"requiresDataGap": false,
+			"notes": "Second round-trip pair completes in March."
+		},
+		{
+			"id": "breadtalk-2026-04-30",
+			"persona": "breadtalk",
+			"asOf": "2026-04-30",
+			"split": "dev",
+			"tags": ["sme", "multi-signal", "round-trip"],
+			"expectedTypes": ["round_trip", "declared_vs_observed_cashflow"],
+			"requiresDataGap": false,
+			"notes": "April close; cash share remains just under threshold."
+		},
+		{
+			"id": "breadtalk-2026-05-31",
+			"persona": "breadtalk",
+			"asOf": "2026-05-31",
+			"split": "dev",
+			"tags": ["sme", "multi-signal", "round-trip"],
+			"expectedTypes": ["round_trip", "declared_vs_observed_cashflow"],
+			"requiresDataGap": false,
+			"notes": "May close; third transfer pair appears in the window but the candidate counts two pairs."
+		},
+		{
+			"id": "breadtalk-2026-06-01",
+			"persona": "breadtalk",
+			"asOf": "2026-06-01",
+			"split": "dev",
+			"tags": ["sme", "boundary", "round-trip"],
+			"expectedTypes": ["round_trip", "declared_vs_observed_cashflow"],
+			"requiresDataGap": false,
+			"notes": "Day before the returned payment; tests the returned_payment boundary."
+		},
+		{
+			"id": "breadtalk-2026-06-15",
+			"persona": "breadtalk",
+			"asOf": "2026-06-15",
+			"split": "heldout",
+			"tags": ["sme", "multi-signal", "returned-payment", "cash-share"],
+			"expectedTypes": [
+				"round_trip",
+				"cash_deposit_share",
+				"declared_vs_observed_cashflow",
+				"returned_payment"
+			],
+			"requiresDataGap": false,
+			"notes": "All four signal types; cash share above threshold after the June deposit."
+		},
+		{
+			"id": "breadtalk-2026-06-30",
+			"persona": "breadtalk",
+			"asOf": "2026-06-30",
+			"split": "heldout",
+			"tags": ["sme", "multi-signal", "full-window", "returned-payment", "cash-share"],
+			"expectedTypes": [
+				"round_trip",
+				"cash_deposit_share",
+				"declared_vs_observed_cashflow",
+				"returned_payment"
+			],
+			"requiresDataGap": false,
+			"notes": "Full demo window; the richest case."
+		},
+		{
+			"id": "alex-2026-03-15",
+			"persona": "alex",
+			"asOf": "2026-03-15",
+			"split": "dev",
+			"tags": ["individual", "revenue-concentration"],
+			"expectedTypes": ["revenue_concentration"],
+			"requiresDataGap": false,
+			"notes": "Three salary months complete; concentration crosses 40%."
+		},
+		{
+			"id": "alex-2026-03-31",
+			"persona": "alex",
+			"asOf": "2026-03-31",
+			"split": "heldout",
+			"tags": ["individual", "revenue-concentration"],
+			"expectedTypes": ["revenue_concentration"],
+			"requiresDataGap": false,
+			"notes": "March salary included."
+		},
+		{
+			"id": "alex-2026-04-05",
+			"persona": "alex",
+			"asOf": "2026-04-05",
+			"split": "dev",
+			"tags": ["individual", "boundary", "revenue-concentration"],
+			"expectedTypes": ["revenue_concentration"],
+			"requiresDataGap": false,
+			"notes": "April rent debit included; no April salary yet."
+		},
+		{
+			"id": "alex-2026-04-15",
+			"persona": "alex",
+			"asOf": "2026-04-15",
+			"split": "dev",
+			"tags": ["individual", "revenue-concentration"],
+			"expectedTypes": ["revenue_concentration"],
+			"requiresDataGap": false,
+			"notes": "Mid-April window."
+		},
+		{
+			"id": "alex-2026-04-30",
+			"persona": "alex",
+			"asOf": "2026-04-30",
+			"split": "dev",
+			"tags": ["individual", "revenue-concentration"],
+			"expectedTypes": ["revenue_concentration"],
+			"requiresDataGap": false,
+			"notes": "April salary included."
+		},
+		{
+			"id": "alex-2026-05-15",
+			"persona": "alex",
+			"asOf": "2026-05-15",
+			"split": "dev",
+			"tags": ["individual", "revenue-concentration"],
+			"expectedTypes": ["revenue_concentration"],
+			"requiresDataGap": false,
+			"notes": "Mid-May window."
+		},
+		{
+			"id": "alex-2026-05-31",
+			"persona": "alex",
+			"asOf": "2026-05-31",
+			"split": "dev",
+			"tags": ["individual", "revenue-concentration"],
+			"expectedTypes": ["revenue_concentration"],
+			"requiresDataGap": false,
+			"notes": "May close."
+		},
+		{
+			"id": "alex-2026-06-05",
+			"persona": "alex",
+			"asOf": "2026-06-05",
+			"split": "heldout",
+			"tags": ["individual", "revenue-concentration"],
+			"expectedTypes": ["revenue_concentration"],
+			"requiresDataGap": false,
+			"notes": "June utility debit included."
+		},
+		{
+			"id": "alex-2026-06-15",
+			"persona": "alex",
+			"asOf": "2026-06-15",
+			"split": "dev",
+			"tags": ["individual", "revenue-concentration"],
+			"expectedTypes": ["revenue_concentration"],
+			"requiresDataGap": false,
+			"notes": "Mid-June window."
+		},
+		{
+			"id": "alex-2026-06-20",
+			"persona": "alex",
+			"asOf": "2026-06-20",
+			"split": "dev",
+			"tags": ["individual", "revenue-concentration"],
+			"expectedTypes": ["revenue_concentration"],
+			"requiresDataGap": false,
+			"notes": "June salary and insurance premium included."
+		},
+		{
+			"id": "alex-2026-06-30",
+			"persona": "alex",
+			"asOf": "2026-06-30",
+			"split": "dev",
+			"tags": ["individual", "full-window", "revenue-concentration"],
+			"expectedTypes": ["revenue_concentration"],
+			"requiresDataGap": false,
+			"notes": "Full demo window."
+		},
+		{
+			"id": "alex-2026-07-15",
+			"persona": "alex",
+			"asOf": "2026-07-15",
+			"split": "heldout",
+			"tags": ["individual", "post-window", "revenue-concentration"],
+			"expectedTypes": ["revenue_concentration"],
+			"requiresDataGap": false,
+			"notes": "Window extends past the seeded transactions; same candidate as the full window."
+		},
+		{
+			"id": "sparse-2026-01-31",
+			"persona": "sparse",
+			"asOf": "2026-01-31",
+			"split": "heldout",
+			"tags": ["individual", "insufficient-data", "negative"],
+			"expectedTypes": ["insufficient_data"],
+			"requiresDataGap": true,
+			"notes": "No accounts or transactions; must state gaps, not invent an anomaly."
+		},
+		{
+			"id": "sparse-2026-02-28",
+			"persona": "sparse",
+			"asOf": "2026-02-28",
+			"split": "dev",
+			"tags": ["individual", "insufficient-data", "negative"],
+			"expectedTypes": ["insufficient_data"],
+			"requiresDataGap": true,
+			"notes": "No data window."
+		},
+		{
+			"id": "sparse-2026-03-31",
+			"persona": "sparse",
+			"asOf": "2026-03-31",
+			"split": "dev",
+			"tags": ["individual", "insufficient-data", "negative"],
+			"expectedTypes": ["insufficient_data"],
+			"requiresDataGap": true,
+			"notes": "No data window."
+		},
+		{
+			"id": "sparse-2026-04-30",
+			"persona": "sparse",
+			"asOf": "2026-04-30",
+			"split": "heldout",
+			"tags": ["individual", "insufficient-data", "negative"],
+			"expectedTypes": ["insufficient_data"],
+			"requiresDataGap": true,
+			"notes": "No data window."
+		},
+		{
+			"id": "sparse-2026-05-31",
+			"persona": "sparse",
+			"asOf": "2026-05-31",
+			"split": "dev",
+			"tags": ["individual", "insufficient-data", "negative"],
+			"expectedTypes": ["insufficient_data"],
+			"requiresDataGap": true,
+			"notes": "No data window."
+		},
+		{
+			"id": "sparse-2026-06-30",
+			"persona": "sparse",
+			"asOf": "2026-06-30",
+			"split": "heldout",
+			"tags": ["individual", "insufficient-data", "negative"],
+			"expectedTypes": ["insufficient_data"],
+			"requiresDataGap": true,
+			"notes": "No data window."
+		}
+	]
+}

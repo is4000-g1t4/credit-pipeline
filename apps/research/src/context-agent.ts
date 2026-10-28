@@ -77,7 +77,7 @@ Tools (all read-only, pre-scoped to one application and its applicant):
 - get_case_facts: the application facts.
 - get_customer_summary: segment, tenure, KYC state.
 - list_accounts: owned account ids/types/currencies/status.
-- get_transactions(accountId, cursor?): bounded transaction page (model-visible rows are capped; use nextCursor to page, at most 2 pages per account).
+- get_transactions(accountId, cursor): bounded transaction page (model-visible rows are capped; pass cursor="" for the first page, then use nextCursor to page, at most 2 pages per account).
 - get_cashflow_metrics: the prefetched deterministic candidate snapshot with baseline confidence/status, policy version, and evidence ids. This is the validator's anchor; it never changes during the run.
 - get_application_financials: declared financial block, purpose, and request details for expected-vs-observed comparison.
 - get_document_findings: document finding metadata with expected/observed values and reasons.
@@ -200,7 +200,10 @@ export function nextModelBudgetCall(budget: ModelBudget, limit: number): string 
 
 const emptyParams = z.object({}).strict();
 const transactionsParams = z
-	.object({ accountId: z.string().min(1).max(100), cursor: z.string().max(2000).optional() })
+	// Strict OpenAI-compatible providers require every property in `required`;
+	// an optional cursor made the whole tool schema invalid for GPT models.
+	// The model passes "" for the first page.
+	.object({ accountId: z.string().min(1).max(100), cursor: z.string().max(2000) })
 	.strict();
 
 /** Model-visible transaction rows per page: the endpoint pages 500, but the
@@ -436,7 +439,7 @@ async function runContextModel(
 		),
 		wrap(
 			"get_transactions",
-			"Bounded transaction page for one owned account.",
+			"Bounded transaction page for one owned account. Pass cursor=\"\" for the first page; use nextCursor from the result to page.",
 			transactionsParams,
 			async (args: { accountId: string; cursor?: string }) =>
 				track("get_transactions", async () => {
@@ -509,6 +512,7 @@ async function runContextModel(
 		),
 	];
 	const agent = new Agent({
+		// Model + eval: apps/research/eval/CONTEXT-MODELS-RESULTS.md.
 		name: "context-analyst",
 		instructions: CONTEXT_SYSTEM,
 		model: new OpenAIChatCompletionsModel(
