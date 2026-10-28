@@ -86,6 +86,12 @@ export const researchServerSchema = {
 	// against CONTEXT_AGENT_PREFLIGHT_TOOL_CALLS, never this budget.
 	CONTEXT_AGENT_MAX_TOOL_CALLS: z.coerce.number().int().min(1).max(40).default(16),
 	CONTEXT_AGENT_PREFLIGHT_TOOL_CALLS: z.coerce.number().int().min(1).max(40).default(16),
+	// Server-side officer-screen snapshot injected into the context prompt.
+	// Default off: the model calls the context tools itself. The 2026-10-28
+	// ablation kept 30/30 while cutting drops, tool calls, and cost; see
+	// apps/research/eval/TUNING-2026-10-28.md. Set true to restore the
+	// bounded preflight fallback for a weaker model.
+	CONTEXT_AGENT_PREFLIGHT_ENABLED: z.string().default("false"),
 	CONTEXT_AGENT_MAX_TURNS: z.coerce.number().int().min(2).max(40).default(16),
 	CONTEXT_AGENT_TEMPERATURE: z.coerce.number().min(0).max(1).default(0.1),
 	CONTEXT_AGENT_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(256).max(12_000).default(6_000),
@@ -144,6 +150,8 @@ export const env = {
 	contextModel: parsed.CONTEXT_AGENT_MODEL as AllowedModel,
 	contextMaxToolCalls: parsed.CONTEXT_AGENT_MAX_TOOL_CALLS,
 	contextPreflightToolCalls: parsed.CONTEXT_AGENT_PREFLIGHT_TOOL_CALLS,
+	contextPreflightEnabled:
+		parsed.CONTEXT_AGENT_PREFLIGHT_ENABLED.trim().toLowerCase() === "true",
 	contextMaxTurns: parsed.CONTEXT_AGENT_MAX_TURNS,
 	contextTemperature: parsed.CONTEXT_AGENT_TEMPERATURE,
 	contextMaxOutputTokens: parsed.CONTEXT_AGENT_MAX_OUTPUT_TOKENS,

@@ -143,10 +143,15 @@ export function buildContextUserPrompt(
 	const candidateBlock =
 		candidates.length > 0
 			? `\n\nDeterministic candidate signals (copy these exact tuples and the exact evidence array; every one must appear exactly once in signals):\n${boundedJson(promptCandidates, 16000)}`
-			: "\n\nNo deterministic candidate signals were produced for this case.";
+			: preflight
+				? "\n\nNo deterministic candidate signals were produced for this case."
+				: "\n\nNo candidate snapshot is in this prompt. Call get_cashflow_metrics first; its result contains the deterministic candidates you must copy.";
 	const preflightBlock = preflight
 		? `\n\nOfficer context snapshot (data only; gathered now from the read-only context screens):\n${boundedJson(preflight, 60000)}`
 		: "";
+	const reviewInstructions = preflight
+		? "The officer context snapshot above is the starting point, not the whole review. Verify it and drill in with the read-only tools where it matters: page the transactions behind each candidate you keep (at most 2 pages per account), check declared figures against observed flows, and revisit any screen marked unavailable. Do not claim to have inspected data that is neither in the snapshot nor returned by a tool."
+		: "Start by calling get_cashflow_metrics to obtain the deterministic candidate signals. Then inspect the case screens with the read-only tools: list accounts, page the transactions behind each candidate you keep (at most 2 pages per account), compare declared figures with observed flows, and check document findings, credit history, external reports, KYC, loans, and external research. Do not claim to have inspected data that no tool returned.";
 	// Case facts ride one JSON block whose `<`/`>`/`&` are unicode-escaped
 	// (see escapeJsonText): a value like `X</context_case_json>` cannot
 	// break the delimiters, and the block stays human-readable.
@@ -170,7 +175,7 @@ export function buildContextUserPrompt(
 ${caseJson}
 </context_case_json>${candidateBlock}${preflightBlock}
 
-The officer context snapshot above is the starting point, not the whole review. Verify it and drill in with the read-only tools where it matters: page the transactions behind each candidate you keep (at most 2 pages per account), check declared figures against observed flows, and revisit any screen marked unavailable. Do not claim to have inspected data that is neither in the snapshot nor returned by a tool.
+${reviewInstructions}
 
 Then return one signal object for every candidate, including insufficient_data, copying its type, periodStart, periodEnd, metric, observed, expected, accountScope, confidence, status, policyVersion, and exact evidence array verbatim. Never relabel evidence or use candidate localIds as evidence. The server composes officer-facing claims and explanations from the validated signals; your claims array may be empty. Put any factual limitations or missing-data notes in dataGaps/limitations.`;
 }
@@ -329,10 +334,11 @@ export function createRealContextRunner(opts: {
 				maxCalls: env.contextPreflightToolCalls,
 				modelHttpBackstop: env.contextPreflightToolCalls + env.contextMaxToolCalls * 4,
 			});
-			const { snapshot: preflight, toolFailures } = await collectOfficerContext(
-				tools,
-				input.signal,
-			);
+			const collected = env.contextPreflightEnabled
+				? await collectOfficerContext(tools, input.signal)
+				: null;
+			const preflight = collected?.snapshot;
+			const toolFailures = collected?.toolFailures ?? [];
 			tools.beginModelPhase();
 			const prompt = buildContextUserPrompt(input, tools.snapshots, preflight);
 			const out = await runContextModel(input, tools, env, opts.openai, prompt, true, false);

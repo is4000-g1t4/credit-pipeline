@@ -88,15 +88,16 @@ The production agent defaults now follow these results (overrides remain):
 ## Per-agent winners
 
 - **Context analyst:** Terra. Perfect pass@3, the lowest narrative-drop rate
-  (0.83/run), 12.2s, $1.30. Sol ties accuracy but costs 2.8× and drops 2.3×
-  more. Sol has the most detailed transcripts.
+  (0.83/run baseline; 0.29/run after removing the preflight snapshot), 12.2s,
+  $1.30 baseline / $1.09 after tuning. Sol ties accuracy but costs 2.8× and
+  drops 2.3× more. Sol has the most detailed transcripts.
 - **Policy navigator:** Terra. Code pass 1.000 (37/37), judge pass 0.982,
   $0.269. Sol and Muse are close on code pass; Opus underperforms (0.856).
 - **Document integrity:** Sol. Perfect 28/28, zero repairs, $0.432. Muse also
   goes 28/28 but costs $0.701 and is slower; Terra is 27/28.
 - **External case brief:** Sol. Perfect code pass and the best entity grounding
-  (0.83); Terra also passes 3/3 but entity confidence is 0.20, a real weakness
-  for a brief whose job is disambiguation.
+  (0.83 baseline; 1.00 after prompt `v7`); Terra also passes 3/3 but entity
+  confidence is 0.20, a real weakness for a brief whose job is disambiguation.
 - **Policy exception:** Terra and Sol tie on quality (0.972 pass@1, 22/24
   pass^3, 1.000 structural, 0.963 semantic). Terra is cheaper ($0.388 vs
   $0.542); Sol has zero repairs.
@@ -117,6 +118,17 @@ cost, latency, or context/policy reliability is the priority.
 citation task), Muse (perfect integrity but shallow brief/context prose),
 Gemini (slow; brief path provider-incompatible), DeepSeek (best cost/latency,
 lower consistency and gap coverage).
+
+## Post-comparison tuning
+
+- **Context:** removing the default preflight snapshot kept 30/30 while
+  cutting narrative drops 0.83 → 0.29/run, tool calls 23.6 → 12.8, and cost
+  $1.30 → $1.09. Preflight remains opt-in with
+  `CONTEXT_AGENT_PREFLIGHT_ENABLED=true`.
+- **Brief:** removing the preflight was worse (entity 0.72 vs 0.83, cost $0.27
+  vs $0.18), so it stays. Prompt `v7` raised Sol's entity match 0.833 → 1.000
+  on the same 9 trials.
+- Full A/B: `apps/research/eval/TUNING-2026-10-28.md`.
 
 ## Caveats
 

@@ -582,7 +582,7 @@ describe("query template", () => {
 
 describe("prompt", () => {
 	it("versions v2 with a stable hash and no purpose field", () => {
-		expect(PROMPT_VERSION).toBe("v6");
+		expect(PROMPT_VERSION).toBe("v7");
 		expect(promptHash()).toBe(promptHash());
 		expect(promptHash()).toMatch(/^[0-9a-f]{64}$/);
 		expect(SYSTEM_TEMPLATE).not.toMatch(/purpose/i);

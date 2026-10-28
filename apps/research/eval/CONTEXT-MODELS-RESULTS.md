@@ -80,6 +80,14 @@ Fixed by making `cursor` required (`""` means first page) and updating the
 tool description/prompt. DeepSeek tolerated the old schema; the OpenAI models
 did not.
 
+## Tuning follow-up (2026-10-28)
+
+After the comparison, the context preflight snapshot was removed from the
+default path. Same 30/30, but narrative drops fell from 0.83 to 0.29 per run,
+tool calls from 23.6 to 12.8, and cost from $1.30 to $1.09. The preflight
+remains available with `CONTEXT_AGENT_PREFLIGHT_ENABLED=true`. Full A/B:
+`apps/research/eval/TUNING-2026-10-28.md`.
+
 ## Verdict
 
 **Overall: GPT-6.1 Terra** — perfect pass@1/pass^3/first-pass, zero errors,

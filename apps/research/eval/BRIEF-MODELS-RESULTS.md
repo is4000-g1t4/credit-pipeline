@@ -50,6 +50,14 @@ Exclude it from the ranking.
   the validator drops every finding; one clean trial only.
 - **Gemini:** cannot run the brief path (400).
 
+## Tuning follow-up (2026-10-28)
+
+A brief-preflight ablation was worse (entity 0.72 vs 0.83, cost $0.27 vs
+$0.18), so the mandatory server-side adverse/registry preflight stays. Prompt
+`v7` added the registration-number rule; on the same 3 cases × 3 trials Sol
+kept 9/9 pass and entity match rose from 0.833 to **1.000**. See
+`apps/research/eval/TUNING-2026-10-28.md`.
+
 ## Verdict
 
 **GPT-6.1 Sol wins the case brief**: perfect pass@3, best entity grounding,

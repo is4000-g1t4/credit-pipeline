@@ -214,8 +214,10 @@ pnpm demo:reset --dry-run           # preview; add --yes with DEMO_RESET_ALLOWED
 
 `demo:seed`/`demo:case` re-runs converge fixture-owned rows but skip any
 draft the applicant touched (uploads, edits, or submit). The T18 context
-analyst starts from a bounded officer-screen snapshot then drills in via a read-only internal tool loop (transactions,
-credit history, external reports, KYC checks, loans) — advisory only; the applicant UI arrives in D2b/D3; `demo:verify`
+analyst calls the read-only internal tools directly (transactions, credit
+history, external reports, KYC checks, loans); an optional bounded
+officer-screen preflight can be enabled with `CONTEXT_AGENT_PREFLIGHT_ENABLED=true`
+— advisory only; the applicant UI arrives in D2b/D3; `demo:verify`
 reports those seams instead of failing on them.
 
 ## Command reference
