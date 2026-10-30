@@ -116,10 +116,11 @@ describe("toolTraceEntry", () => {
 	it("counts arrays by length and objects as one", () => {
 		expect(toolTraceEntry("list_accounts", { accounts: [1, 2] })).toEqual({
 			name: "list_accounts",
-			resultCount: 1,
+			resultCount: 2,
 			sourceTypes: ["accounts"],
 		});
 		expect(toolTraceEntry("get_documents", [1, 2, 3]).resultCount).toBe(3);
+		expect(toolTraceEntry("search_policy", { sections: [1, 2, 3, 4] }).resultCount).toBe(4);
 		expect(toolTraceEntry("get_loans", null).resultCount).toBe(0);
 	});
 

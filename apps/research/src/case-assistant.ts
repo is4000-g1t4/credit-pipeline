@@ -57,6 +57,18 @@ export interface CaseAssistantInput {
 	signal: AbortSignal;
 	runId?: string;
 	observability?: Observability;
+	/** Best-effort progress callback for live tool activity (SSE). */
+	onToolEvent?: (event: CaseAssistantToolEvent) => void;
+}
+
+/** One tool call's live progress; metadata only, never args or results. */
+export interface CaseAssistantToolEvent {
+	callId: number;
+	name: string;
+	status: "running" | "complete" | "error";
+	resultCount?: number;
+	sourceTypes?: string[];
+	durationMs?: number;
 }
 
 export interface CaseAssistantToolTrace {
@@ -141,13 +153,32 @@ export function citedPolicyRefs(
 	);
 }
 
+/** Array-valued snapshots: count rows, not the wrapper object. */
+const RESULT_ARRAY_KEYS: Record<string, string> = {
+	list_accounts: "accounts",
+	get_transactions: "items",
+	get_cashflow_metrics: "signals",
+	get_document_findings: "findings",
+	get_credit_history: "priorApplications",
+	get_external_reports: "reports",
+	get_kyc_checks: "checks",
+	get_loans: "loans",
+	search_policy: "sections",
+};
+
 /** Metadata-only trace entry: counts, never args/results/text. */
 export function toolTraceEntry(name: string, result: unknown): CaseAssistantToolTrace {
-	const resultCount = Array.isArray(result)
-		? result.length
-		: result === null || result === undefined
-			? 0
-			: 1;
+	let resultCount: number;
+	if (Array.isArray(result)) {
+		resultCount = result.length;
+	} else if (result === null || result === undefined) {
+		resultCount = 0;
+	} else {
+		const key = RESULT_ARRAY_KEYS[name];
+		const nested =
+			key && typeof result === "object" ? (result as Record<string, unknown>)[key] : null;
+		resultCount = Array.isArray(nested) ? nested.length : 1;
+	}
 	return { name, resultCount, sourceTypes: sourceTypesFor(name) };
 }
 
@@ -456,17 +487,39 @@ export function createRealCaseAssistantRunner(opts: {
 			// Tool-invocation cap: the next call resolves the stop directive
 			// (never throws), so the model answers from gathered results.
 			let calls = 0;
+			let callId = 0;
 			let budgetExceeded = false;
+			const emitTool = (event: CaseAssistantToolEvent): void => {
+				// Progress is best-effort: a closed stream must never fail a run.
+				try {
+					input.onToolEvent?.(event);
+				} catch {
+					// ignore
+				}
+			};
 			const track = (name: string, fn: () => Promise<string>): Promise<string> => {
 				calls += 1;
+				callId += 1;
+				const id = callId;
+				const sourceTypes = sourceTypesFor(name);
 				if (calls > env.caseAssistantMaxToolCalls) {
 					if (!budgetExceeded) {
 						budgetExceeded = true;
 						limitations.push("Stopped gathering further case screens at the tool-call limit.");
 					}
-					traces.push({ name, resultCount: 0, sourceTypes: sourceTypesFor(name) });
+					traces.push({ name, resultCount: 0, sourceTypes });
+					emitTool({
+						callId: id,
+						name,
+						status: "complete",
+						resultCount: 0,
+						sourceTypes,
+						durationMs: 0,
+					});
 					return Promise.resolve(CASE_ASSISTANT_BUDGET_STOP);
 				}
+				emitTool({ callId: id, name, status: "running" });
+				const startedAt = Date.now();
 				return observability.trackToolExecution(
 					{
 						runId,
@@ -484,11 +537,28 @@ export function createRealCaseAssistantRunner(opts: {
 							} catch {
 								parsed = raw;
 							}
-							traces.push(toolTraceEntry(name, parsed));
+							const trace = toolTraceEntry(name, parsed);
+							traces.push(trace);
+							emitTool({
+								callId: id,
+								name,
+								status: "complete",
+								resultCount: trace.resultCount,
+								sourceTypes: trace.sourceTypes,
+								durationMs: Date.now() - startedAt,
+							});
 							return raw;
 						} catch {
-							traces.push({ name, resultCount: 0, sourceTypes: sourceTypesFor(name) });
+							traces.push({ name, resultCount: 0, sourceTypes });
 							limitations.push(`Case screen unavailable: ${name}.`);
+							emitTool({
+								callId: id,
+								name,
+								status: "error",
+								resultCount: 0,
+								sourceTypes,
+								durationMs: Date.now() - startedAt,
+							});
 							return JSON.stringify({ unavailable: true });
 						}
 					},

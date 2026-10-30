@@ -5,7 +5,15 @@ import { randomUUID } from "node:crypto";
 import { HttpError } from "@credit/service-kit";
 import { describe, expect, it } from "vitest";
 import { CaseAssistantError, stubCaseAssistantRunner } from "../../src/case-assistant.js";
-import { caseFacts, OFFICER, post, setupApp, teardown, type TestContext } from "../helper.js";
+import {
+	caseFacts,
+	OFFICER,
+	post,
+	setupApp,
+	signed,
+	teardown,
+	type TestContext,
+} from "../helper.js";
 
 process.env.LOG_LEVEL ??= "silent";
 
@@ -52,6 +60,105 @@ describe("POST :applicationId/assistant", () => {
 			expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
 				"CONTEXT_CONSENT_REQUIRED",
 			);
+		} finally {
+			await teardown(ctx);
+		}
+	});
+
+	it("streams tool progress then the answer when the client accepts SSE", async () => {
+		const base = stubCaseAssistantRunner({
+			outputs: [{ answer: "Streamed answer.", limitations: [] }],
+		});
+		const ctx: TestContext = setupApp(undefined, {
+			env: { caseAssistantEnabled: true },
+			...consented(),
+			caseAssistant: {
+				async run(input) {
+					input.onToolEvent?.({
+						callId: 1,
+						name: "get_case_facts",
+						status: "running",
+					});
+					input.onToolEvent?.({
+						callId: 1,
+						name: "get_case_facts",
+						status: "complete",
+						resultCount: 1,
+						sourceTypes: ["case"],
+						durationMs: 5,
+					});
+					return base.run(input);
+				},
+			},
+		});
+		try {
+			const path = assistantPath();
+			const body = JSON.stringify({ question: "Summarise the case." });
+			const res = await ctx.app.request(path, {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					accept: "text/event-stream",
+					...signed(ctx, OFFICER, "POST", path, {}, body),
+				},
+				body,
+			});
+			expect(res.headers.get("content-type")).toContain("text/event-stream");
+			const events = (await res.text())
+				.split("\n\n")
+				.filter(Boolean)
+				.map((frame) => JSON.parse(frame.replace(/^data: /, "")) as Record<string, unknown>);
+			expect(events[0]).toMatchObject({ type: "tool", callId: 1, status: "running" });
+			expect(events[1]).toMatchObject({
+				type: "tool",
+				callId: 1,
+				status: "complete",
+				resultCount: 1,
+				durationMs: 5,
+			});
+			expect(events[2]).toMatchObject({
+				type: "answer",
+				answer: { answer: "Streamed answer." },
+			});
+			expect(events[2]?.["latencyMs"]).toEqual(expect.any(Number));
+		} finally {
+			await teardown(ctx);
+		}
+	});
+
+	it("streams a typed error event when validation fails", async () => {
+		const ctx: TestContext = setupApp(undefined, {
+			env: { caseAssistantEnabled: true },
+			...consented(),
+			caseAssistant: {
+				async run() {
+					throw new CaseAssistantError(
+						"UNSAFE_OUTPUT",
+						"assistant answer contains advisory language",
+					);
+				},
+			},
+		});
+		try {
+			const path = assistantPath();
+			const body = JSON.stringify({ question: "Should we approve this?" });
+			const res = await ctx.app.request(path, {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					accept: "text/event-stream",
+					...signed(ctx, OFFICER, "POST", path, {}, body),
+				},
+				body,
+			});
+			expect(res.status).toBe(200);
+			const text = await res.text();
+			expect(text).toContain('"type":"error"');
+			expect(JSON.parse(text.replace(/^data: /, "").trim())).toMatchObject({
+				type: "error",
+				status: 422,
+				code: "UNSAFE_OUTPUT",
+			});
 		} finally {
 			await teardown(ctx);
 		}

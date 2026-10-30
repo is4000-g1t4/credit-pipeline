@@ -39,7 +39,12 @@ import {
 	type AccessRole,
 } from "./access.js";
 import type { AgentRunner } from "./agent.js";
-import { CaseAssistantError, type CaseAssistantRunner } from "./case-assistant.js";
+import {
+	CaseAssistantError,
+	type CaseAssistantOutput,
+	type CaseAssistantRunner,
+	type CaseAssistantToolEvent,
+} from "./case-assistant.js";
 import { checkAutoCaps } from "./auto-trigger.js";
 import type { ContextAgentRunner } from "./context-agent.js";
 import type { ResearchEnv } from "./env.js";
@@ -1073,8 +1078,10 @@ export function researchRoutes(deps: ResearchRouteDeps): ServiceApp {
 					? AbortSignal.any([inbound, timeoutSignal])
 					: timeoutSignal;
 			const assistant = deps.caseAssistant ?? unavailableCaseAssistantRunner;
-			try {
-				const out = await assistant.run({
+			const run = async (
+				onToolEvent?: (event: CaseAssistantToolEvent) => void,
+			): Promise<CaseAssistantOutput> =>
+				assistant.run({
 					applicationId,
 					caseFacts,
 					asOfDate: submittedAt.slice(0, 10),
@@ -1084,29 +1091,78 @@ export function researchRoutes(deps: ResearchRouteDeps): ServiceApp {
 					actorRole: me.role,
 					signal,
 					runId: applicationId,
+					onToolEvent,
 				});
+			const toHttpError = (err: unknown): HttpError => {
+				if (!(err instanceof CaseAssistantError)) {
+					logger.error({ applicationId, code: "CASE_ASSISTANT_FAILED" }, "case assistant failed");
+					return new HttpError(502, "CASE_ASSISTANT_FAILED", "assistant run failed");
+				}
+				// Sanitized envelope only: static messages, ids, and codes —
+				// never the question, answer, or tool results.
+				logger.error(
+					{ applicationId, code: err.code, reason: err.message },
+					"case assistant failed",
+				);
+				switch (err.code) {
+					case "UNSAFE_OUTPUT":
+					case "INVALID_OUTPUT":
+						return new HttpError(422, err.code, "assistant output failed validation");
+					case "CASE_ASSISTANT_TIMEOUT":
+						return new HttpError(504, err.code, "assistant run timed out");
+					case "CASE_ASSISTANT_UNAVAILABLE":
+						return new HttpError(503, err.code, "assistant model is unavailable");
+					default:
+						return new HttpError(502, err.code, "assistant run failed");
+				}
+			};
+
+			// Opt-in SSE: tool progress arrives while the loop runs, then one
+			// answer event. Errors after the stream opens are typed events.
+			if ((c.req.header("accept") ?? "").includes("text/event-stream")) {
+				const encoder = new TextEncoder();
+				const stream = new ReadableStream<Uint8Array>({
+					async start(controller) {
+						const send = (event: unknown): void => {
+							try {
+								controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+							} catch {
+								// Client disconnected; the run signal aborts it too.
+							}
+						};
+						try {
+							const out = await run((tool) => send({ type: "tool", ...tool }));
+							send({ type: "answer", answer: out, latencyMs: Date.now() - startedAt });
+						} catch (err) {
+							const mapped = toHttpError(err);
+							send({
+								type: "error",
+								status: mapped.status,
+								code: mapped.code,
+								message: mapped.message,
+							});
+						} finally {
+							try {
+								controller.close();
+							} catch {
+								// already closed/errored by the client
+							}
+						}
+					},
+				});
+				return c.body(stream, 200, {
+					"content-type": "text/event-stream; charset=utf-8",
+					"cache-control": "no-cache, no-transform",
+					connection: "keep-alive",
+					"x-accel-buffering": "no",
+				});
+			}
+
+			try {
+				const out = await run();
 				return c.json({ ...out, latencyMs: Date.now() - startedAt });
 			} catch (err) {
-				if (err instanceof CaseAssistantError) {
-					// Sanitized envelope only: static messages, ids, and codes —
-					// never the question, answer, or tool results.
-					logger.error(
-						{ applicationId, code: err.code, reason: err.message },
-						"case assistant failed",
-					);
-					switch (err.code) {
-						case "UNSAFE_OUTPUT":
-						case "INVALID_OUTPUT":
-							throw new HttpError(422, err.code, "assistant output failed validation");
-						case "CASE_ASSISTANT_TIMEOUT":
-							throw new HttpError(504, err.code, "assistant run timed out");
-						case "CASE_ASSISTANT_UNAVAILABLE":
-							throw new HttpError(503, err.code, "assistant model is unavailable");
-						default:
-							throw new HttpError(502, err.code, "assistant run failed");
-					}
-				}
-				throw err;
+				throw toHttpError(err);
 			}
 		},
 	);

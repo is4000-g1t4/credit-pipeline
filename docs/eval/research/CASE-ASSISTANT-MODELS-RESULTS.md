@@ -69,8 +69,8 @@ input/output; Sol $2/$10). This is not billed cost. Raw result file:
   database. A corpus change needs a re-run before quoting these numbers.
 - Both models keep answers short (mean 312/389 chars); the eval does not reward
   length or penalise a bare refusal on out-of-scope questions.
-- Object-shaped tool results report `resultCount = 1`, so tool counts measure
-  calls, not rows.
+- Tool metadata counts array rows (accounts, transactions, policy sections) and
+  treats single-object screens as one; it is not a measure of answer quality.
 
 ## Reproduce
 

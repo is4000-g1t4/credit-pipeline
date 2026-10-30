@@ -70,6 +70,9 @@ export async function fetchUpstream(
 	};
 	const contentType = c.req.header("content-type");
 	if (contentType) headers["content-type"] = contentType;
+	// Preserve the client's negotiation so the Ask panel can opt into SSE.
+	const accept = c.req.header("accept");
+	if (accept) headers.accept = accept;
 	const idempotencyKey = c.req.header("Idempotency-Key");
 	if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
 	try {
@@ -97,6 +100,15 @@ const FORWARDED_HEADERS = [
 	"x-content-type-options",
 ] as const;
 
+function forwardedHeaders(upstream: Response): Record<string, string> {
+	const headers: Record<string, string> = {};
+	for (const name of FORWARDED_HEADERS) {
+		const value = upstream.headers.get(name);
+		if (value !== null) headers[name] = value;
+	}
+	return headers;
+}
+
 /** Forwards the upstream status/body byte-for-byte: binary-safe
  * (`arrayBuffer`, no text decoding) so PDF/image downloads survive, with
  * only the allowlisted headers preserved. JSON bodies pass through as the
@@ -108,13 +120,19 @@ export async function forwardResponse(c: Context, upstream: Response): Promise<R
 	} catch {
 		throw new HttpError(502, "BAD_GATEWAY", "upstream service unavailable");
 	}
-	const headers: Record<string, string> = {};
-	for (const name of FORWARDED_HEADERS) {
-		const value = upstream.headers.get(name);
-		if (value !== null) headers[name] = value;
-	}
+	const headers = forwardedHeaders(upstream);
 	if (headers["content-type"] === undefined) headers["content-type"] = "application/json";
 	return c.body(bytes, upstream.status as 200, headers);
+}
+
+/** Streaming pass-through for SSE: no buffering, no content-length. */
+export function forwardStreaming(c: Context, upstream: Response): Response {
+	if (!upstream.body) throw new HttpError(502, "BAD_GATEWAY", "upstream service unavailable");
+	const headers = forwardedHeaders(upstream);
+	delete headers["content-length"];
+	headers["cache-control"] = "no-cache, no-transform";
+	headers["x-accel-buffering"] = "no";
+	return c.body(upstream.body, upstream.status as 200, headers);
 }
 
 /** One-shot signed proxy for routes that need no composition. */

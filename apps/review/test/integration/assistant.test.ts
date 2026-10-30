@@ -67,6 +67,27 @@ describe("POST /api/review/:id/assistant", () => {
 		expect(c.research.calls).toContain(`POST /internal/research/applications/${appId}/assistant`);
 	});
 
+	it("passes SSE through when the browser accepts text/event-stream", async () => {
+		const c = fresh();
+		const officer = createUser("officer");
+		const appId = randomUUID();
+		const path = `/api/review/${appId}/assistant`;
+		const body = JSON.stringify({ question: "Summarise the case." });
+		const res = await c.app.request(path, {
+			method: "POST",
+			headers: {
+				"content-type": "application/json",
+				accept: "text/event-stream",
+				...signed(c, officer, "POST", path, {}, body),
+			},
+			body,
+		});
+		expect(res.status).toBe(200);
+		expect(res.headers.get("content-type")).toContain("text/event-stream");
+		expect(await res.text()).toContain('"type":"tool"');
+		expect(c.research.assistantBodies).toHaveLength(1);
+	});
+
 	it("403s applicants; 404s non-UUID ids", async () => {
 		const c = fresh();
 		const applicant = createUser();

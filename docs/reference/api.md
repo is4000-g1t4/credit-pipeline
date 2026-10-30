@@ -420,6 +420,20 @@ Response `200`: `answer`, `limitations[]`, `toolCalls[]`
 `agentVersion`, `latencyMs`. No prompt, tool args/output, document text, or PII
 is returned.
 
+Streaming: send `Accept: text/event-stream` to receive tool progress while the
+loop runs. The response is `text/event-stream` with `data:` JSON frames:
+
+- `{ "type": "tool", "callId", "name", "status": "running" }` when a tool starts.
+- `{ "type": "tool", "callId", "name", "status": "complete"|"error", "resultCount", "sourceTypes", "durationMs" }` when it settles.
+- `{ "type": "answer", "answer": <the JSON contract above>, "latencyMs" }` once.
+- `{ "type": "error", "status", "code", "message" }` if the run fails after the
+  stream opens.
+
+Tool frames carry metadata only; no arguments, tool output, document text, or
+PII. Validation, flag, consent, and access failures happen before the stream
+opens and stay JSON with the normal status. Clients that omit the header get
+the buffered JSON response.
+
 Rules and errors:
 
 - `CASE_ASSISTANT_ENABLED` off (research or review): 404

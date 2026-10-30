@@ -134,12 +134,20 @@ static; logs carry ids, codes, and the validator's safe reason only.
 ## UI
 
 The officer case page has an `Ask` tab after `Policy`. The panel keeps the
-conversation in memory, offers four suggested questions, sends Enter (Shift+Enter
-newlines), caps the question at 1,000 characters, and renders each answer with
-its limitations, a collapsible tool-activity timeline, and policy citation
-buttons that open the shared section drawer. Failed turns keep the question and
-offer retry without duplicating it. The timeline shows labels, result counts,
-and source types only.
+conversation in memory, offers four suggested questions, sends Enter
+(Shift+Enter newlines), caps the question at 1,000 characters, and renders each
+answer with its limitations, live tool activity, and policy citation buttons
+that open the shared section drawer. Failed turns keep the question and offer
+retry without duplicating it.
+
+Tool activity streams from the server over SSE. Each row appears the moment a
+tool starts (present-tense label and spinner), then settles in place to a
+past-tense label, result count, and duration with a check; a failed tool is red
+and marked unavailable. The group header counts the tools ("Using 2 tools" →
+"Used 2 tools") and collapses on click, but stays open while running. The
+timeline never shows raw arguments or tool output. The POST falls back to the
+buffered JSON contract for clients that do not send `Accept:
+text/event-stream`.
 
 ## Configuration
 
@@ -172,7 +180,6 @@ read-only tool ran, the required evidence token is present, and no forbidden
 token or applicant PII leaked. Sol and Terra run on the same pinned fixture;
 see the [report](../eval/research/CASE-ASSISTANT-MODELS-RESULTS.md).
 
-Open items: result counts for object-shaped tools are 1 rather than the number
-of nested items; the assistant does not stream partial answers; and a follow-up
-that needs a document's text (not just metadata/findings) is out of scope by
-design.
+Open items: the assistant does not stream partial answer text (only tool
+activity); and a follow-up that needs a document's text (not just
+metadata/findings) is out of scope by design.

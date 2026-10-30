@@ -113,12 +113,14 @@ export function reviewRoutes(deps: ReviewRouteDeps): ServiceApp {
 		user: ServiceVariables["user"],
 		body: unknown,
 		timeoutMs?: number,
+		headers?: Record<string, string>,
 	): Promise<Response> =>
 		internalFetch(baseUrl, path, user, {
 			method: "POST",
 			body,
 			secret: internalSecret,
 			fetchImpl,
+			...(headers === undefined ? {} : { headers }),
 			...(timeoutMs === undefined ? {} : { timeoutMs }),
 		});
 
@@ -449,13 +451,28 @@ export function reviewRoutes(deps: ReviewRouteDeps): ServiceApp {
 				zodFields(parsed.error),
 			);
 		}
+		const wantsStream = (c.req.header("accept") ?? "").includes("text/event-stream");
 		const res = await post(
 			researchUrl,
 			`/internal/research/applications/${id}/assistant`,
 			c.var.user,
 			parsed.data,
 			CASE_ASSISTANT_TIMEOUT_MS,
+			wantsStream ? { accept: "text/event-stream" } : undefined,
 		);
+		if (
+			wantsStream &&
+			res.ok &&
+			(res.headers.get("content-type") ?? "").includes("text/event-stream")
+		) {
+			if (!res.body) throw new HttpError(502, "BAD_GATEWAY", "upstream service unavailable");
+			return c.body(res.body, 200, {
+				"content-type": "text/event-stream; charset=utf-8",
+				"cache-control": "no-cache, no-transform",
+				connection: "keep-alive",
+				"x-accel-buffering": "no",
+			});
+		}
 		return c.json(await readUpstream(res));
 	});
 

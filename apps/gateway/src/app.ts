@@ -32,6 +32,9 @@ import { healthRoutes } from "./health.js";
 import {
 	ASSIST_UPSTREAM_TIMEOUT_MS,
 	DOCUMENT_UPSTREAM_TIMEOUT_MS,
+	fetchUpstream,
+	forwardResponse,
+	forwardStreaming,
 	LONG_UPSTREAM_TIMEOUT_MS,
 	proxyTo,
 } from "./proxy.js";
@@ -201,7 +204,21 @@ export function createApp(deps: GatewayDeps): Hono<{ Variables: Variables }> {
 			throw new HttpError(429, "RATE_LIMITED", "too many assistant requests");
 		}
 		const path = c.req.path;
-		return proxyTo(c, deps, me, { baseUrl: deps.env.reviewUrl, path }, ASSIST_UPSTREAM_TIMEOUT_MS);
+		const upstream = await fetchUpstream(
+			deps,
+			me,
+			c.req.method,
+			{ baseUrl: deps.env.reviewUrl, path },
+			new URL(c.req.url).search,
+			c.get("requestId") as string,
+			c,
+			ASSIST_UPSTREAM_TIMEOUT_MS,
+		);
+		// The Ask panel opts into SSE so tool activity streams; keep the
+		// regular JSON path byte-for-byte for every other caller.
+		return upstream.headers.get("content-type")?.includes("text/event-stream")
+			? forwardStreaming(c, upstream)
+			: forwardResponse(c, upstream);
 	});
 
 	app.all("/api/review/*", officer, async (c) => {

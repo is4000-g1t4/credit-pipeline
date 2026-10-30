@@ -37,6 +37,23 @@ describe("case-assistant gateway route", () => {
 		expect(spy).not.toHaveBeenCalledWith(45_000);
 	});
 
+	it("forwards the client's Accept header so the review stream can opt in", async () => {
+		const captured: StubRequest[] = [];
+		const { app, officers, cookieFor } = setupStubApp(captured);
+		const id = "11111111-1111-4111-8111-111111111111";
+		const res = await app.request(`/api/review/${id}/assistant`, {
+			method: "POST",
+			headers: {
+				cookie: cookieFor(officers[0].id),
+				"content-type": "application/json",
+				accept: "text/event-stream",
+			},
+			body: JSON.stringify({ question: "Summarise the case." }),
+		});
+		expect(res.status).toBe(200);
+		expect(captured[0]?.headers.accept).toBe("text/event-stream");
+	});
+
 	it("rejects applicants and unauthenticated callers without touching upstream", async () => {
 		const captured: StubRequest[] = [];
 		const { app, applicant, actAs, cookieFor } = setupStubApp(captured);

@@ -5,8 +5,11 @@ import { useEffect, useRef, useState } from "react";
 import {
 	ApiError,
 	apiErrorMessage,
+	applyToolEvent,
 	askCaseAssistant,
 	capAssistantHistory,
+	toTraceEntries,
+	type AssistantToolEntry,
 	type CaseAssistantAnswer,
 	type CaseAssistantMessage,
 } from "../lib/api";
@@ -14,7 +17,7 @@ import { clean } from "../lib/format";
 import { AssistantToolTrace } from "./assistant-tool-trace";
 import { PolicySources } from "./policy-citations";
 import { Button } from "./ui/button";
-import { ErrorBox, Skeleton } from "./ui";
+import { ErrorBox } from "./ui";
 import { Textarea } from "./ui/textarea";
 
 const SUGGESTED = [
@@ -24,7 +27,9 @@ const SUGGESTED = [
 	"What does policy say about the TDSR?",
 ] as const;
 
-type Entry = { kind: "user"; text: string } | { kind: "assistant"; answer: CaseAssistantAnswer };
+type Entry =
+	| { kind: "user"; text: string }
+	| { kind: "assistant"; answer: CaseAssistantAnswer; tools: AssistantToolEntry[] };
 
 type PanelError = { message: string; code: string; retryable: boolean };
 
@@ -38,10 +43,19 @@ function toHistory(entries: Entry[]): CaseAssistantMessage[] {
 	);
 }
 
-function AssistantEntry({ answer }: { answer: CaseAssistantAnswer }) {
+function AssistantEntry({
+	answer,
+	tools,
+}: {
+	answer: CaseAssistantAnswer;
+	tools: AssistantToolEntry[];
+}) {
 	return (
 		<div>
-			<p className="text-xs font-medium text-slate">Assistant</p>
+			<AssistantToolTrace entries={tools} />
+			<p className={`text-xs font-medium text-slate ${tools.length > 0 ? "mt-2" : ""}`}>
+				Assistant
+			</p>
 			<p className="mt-1 text-sm break-words whitespace-pre-wrap text-ink">
 				{clean(answer.answer)}
 			</p>
@@ -60,7 +74,6 @@ function AssistantEntry({ answer }: { answer: CaseAssistantAnswer }) {
 					<PolicySources citations={answer.policyRefs} />
 				</div>
 			)}
-			<AssistantToolTrace calls={answer.toolCalls} />
 		</div>
 	);
 }
@@ -75,22 +88,34 @@ export function CaseAssistantPanel({
 	const [entries, setEntries] = useState<Entry[]>([]);
 	const [draft, setDraft] = useState("");
 	const [pending, setPending] = useState(false);
+	const [liveTools, setLiveTools] = useState<AssistantToolEntry[]>([]);
 	const [error, setError] = useState<PanelError | null>(null);
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const stick = useRef(true);
+	const lastScrollTop = useRef(0);
 	const inputRef = useRef<HTMLTextAreaElement>(null);
 
 	useEffect(() => {
 		const el = scrollRef.current;
-		if (el && stick.current && el.scrollHeight > 0) el.scrollTop = el.scrollHeight;
-	}, [entries, pending]);
+		if (el && stick.current && el.scrollHeight > 0) {
+			el.scrollTop = el.scrollHeight;
+			lastScrollTop.current = el.scrollTop;
+		}
+	}, [entries, pending, liveTools]);
 
 	async function run(question: string, history: CaseAssistantMessage[]) {
 		setPending(true);
 		setError(null);
+		setLiveTools([]);
+		let live: AssistantToolEntry[] = [];
 		try {
-			const answer = await askCaseAssistant(applicationId, question, history);
-			setEntries((prev) => [...prev, { kind: "assistant", answer }]);
+			const answer = await askCaseAssistant(applicationId, question, history, (event) => {
+				live = applyToolEvent(live, event);
+				setLiveTools(live);
+			});
+			const tools = live.length > 0 ? live : toTraceEntries(answer.toolCalls);
+			setEntries((prev) => [...prev, { kind: "assistant", answer, tools }]);
+			setLiveTools([]);
 		} catch (err) {
 			const status = err instanceof ApiError ? err.status : 0;
 			setError({
@@ -148,7 +173,12 @@ export function CaseAssistantPanel({
 				className="mt-3 max-h-96 space-y-4 overflow-y-auto"
 				onScroll={(e) => {
 					const el = e.currentTarget;
-					stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 32;
+					const near = el.scrollHeight - el.scrollTop - el.clientHeight < 32;
+					// Only a deliberate scroll up detaches; programmatic growth
+					// during streaming must not stop the follow.
+					if (near) stick.current = true;
+					else if (el.scrollTop < lastScrollTop.current) stick.current = false;
+					lastScrollTop.current = el.scrollTop;
 				}}
 			>
 				{entries.length === 0 && !pending && (
@@ -177,17 +207,15 @@ export function CaseAssistantPanel({
 							</p>
 						</div>
 					) : (
-						<AssistantEntry key={`${i}-${entry.answer.latencyMs}`} answer={entry.answer} />
+						<AssistantEntry
+							key={`${i}-${entry.answer.latencyMs}`}
+							answer={entry.answer}
+							tools={entry.tools}
+						/>
 					),
 				)}
-				{pending && (
-					<div>
-						<AssistantToolTrace calls={[]} pending />
-						<div className="mt-2">
-							<Skeleton label="Waiting for assistant answer" />
-						</div>
-					</div>
-				)}
+				{pending && <AssistantToolTrace entries={liveTools} running />}
+				{!pending && error && liveTools.length > 0 && <AssistantToolTrace entries={liveTools} />}
 			</div>
 
 			{consentMissing && (

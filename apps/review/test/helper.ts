@@ -152,7 +152,7 @@ export function setupApp(opts: SetupOptions = {}): TestContext {
 	};
 	const fetchImpl = (async (
 		url: string | URL | Request,
-		init?: { method?: string; body?: unknown },
+		init?: { method?: string; body?: unknown; headers?: Record<string, string> },
 	): Promise<Response> => {
 		const raw = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
 		const path = new URL(raw).pathname;
@@ -226,6 +226,23 @@ export function setupApp(opts: SetupOptions = {}): TestContext {
 						},
 						409,
 					);
+				}
+				if (init?.headers?.accept === "text/event-stream") {
+					const encoder = new TextEncoder();
+					const stream = new ReadableStream<Uint8Array>({
+						start(controller) {
+							controller.enqueue(
+								encoder.encode(
+									'data: {"type":"tool","callId":1,"name":"get_case_facts","status":"running"}\n\n',
+								),
+							);
+							controller.close();
+						},
+					});
+					return new Response(stream, {
+						status: 200,
+						headers: { "content-type": "text/event-stream; charset=utf-8" },
+					});
 				}
 				return jsonResponse(
 					research.assistantAnswers.get(appId) ?? {
