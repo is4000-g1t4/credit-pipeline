@@ -16,7 +16,8 @@ function stub(nodeEnv: string, overrides: Record<string, string> = {}) {
 
 afterEach(() => vi.unstubAllEnvs());
 
-describe("gateway env in production", () => {
+// First import is a cold transform of env + service-kit; slow under `pnpm -r test`.
+describe("gateway env in production", { timeout: 30_000 }, () => {
 	it("loads with strong secrets", async () => {
 		stub("production");
 		await expect(import("../src/env.js")).resolves.toBeDefined();
