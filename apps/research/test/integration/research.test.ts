@@ -17,7 +17,13 @@ import {
 	AgentTimeoutError,
 	ModelUnavailableError,
 	type AgentResult,
-} from "../../src/agent.js";
+	stubLanguageRepair,
+	type LanguageRepair,
+	stubSupportJudge,
+	type SupportJudge,
+	TavilyError,
+	sha256Hex,
+} from "../../src/agents/case-brief/index.js";
 import { checkAutoCaps } from "../../src/auto-trigger.js";
 import { loadEnv } from "../../src/env.js";
 import {
@@ -34,10 +40,6 @@ import {
 	type CaseFactsPayload,
 } from "../../src/lifecycle.js";
 import { executeRun } from "../../src/run.js";
-import { stubLanguageRepair, type LanguageRepair } from "../../src/repair.js";
-import { stubSupportJudge, type SupportJudge } from "../../src/support.js";
-import { TavilyError } from "../../src/tavily.js";
-import { sha256Hex } from "../../src/validator.js";
 import {
 	APPLICANT,
 	caseFacts,

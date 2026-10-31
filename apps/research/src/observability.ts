@@ -8,7 +8,7 @@ import {
 	resetObservability as resetSharedObservability,
 } from "@credit/agent-observability";
 import type { Runner } from "@openai/agents";
-import { AGENT_VERSION } from "./prompt.js";
+import { AGENT_VERSION } from "./agents/case-brief/prompt.js";
 
 export interface RunHooks {
 	detach: () => void;

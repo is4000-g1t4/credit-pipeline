@@ -6,7 +6,7 @@ import {
 	createCaseTokenForInput,
 	createHttpPolicyRunner,
 	type PolicyStageInput,
-} from "../src/policy-stage.js";
+} from "../src/agents/policy-review/index.js";
 
 const facts: CaseFacts = {
 	applicationId: "22222222-2222-4222-8222-222222222222",

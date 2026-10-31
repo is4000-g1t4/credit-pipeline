@@ -2,8 +2,8 @@
 // Unit doubles (fake OpenAI, model brief, context candidates) live here so
 // the unit suites and integration doubles share one definition.
 import type OpenAI from "openai";
-import type { CandidateSnapshot } from "../src/context-tools.js";
-import type { ModelBrief } from "../src/validator.js";
+import type { CandidateSnapshot } from "../src/agents/context-analyst/index.js";
+import type { ModelBrief } from "../src/agents/case-brief/index.js";
 
 export interface RecordedCall {
 	params: Record<string, unknown>;

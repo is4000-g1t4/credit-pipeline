@@ -4,7 +4,10 @@
 import { randomUUID } from "node:crypto";
 import { HttpError } from "@credit/service-kit";
 import { describe, expect, it } from "vitest";
-import { CaseAssistantError, stubCaseAssistantRunner } from "../../src/case-assistant.js";
+import {
+	CaseAssistantError,
+	stubCaseAssistantRunner,
+} from "../../src/agents/case-assistant/index.js";
 import {
 	caseFacts,
 	OFFICER,

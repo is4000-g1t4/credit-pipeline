@@ -2,8 +2,11 @@
 // Exact candidate tuples, confidence lowering only, status/policy/evidence
 // ownership, claim refs + semantic support, scans, injection-as-data.
 import { describe, expect, it } from "vitest";
-import type { CandidateSnapshot } from "../../src/context-tools.js";
-import { validateContextOutput, type ContextValidationInput } from "../../src/context-validator.js";
+import {
+	type CandidateSnapshot,
+	validateContextOutput,
+	type ContextValidationInput,
+} from "../../src/agents/context-analyst/index.js";
 import { candidateSnapshot, seenEvidence } from "../fixtures.js";
 
 const AS_OF = "2026-01-15";

@@ -20,8 +20,8 @@ import { signInternalHeaders, type Logger } from "@credit/service-kit";
 import { and, eq, sql } from "drizzle-orm";
 import { Kafka } from "kafkajs";
 import { auditResearch } from "./access.js";
-import type { AgentRunner } from "./agent.js";
-import type { ContextAgentRunner } from "./context-agent.js";
+import type { AgentRunner, LanguageRepair, SupportJudge } from "./agents/case-brief/index.js";
+import type { ContextAgentRunner } from "./agents/context-analyst/index.js";
 import type { ResearchEnv } from "./env.js";
 import { isUuid } from "./ids.js";
 import {
@@ -32,9 +32,7 @@ import {
 } from "./lifecycle.js";
 import type { Observability } from "./observability.js";
 import { executeRun, type ExecDeps } from "./run.js";
-import type { LanguageRepair } from "./repair.js";
-import type { PolicyRunner } from "./policy-stage.js";
-import type { SupportJudge } from "./support.js";
+import type { PolicyRunner } from "./agents/policy-review/index.js";
 
 export const AUTO_TRIGGER_GROUP_ID = "credit-research-auto";
 

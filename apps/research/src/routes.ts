@@ -38,15 +38,20 @@ import {
 	revokeResearchAccess,
 	type AccessRole,
 } from "./access.js";
-import type { AgentRunner } from "./agent.js";
+import {
+	type AgentRunner,
+	type LanguageRepair,
+	type SupportJudge,
+	sha256Hex,
+} from "./agents/case-brief/index.js";
 import {
 	CaseAssistantError,
 	type CaseAssistantOutput,
 	type CaseAssistantRunner,
 	type CaseAssistantToolEvent,
-} from "./case-assistant.js";
+} from "./agents/case-assistant/index.js";
 import { checkAutoCaps } from "./auto-trigger.js";
-import type { ContextAgentRunner } from "./context-agent.js";
+import type { ContextAgentRunner } from "./agents/context-analyst/index.js";
 import type { ResearchEnv } from "./env.js";
 import {
 	claimContextRetry,
@@ -62,10 +67,7 @@ import type { Observability } from "./observability.js";
 import { aggregateRun, toContextSignalDto } from "./aggregate.js";
 import { executeRun } from "./run.js";
 import { contextConsentProbe, executeContextRetry } from "./context-stage.js";
-import type { LanguageRepair } from "./repair.js";
-import type { PolicyRunner } from "./policy-stage.js";
-import type { SupportJudge } from "./support.js";
-import { sha256Hex } from "./validator.js";
+import type { PolicyRunner } from "./agents/policy-review/index.js";
 import { isUuid } from "./ids.js";
 
 const ensureSchema = z

@@ -9,14 +9,18 @@ import {
 	startAutoTrigger,
 	type ConsumerHandle,
 } from "./auto-trigger.js";
-import { createLlmSupportJudge } from "./support.js";
-import { createLlmLanguageRepair } from "./repair.js";
-import { createRealRunner, OPENROUTER_BASE_URL } from "./agent.js";
-import { createRealCaseAssistantRunner } from "./case-assistant.js";
-import { createRealContextRunner } from "./context-agent.js";
+import { createOpenRouterClient, type RetryEvent } from "@credit/agent-kit";
+import {
+	createLlmLanguageRepair,
+	createLlmSupportJudge,
+	createRealRunner,
+	createTavilyClient,
+} from "./agents/case-brief/index.js";
+import { createRealCaseAssistantRunner } from "./agents/case-assistant/index.js";
+import { createRealContextRunner } from "./agents/context-analyst/index.js";
 import { createApp } from "./app.js";
 import { loadEnv } from "./env.js";
-import { createHttpPolicyRunner } from "./policy-stage.js";
+import { createHttpPolicyRunner } from "./agents/policy-review/index.js";
 import {
 	latestRunForApplication,
 	reapContextStages,
@@ -25,29 +29,41 @@ import {
 } from "./lifecycle.js";
 import { aggregateRun } from "./aggregate.js";
 import { getObservability } from "./observability.js";
-import OpenAI from "openai";
-import { createTavilyClient } from "./tavily.js";
 
 const env = loadEnv();
 const logger = createLogger("research");
 const { db, sql } = createDb(env.databaseUrl);
 
-const tavily = createTavilyClient({ apiKey: env.tavilyApiKey });
-const openai = new OpenAI({
-	apiKey: env.openrouterApiKey || "unconfigured",
-	baseURL: OPENROUTER_BASE_URL,
+// Transient failures (408/409/429/5xx, network errors) retry through
+// agent-kit's retrying fetch. Only metadata is logged, never bodies.
+const logRetry =
+	(agent: string, what: string) =>
+	({ attempt, reason, status, delayMs }: RetryEvent): void => {
+		logger.warn({ agent, attempt, reason, status, delayMs }, `${what} retry`);
+	};
+const modelClient = (agent: string) =>
+	createOpenRouterClient({
+		apiKey: env.openrouterApiKey || "unconfigured",
+		retry: { onRetry: logRetry(agent, "model call") },
+	});
+const tavily = createTavilyClient({
+	apiKey: env.tavilyApiKey,
+	retry: { onRetry: logRetry("case-brief", "tavily request") },
 });
+const briefClient = modelClient("case-brief");
+const contextClient = modelClient("context-analyst");
+const caseAssistantClient = modelClient("case-assistant");
 // Same cached instance createApp defaults to: direct repair/judge calls join
 // the run conversation without a second pipeline.
 const observability = getObservability();
-const runner = createRealRunner({ env, tavily, openai });
-const judge = createLlmSupportJudge(openai, env.agentModel, { observability });
-const repair = createLlmLanguageRepair(openai, env.agentModel, { observability });
-const contextRunner = createRealContextRunner({ env, openai });
+const runner = createRealRunner({ env, tavily, openai: briefClient });
+const judge = createLlmSupportJudge(briefClient, env.agentModel, { observability });
+const repair = createLlmLanguageRepair(briefClient, env.agentModel, { observability });
+const contextRunner = createRealContextRunner({ env, openai: contextClient });
 const policyRunner = createHttpPolicyRunner(env);
 const caseAssistant = createRealCaseAssistantRunner({
 	env,
-	openai,
+	openai: caseAssistantClient,
 	// The assistant may cite the case's latest succeeded external brief.
 	// Research owns that DB, so the runner never crosses a service boundary.
 	loadExternalSummary: async (applicationId) => {

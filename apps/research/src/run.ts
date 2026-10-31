@@ -18,12 +18,30 @@ import {
 	projectCostUsd,
 	type AgentResult,
 	type AgentRunner,
-} from "./agent.js";
-import type { ContextAgentRunner } from "./context-agent.js";
+	PROMPT_VERSION,
+	type PromptCaseFacts,
+	type LanguageRepair,
+	type RepairUsage,
+	type JudgeUsage,
+	type SupportJudge,
+	TavilyError,
+	type QueryEntity,
+	asOfDate,
+	type CaseEntity,
+	validateAndBuild,
+	ValidationFailure,
+	VALIDATOR_VERSION,
+	type ProcessedEvidence,
+	type ValidatedFinding,
+} from "./agents/case-brief/index.js";
+import type { ContextAgentRunner } from "./agents/context-analyst/index.js";
 import type { CaseFacts } from "@credit/core";
 import type { ResearchEnv } from "./env.js";
-import { runPolicyStage, type PolicyExecResult } from "./policy-exec.js";
-import type { PolicyRunner } from "./policy-stage.js";
+import {
+	runPolicyStage,
+	type PolicyExecResult,
+	type PolicyRunner,
+} from "./agents/policy-review/index.js";
 import {
 	claimRun,
 	finalizeFailure,
@@ -34,18 +52,6 @@ import {
 	type RunErrorCode,
 } from "./lifecycle.js";
 import type { Observability } from "./observability.js";
-import { PROMPT_VERSION, type PromptCaseFacts } from "./prompt.js";
-import type { LanguageRepair, RepairUsage } from "./repair.js";
-import type { JudgeUsage, SupportJudge } from "./support.js";
-import { TavilyError, type QueryEntity } from "./tavily.js";
-import { asOfDate, type CaseEntity } from "./validator.js";
-import {
-	validateAndBuild,
-	ValidationFailure,
-	VALIDATOR_VERSION,
-	type ProcessedEvidence,
-	type ValidatedFinding,
-} from "./brief-validation.js";
 import {
 	contextConsentProbe,
 	externalSummaryOf,
@@ -73,7 +79,6 @@ export interface ExecDeps {
 	/** T03/T04 case policy review; absent fails the policy stage only. */
 	policyRunner?: PolicyRunner;
 }
-
 
 export async function executeRun(deps: ExecDeps, runId: string, token: string): Promise<void> {
 	const { db, env } = deps;
@@ -419,7 +424,6 @@ interface ExternalFailure {
 
 type ExternalOutcome = ExternalSuccess | ExternalFailure;
 
-
 interface FailureUsageBase {
 	inputTokens: number;
 	outputTokens: number;
@@ -448,7 +452,6 @@ function mergeFailureUsage(
 		costUsd: externalCost + context.costUsd + policy.costUsd,
 	};
 }
-
 
 function mapError(err: unknown): [RunErrorCode, string] {
 	if (err instanceof AgentTimeoutError) return ["timeout", "research run timed out"];
@@ -557,7 +560,6 @@ function readStoredFacts(stored: unknown): StoredFacts {
 		},
 	};
 }
-
 
 /**
  * Persist a validated external result while the run stays `running` for the

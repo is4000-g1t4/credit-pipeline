@@ -9,7 +9,7 @@ import {
 	nextModelBudgetCall,
 	stubContextRunner,
 	type ModelBudget,
-} from "../../src/context-agent.js";
+} from "../../src/agents/context-analyst/index.js";
 import { candidateSnapshot } from "../fixtures.js";
 
 function runInput() {

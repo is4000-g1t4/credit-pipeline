@@ -4,7 +4,7 @@
 // the JSON body, and returns `{ parsed, usage }`. Zod shapes and error
 // classes stay with each caller.
 import type OpenAI from "openai";
-import type { ModelOperation, Observability } from "./observability.js";
+import type { ModelOperation, Observability } from "../../observability.js";
 
 export interface ModelCallUsage {
 	inputTokens: number;

@@ -12,7 +12,7 @@ import {
 	toolTraceEntry,
 	validateCaseAssistantAnswer,
 	CASE_ASSISTANT_PROMPT_VERSION,
-} from "../../src/case-assistant.js";
+} from "../../src/agents/case-assistant/index.js";
 import { loadEnv } from "../../src/env.js";
 
 const caseFacts = {

@@ -16,9 +16,8 @@ vi.mock("../../src/lifecycle.js", async (importOriginal) => {
 	};
 });
 
-import { ContextToolError } from "../../src/context-tools.js";
+import { ContextToolError, stubContextRunner } from "../../src/agents/context-analyst/index.js";
 import { caseFacts, get, post, setupApp, successFixture, teardown, user } from "../helper.js";
-import { stubContextRunner } from "../../src/context-agent.js";
 
 process.env.LOG_LEVEL ??= "silent";
 

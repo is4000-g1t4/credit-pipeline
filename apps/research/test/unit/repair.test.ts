@@ -4,7 +4,7 @@ import {
 	createLlmLanguageRepair,
 	RepairRejectedError,
 	stubLanguageRepair,
-} from "../../src/repair.js";
+} from "../../src/agents/case-brief/index.js";
 import { fakeOpenAi, modelBrief, type RecordedCall } from "../fixtures.js";
 
 describe("createLlmLanguageRepair", () => {

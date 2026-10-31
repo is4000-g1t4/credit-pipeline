@@ -13,16 +13,16 @@
 // quality without inventing new customer data.
 import { readFileSync } from "node:fs";
 import { createDb } from "@credit/db/applications";
-import OpenAI from "openai";
-import { OPENROUTER_BASE_URL } from "../src/agent.js";
-import { createRealContextRunner } from "../src/context-agent.js";
-import { getObservability } from "../src/observability.js";
+import { createOpenRouterClient } from "@credit/agent-kit";
+import { createLogger } from "@credit/service-kit";
 import {
+	createRealContextRunner,
 	validateContextOutput,
 	CONTEXT_PROMPT_VERSION,
 	CONTEXT_VALIDATOR_VERSION,
 	type ContextValidationResult,
-} from "../src/context-validator.js";
+} from "../src/agents/context-analyst/index.js";
+import { getObservability } from "../src/observability.js";
 import { loadEnv, type AllowedModel, type ResearchEnv } from "../src/env.js";
 import { personas, type PersonaName } from "./fixtures.js";
 import {
@@ -538,9 +538,17 @@ if (selectedModels.length === 0) {
 	process.exit(1);
 }
 const env = loadEnv();
-const openai = new OpenAI({
+const logger = createLogger("research-eval");
+const openai = createOpenRouterClient({
 	apiKey: env.openrouterApiKey || "unconfigured",
-	baseURL: OPENROUTER_BASE_URL,
+	// Retry metadata only (attempt, reason, status, delay); never bodies.
+	retry: {
+		onRetry: ({ attempt, reason, status, delayMs }) =>
+			logger.warn(
+				{ agent: "context-analyst", attempt, reason, status, delayMs },
+				"model call retry",
+			),
+	},
 });
 const { sql } = createDb(process.env.APPLICATIONS_DATABASE_URL as string);
 const { sql: loansSql } = createDb(process.env.LOANS_DATABASE_URL as string);

@@ -1,7 +1,8 @@
 // Tavily search + extract only (§6.2, §9). No direct fetches anywhere in
 // this service. The server builds every query from a fixed template — the
 // model passes only (entity, category), never a free-form query.
-import { normalizePublishedAt } from "./validator.js";
+import { createRetryingFetch, type RetryOptions } from "@credit/agent-kit";
+import { normalizePublishedAt } from "./brief-schema.js";
 
 export const TAVILY_SEARCH_URL = "https://api.tavily.com/search";
 export const TAVILY_EXTRACT_URL = "https://api.tavily.com/extract";
@@ -57,10 +58,17 @@ export interface TavilyClient {
 
 export function createTavilyClient(opts: {
 	apiKey: string;
+	/** Raw transport (tests). Used as given: no retry wrapper is added. */
 	fetchImpl?: typeof fetch;
 	timeoutMs?: number;
+	/** Retry tuning for the default transport (metadata-only `onRetry`). */
+	retry?: RetryOptions;
 }): TavilyClient {
-	const fetchImpl = opts.fetchImpl ?? fetch;
+	// Transient Tavily failures (429/5xx, network, per-call timeout) retry
+	// with the shared policy. The per-call `timeoutMs` signal below is the
+	// caller's abort, so it bounds all attempts together; the status-to-error
+	// mapping further down is unchanged and sees only the final response.
+	const fetchImpl = opts.fetchImpl ?? createRetryingFetch(opts.retry ?? {});
 	const timeoutMs = opts.timeoutMs ?? 20_000;
 	const post = async (url: string, body: Record<string, unknown>): Promise<unknown> => {
 		let res: Response;

@@ -11,8 +11,11 @@ import {
 import { createLogger } from "@credit/service-kit";
 import { and, eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { ContextToolError, type CandidateSnapshot } from "../../src/context-tools.js";
-import { stubContextRunner } from "../../src/context-agent.js";
+import {
+	ContextToolError,
+	type CandidateSnapshot,
+	stubContextRunner,
+} from "../../src/agents/context-analyst/index.js";
 import {
 	claimContextRetry,
 	claimContextStage,
@@ -26,16 +29,18 @@ import {
 	reapContextStages,
 	type CaseFactsPayload,
 } from "../../src/lifecycle.js";
-import { stubAgentRunner } from "../../src/agent.js";
+import {
+	stubAgentRunner,
+	stubLanguageRepair,
+	stubSupportJudge,
+	TavilyError,
+} from "../../src/agents/case-brief/index.js";
 import {
 	handleReviewRequested,
 	type AutoTriggerDeps,
 	type ResearchContextResult,
 } from "../../src/auto-trigger.js";
 import { loadEnv } from "../../src/env.js";
-import { stubLanguageRepair } from "../../src/repair.js";
-import { stubSupportJudge } from "../../src/support.js";
-import { TavilyError } from "../../src/tavily.js";
 import {
 	caseFacts,
 	degradedObservability,

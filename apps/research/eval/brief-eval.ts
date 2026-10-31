@@ -7,23 +7,28 @@
 // are the model, prompt, and settings. `validateAndBuild` is the exact
 // production validation/persistence-shaped pipeline (schema, quote snapshots,
 // source tiers, entity match, support judge, language repair).
-import OpenAI from "openai";
+import { createOpenRouterClient } from "@credit/agent-kit";
+import { createLogger } from "@credit/service-kit";
 import { readFileSync } from "node:fs";
 import {
 	createRealRunner,
-	OPENROUTER_BASE_URL,
 	projectCostUsd,
 	type BriefUsage,
-} from "../src/agent.js";
+	createLlmLanguageRepair,
+	PROMPT_VERSION,
+	createLlmSupportJudge,
+	judgeWithRepair,
+	type TavilyClient,
+	type TavilyExtractHit,
+	type TavilySearchHit,
+	scanForbidden,
+	scanProtected,
+	type CaseEntity,
+} from "../src/agents/case-brief/index.js";
 import { loadEnv } from "../src/env.js";
-import { createLlmLanguageRepair } from "../src/repair.js";
 import { validateAndBuild, VALIDATOR_VERSION } from "../src/run.js";
-import { PROMPT_VERSION } from "../src/prompt.js";
 import { countsTowardTwoSourceRule, isIndependent, tierForHost } from "../src/sources.js";
-import { createLlmSupportJudge, judgeWithRepair } from "../src/support.js";
 import { getObservability } from "../src/observability.js";
-import type { TavilyClient, TavilyExtractHit, TavilySearchHit } from "../src/tavily.js";
-import { scanForbidden, scanProtected, type CaseEntity } from "../src/validator.js";
 import { arg, mean, p95, wilson, writeResults } from "./lib.js";
 
 const env = loadEnv();
@@ -33,9 +38,14 @@ const evalEnv = process.env.BRIEF_EVAL_MODEL
 	? { ...env, agentModel: process.env.BRIEF_EVAL_MODEL as typeof env.agentModel }
 	: env;
 const judgeModel = process.env.BRIEF_EVAL_JUDGE_MODEL || evalEnv.agentModel;
-const openai = new OpenAI({
+const logger = createLogger("research-eval");
+const openai = createOpenRouterClient({
 	apiKey: env.openrouterApiKey || "unconfigured",
-	baseURL: OPENROUTER_BASE_URL,
+	// Retry metadata only (attempt, reason, status, delay); never bodies.
+	retry: {
+		onRetry: ({ attempt, reason, status, delayMs }) =>
+			logger.warn({ agent: "case-brief", attempt, reason, status, delayMs }, "model call retry"),
+	},
 });
 const judge = createLlmSupportJudge(openai, judgeModel, { observability: getObservability() });
 const repair = createLlmLanguageRepair(openai, judgeModel, {

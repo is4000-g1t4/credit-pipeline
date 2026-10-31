@@ -1,7 +1,7 @@
 import type { CaseFacts } from "@credit/core";
 import type { Logger } from "@credit/service-kit";
 import type { Db } from "@credit/db/research";
-import type { ResearchEnv } from "./env.js";
+import type { ResearchEnv } from "../../env.js";
 import {
 	beginPolicyStage,
 	heartbeatPolicyStage,
@@ -10,7 +10,7 @@ import {
 	persistPolicySuccess,
 	skipPolicyStage,
 	StaleRunError,
-} from "./lifecycle.js";
+} from "../../lifecycle.js";
 import {
 	buildPolicyCaseContext,
 	createCaseTokenForInput,
@@ -19,8 +19,7 @@ import {
 	type PolicyRunnerEnv,
 	type PolicyStageStatus,
 } from "./policy-stage.js";
-
-export const POLICY_PROMPT_VERSION = "policy-v1";
+import { POLICY_PROMPT_VERSION } from "./agent.js";
 
 export interface PolicyExecResult {
 	status: PolicyStageStatus;

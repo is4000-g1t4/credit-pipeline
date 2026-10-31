@@ -5,7 +5,7 @@
 import type OpenAI from "openai";
 import { z } from "zod";
 import { callJsonModel } from "./model-call.js";
-import type { Observability } from "./observability.js";
+import type { Observability } from "../../observability.js";
 
 export type SupportVerdict = "supported" | "unsupported";
 

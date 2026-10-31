@@ -4,12 +4,14 @@
 // "not configured" → config_error).
 import type { Sql } from "postgres";
 import { describe, expect, it } from "vitest";
-import { stubAgentRunner } from "../../src/agent.js";
+import {
+	stubAgentRunner,
+	stubLanguageRepair,
+	stubSupportJudge,
+} from "../../src/agents/case-brief/index.js";
 import { checkConfig, createApp, createLogger } from "../../src/app.js";
-import { stubContextRunner } from "../../src/context-agent.js";
+import { stubContextRunner } from "../../src/agents/context-analyst/index.js";
 import { loadEnv } from "../../src/env.js";
-import { stubLanguageRepair } from "../../src/repair.js";
-import { stubSupportJudge } from "../../src/support.js";
 import { degradedObservability } from "../helper.js";
 
 process.env.LOG_LEVEL ??= "silent";

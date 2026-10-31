@@ -1,17 +1,16 @@
 // Pure validator tests: no DB, no network.
 import { describe, expect, it } from "vitest";
-import { projectCostUsd } from "../../src/agent.js";
-import { buildUserPrompt, promptHash, PROMPT_VERSION, SYSTEM_TEMPLATE } from "../../src/prompt.js";
-import { isIndependent, registrableDomain, tierForHost } from "../../src/sources.js";
 import {
+	projectCostUsd,
+	buildUserPrompt,
+	promptHash,
+	PROMPT_VERSION,
+	SYSTEM_TEMPLATE,
 	createLlmSupportJudge,
 	hasValidSupportSpan,
 	judgeWithRepair,
 	stubSupportJudge,
-} from "../../src/support.js";
-import { buildSearchQuery } from "../../src/tavily.js";
-import { validateFinalUrl } from "../../src/urls.js";
-import {
+	buildSearchQuery,
 	asOfDate,
 	assessEntityMatch,
 	buildSnapshot,
@@ -24,7 +23,9 @@ import {
 	scanProtected,
 	sha256Hex,
 	verifyQuote,
-} from "../../src/validator.js";
+} from "../../src/agents/case-brief/index.js";
+import { isIndependent, registrableDomain, tierForHost } from "../../src/sources.js";
+import { validateFinalUrl } from "../../src/urls.js";
 import { fakeOpenAi, type RecordedCall } from "../fixtures.js";
 
 describe("snapshot window", () => {

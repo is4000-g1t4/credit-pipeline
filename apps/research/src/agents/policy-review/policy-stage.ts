@@ -1,7 +1,13 @@
 import { signInternalHeaders } from "@credit/service-kit";
-import { z } from "zod";
 import type { CaseFacts } from "@credit/core";
-import { policyCaseContextSchema, signalRef, type PolicyCaseContext, type PolicyCaseSignal, signCaseToken } from "@credit/core";
+import { caseResponseSchema } from "./validator.js";
+import {
+	policyCaseContextSchema,
+	signalRef,
+	type PolicyCaseContext,
+	type PolicyCaseSignal,
+	signCaseToken,
+} from "@credit/core";
 
 export type PolicyStageStatus =
 	| "not_applicable"
@@ -83,8 +89,6 @@ export interface PolicyRunnerEnv {
 	autoTriggerServiceEmail: string;
 }
 
-const uuid = z.uuid();
-
 function amountBand(amountCents: number): PolicyCaseContext["amountBand"] {
 	if (amountCents < 1_000_000) return "lt_10k";
 	if (amountCents < 5_000_000) return "10k_50k";
@@ -158,44 +162,6 @@ export function buildPolicyCaseContext(input: PolicyStageInput): PolicyCaseConte
 		documentFindings,
 	});
 }
-
-const caseResponseSchema = z
-	.object({
-		status: z.enum(["succeeded", "no_match", "needs_policy_owner", "budget_exceeded", "failed"]),
-		summary: z.string().optional(),
-		items: z.array(
-			z.object({
-				ref: z.string(),
-				explanationSegments: z.array(
-					z.object({ text: z.string(), citationIndexes: z.array(z.number()) }),
-				),
-				citations: z.array(
-					z.object({
-						policyKey: z.string(),
-						policyVersionId: uuid,
-						sectionId: z.string(),
-						heading: z.string(),
-						version: z.string(),
-						effectiveFrom: z.string(),
-						effectiveTo: z.string().nullable(),
-						quote: z.string(),
-						drawerToken: z.string(),
-					}),
-				),
-				confidence: z.enum(["low", "medium", "high"]),
-			}),
-		),
-		limitations: z.array(z.string()),
-		usage: z
-			.object({
-				inputTokens: z.number().optional(),
-				outputTokens: z.number().optional(),
-				costUsd: z.number().optional(),
-				model: z.string().optional(),
-			})
-			.optional(),
-	})
-	.strict();
 
 export function createHttpPolicyRunner(
 	env: PolicyRunnerEnv,

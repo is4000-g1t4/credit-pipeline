@@ -3,11 +3,8 @@
 // verification → per-pair support judging → server-derived confidence.
 // Moved verbatim from run.ts; behavior and repair rules unchanged.
 import { randomUUID } from "node:crypto";
-import {
-	AgentTimeoutError,
-	ModelUnavailableError,
-	type FetchedEvidence,
-} from "./agent.js";
+import { AgentTimeoutError, ModelUnavailableError } from "./errors.js";
+import type { FetchedEvidence } from "./tool-runtime.js";
 import { judgeWithRepair, type JudgeUsage, type SupportJudge } from "./support.js";
 import { RepairRejectedError, type LanguageRepair, type RepairUsage } from "./repair.js";
 import {
@@ -25,15 +22,15 @@ import {
 	type Confidence,
 	type ModelBrief,
 	type ValidationScores,
-} from "./validator.js";
+} from "./brief-schema.js";
 import {
 	countsTowardTwoSourceRule,
 	isIndependent,
 	registrableDomain,
 	tierForHost,
 	type SourceTier,
-} from "./sources.js";
-import { validateFinalUrl } from "./urls.js";
+} from "../../sources.js";
+import { validateFinalUrl } from "../../urls.js";
 
 export class ValidationFailure extends Error {}
 

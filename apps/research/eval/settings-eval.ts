@@ -16,19 +16,25 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createDb } from "@credit/db/applications";
 import { ensureCase, type ContextCase } from "./fixtures.js";
-import OpenAI from "openai";
+import { createOpenRouterClient } from "@credit/agent-kit";
+import { createLogger } from "@credit/service-kit";
 import {
-	OPENROUTER_BASE_URL,
 	createRealRunner,
 	projectCostUsd,
 	type AgentResult,
-} from "../src/agent.js";
-import { createRealContextRunner, type ContextAgentRunner } from "../src/context-agent.js";
-import { validateContextOutput } from "../src/context-validator.js";
+	type TavilyClient,
+	locateQuote,
+	modelBriefSchema,
+	scanForbidden,
+	scanProtected,
+} from "../src/agents/case-brief/index.js";
+import {
+	createRealContextRunner,
+	type ContextAgentRunner,
+	validateContextOutput,
+} from "../src/agents/context-analyst/index.js";
 import { loadEnv } from "../src/env.js";
 import { tierForHost } from "../src/sources.js";
-import type { TavilyClient } from "../src/tavily.js";
-import { locateQuote, modelBriefSchema, scanForbidden, scanProtected } from "../src/validator.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = resolve(HERE, "results");
@@ -39,9 +45,14 @@ function arg(name: string): string | undefined {
 }
 
 const env = loadEnv();
-const openai = new OpenAI({
+const logger = createLogger("research-eval");
+const openai = createOpenRouterClient({
 	apiKey: env.openrouterApiKey || "unconfigured",
-	baseURL: OPENROUTER_BASE_URL,
+	// Retry metadata only (attempt, reason, status, delay); never bodies.
+	retry: {
+		onRetry: ({ attempt, reason, status, delayMs }) =>
+			logger.warn({ agent: "settings-eval", attempt, reason, status, delayMs }, "model call retry"),
+	},
 });
 
 interface ContextConfig {

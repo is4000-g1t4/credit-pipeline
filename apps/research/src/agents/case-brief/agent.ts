@@ -2,32 +2,42 @@
 // OpenAIChatCompletionsModel against OpenRouter; OpenAI tracing disabled.
 // Fake path: deterministic stub (tests + local runs without keys).
 import { randomUUID } from "node:crypto";
-import { Agent, OpenAIChatCompletionsModel, Runner, tool } from "@openai/agents";
-import OpenAI from "openai";
-import { z } from "zod";
+import { defineAgent } from "@credit/agent-kit";
+import { Agent, OpenAIChatCompletionsModel, Runner } from "@openai/agents";
+import type OpenAI from "openai";
 import { readRunUsage, type AgentsOpenAIClient } from "@credit/agent-observability/openai-agents";
-import type { ResearchEnv } from "./env.js";
-import { getObservability, type Observability } from "./observability.js";
-import { buildUserPrompt, AGENT_VERSION, SYSTEM_TEMPLATE, type PromptCaseFacts } from "./prompt.js";
+import type { ResearchEnv } from "../../env.js";
+import { getObservability, type Observability } from "../../observability.js";
+import { modelBriefSchema } from "./brief-schema.js";
+import { VALIDATOR_VERSION } from "./brief-validation.js";
+import { AgentTimeoutError, ModelUnavailableError } from "./errors.js";
 import {
-	buildSearchQuery,
-	TavilyError,
-	type QueryEntity,
-	type SearchCategory,
-	type TavilyClient,
-} from "./tavily.js";
-import { validateFinalUrl } from "./urls.js";
-import { modelBriefSchema } from "./validator.js";
+	buildUserPrompt,
+	AGENT_VERSION,
+	PROMPT_VERSION,
+	SYSTEM_TEMPLATE,
+	type PromptCaseFacts,
+} from "./prompt.js";
+import { buildSearchQuery, TavilyError, type QueryEntity, type TavilyClient } from "./tavily.js";
+import { createFetchSourceTool } from "./tools/fetch-source.js";
+import { createSearchSourcesTool } from "./tools/search-sources.js";
+import type { BriefToolRuntime, FetchedEvidence, TavilySearchHitLite } from "./tool-runtime.js";
+import { validateFinalUrl } from "../../urls.js";
 
-export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+export type { FetchedEvidence } from "./tool-runtime.js";
+export { AgentTimeoutError, ModelUnavailableError } from "./errors.js";
 
-export interface FetchedEvidence {
-	requestedUrl: string;
-	returnedUrl: string;
-	title: string | null;
-	searchPublishedDate: string | null;
-	rawContent: string;
-}
+export const definition = defineAgent({
+	name: "case-brief",
+	owner: "research",
+	description:
+		"Neutral, cited external research brief on the applicant for the officer; advisory only.",
+	model: { env: "AGENT_MODEL", default: "openai/gpt-6.1-sol" },
+	flags: ["AGENTS_ENABLED"],
+	versions: { prompt: PROMPT_VERSION, agent: AGENT_VERSION, validator: VALIDATOR_VERSION },
+	tools: ["search_sources", "fetch_source"],
+	execution: "temporal",
+});
 
 export interface BriefUsage {
 	inputTokens: number;
@@ -57,9 +67,6 @@ export interface AgentRunner {
 	}): Promise<AgentResult>;
 }
 
-export class ModelUnavailableError extends Error {}
-export class AgentTimeoutError extends Error {}
-
 // ponytail: ceiling rates ~1000x above the POC's ~$0.00016/run; a generous
 // backstop only. Replace with billed usage if OpenRouter exposes it.
 const COST_CEILING_PER_MTOK = { input: 5, output: 10 };
@@ -70,15 +77,6 @@ export function projectCostUsd(inputTokens: number, outputTokens: number): numbe
 		(outputTokens / 1_000_000) * COST_CEILING_PER_MTOK.output
 	);
 }
-
-const searchParams = z
-	.object({
-		entity: z.string().min(1).max(200),
-		category: z.enum(["adverse_media", "reputation", "registry", "market", "other"]),
-	})
-	.strict();
-
-const fetchParams = z.object({ url: z.string().min(1).max(2000) }).strict();
 
 export function createRealRunner(opts: {
 	env: ResearchEnv;
@@ -98,20 +96,33 @@ export function createRealRunner(opts: {
 				env.agentModel,
 			);
 
-			let toolCalls = 0;
-			let searches = 0;
-			let extracts = 0;
+			// Per-run state shared with the tool files (./tools). The Runner
+			// hooks do not surface tool spans for these calls, so each is
+			// tracked directly: name/timing/errors only, never arguments or
+			// results. Untracked without a run id.
+			const counters = { toolCalls: 0, searches: 0, extracts: 0 };
 			const fetched: FetchedEvidence[] = [];
 			const seen = new Map<string, TavilySearchHitLite>();
-
-			// The Runner hooks do not surface tool spans for these calls, so
-			// each is tracked directly: name/timing/errors only, never
-			// arguments or results. Untracked without a run id.
 			const trackTool = <T>(
 				toolName: "search_sources" | "fetch_source",
 				fn: () => Promise<T>,
 			): Promise<T> =>
 				observability.trackToolExecution({ runId, toolName, model: env.agentModel }, fn);
+			const rt: BriefToolRuntime = {
+				env,
+				tavily,
+				entity: input.entity,
+				asOfDate: input.asOfDate,
+				fetched,
+				seen,
+				counters,
+				budget: (): void => {
+					counters.toolCalls += 1;
+					if (counters.toolCalls > env.agentMaxToolCalls)
+						throw new TavilyError("tool budget exceeded");
+				},
+				track: trackTool,
+			};
 
 			// Mandatory two-category preflight. The model is instructed to run
 			// these searches, but it sometimes returns an empty brief without
@@ -129,7 +140,7 @@ export function createRealRunner(opts: {
 			for (const category of ["adverse_media", "registry"] as const) {
 				if (input.signal.aborted) break;
 				try {
-					searches += 1;
+					counters.searches += 1;
 					const hits = await trackTool("search_sources", () =>
 						tavily.search(
 							buildSearchQuery(
@@ -144,7 +155,7 @@ export function createRealRunner(opts: {
 						),
 					);
 					for (const hit of hits) seen.set(hit.url, hit);
-					if (input.signal.aborted || extracts >= maxPreflightExtracts) continue;
+					if (input.signal.aborted || counters.extracts >= maxPreflightExtracts) continue;
 					const candidate = hits[0];
 					if (!candidate) continue;
 					const verdict = validateFinalUrl(candidate.url);
@@ -154,7 +165,7 @@ export function createRealRunner(opts: {
 					);
 					const page = extracted[0];
 					if (!page?.rawContent) continue;
-					extracts += 1;
+					counters.extracts += 1;
 					fetched.push({
 						requestedUrl: candidate.url,
 						returnedUrl: page.url,
@@ -174,116 +185,8 @@ export function createRealRunner(opts: {
 				}
 			}
 
-			const budget = (): void => {
-				toolCalls += 1;
-				if (toolCalls > env.agentMaxToolCalls) throw new TavilyError("tool budget exceeded");
-			};
-
-			const searchTool = tool({
-				name: "search_sources",
-				description:
-					"Search approved public sources for an entity and category. Returns up to N results with url, title, publication date, and the extracted text of the top result when available.",
-				parameters: searchParams,
-				execute: async ({ entity, category }: { entity: string; category: SearchCategory }) =>
-					trackTool("search_sources", async () => {
-						budget();
-						if (!env.tavilyApiKey) throw new TavilyError("search is not configured");
-						searches += 1;
-						// The server builds the query from a fixed template; the
-						// model supplies only the entity name and category.
-						const name = entity.slice(0, 200);
-						const query = buildSearchQuery(
-							{
-								name,
-								city: input.entity.city,
-								registrationNumber: input.entity.registrationNumber,
-							},
-							category,
-						);
-						const hits = await tavily.search(query, {
-							maxResults: env.maxSources,
-							endDate: input.asOfDate,
-						});
-						for (const hit of hits) seen.set(hit.url, hit);
-						const results: Array<{
-							url: string;
-							title: string | null;
-							publishedDate: string | null;
-							content?: string;
-						}> = hits.map((h) => ({
-							url: h.url,
-							title: h.title,
-							publishedDate: h.publishedDate,
-						}));
-						// The model consistently stops after titles. Auto-extract the
-						// top unused result so search results become usable evidence
-						// within the same extract budget; failures stay non-fatal.
-						if (extracts < Math.min(env.maxFetches, 2)) {
-							const candidate = hits.find(
-								(h) => !fetched.some((f) => f.requestedUrl === h.url || f.returnedUrl === h.url),
-							);
-							if (candidate) {
-								const verdict = validateFinalUrl(candidate.url);
-								if (verdict.ok) {
-									try {
-										const extracted = await tavily.extract([verdict.finalUrl]);
-										const page = extracted[0];
-										if (page?.rawContent) {
-											extracts += 1;
-											fetched.push({
-												requestedUrl: candidate.url,
-												returnedUrl: page.url,
-												title: candidate.title,
-												searchPublishedDate: candidate.publishedDate,
-												rawContent: page.rawContent,
-											});
-											const row = results.find((r) => r.url === candidate.url);
-											if (row) row.content = page.rawContent.slice(0, 2500);
-										}
-									} catch {
-										// A failed extract must not fail the search; the
-										// model can still call fetch_source explicitly.
-									}
-								}
-							}
-						}
-						return JSON.stringify(
-							results
-								.filter((row) => typeof row.content === "string" && row.content.length > 0)
-								.slice(0, 1),
-						);
-					}),
-			});
-
-			const fetchTool = tool({
-				name: "fetch_source",
-				description:
-					"Extract the text of one search-result URL via the extraction service. Returns the page text.",
-				parameters: fetchParams,
-				execute: async ({ url }: { url: string }) =>
-					trackTool("fetch_source", async () => {
-						const cached = fetched.find((f) => f.requestedUrl === url || f.returnedUrl === url);
-						if (cached) return cached.rawContent.slice(0, 2500);
-						budget();
-						if (!env.tavilyApiKey) throw new TavilyError("extract is not configured");
-						if (extracts >= env.maxFetches) throw new TavilyError("extract budget exceeded");
-						const verdict = validateFinalUrl(url);
-						if (!verdict.ok) throw new TavilyError(`unsafe URL: ${verdict.error}`);
-						extracts += 1;
-						const hits = await tavily.extract([verdict.finalUrl]);
-						const hit = hits[0];
-						if (!hit || !hit.rawContent) throw new TavilyError("extract returned no content");
-						const prior = seen.get(url);
-						fetched.push({
-							requestedUrl: url,
-							returnedUrl: hit.url,
-							title: prior?.title ?? null,
-							searchPublishedDate: prior?.publishedDate ?? null,
-							rawContent: hit.rawContent,
-						});
-						return hit.rawContent.slice(0, 8000);
-					}),
-			});
+			const searchTool = createSearchSourcesTool(rt);
+			const fetchTool = createFetchSourceTool(rt);
 
 			const preflightBlock =
 				preflight.length === 0
@@ -365,9 +268,9 @@ export function createRealRunner(opts: {
 					fetched,
 					usage: {
 						...usage,
-						toolCalls,
-						searches,
-						extracts,
+						toolCalls: counters.toolCalls,
+						searches: counters.searches,
+						extracts: counters.extracts,
 					},
 					model: env.agentModel,
 				};
@@ -378,11 +281,6 @@ export function createRealRunner(opts: {
 			}
 		},
 	};
-}
-
-interface TavilySearchHitLite {
-	title: string | null;
-	publishedDate: string | null;
 }
 
 /** Deterministic test double: canned brief + fetched evidence, no network. */

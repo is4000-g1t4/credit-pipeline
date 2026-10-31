@@ -1,27 +1,20 @@
 // T18 context stage (§3.5): consent probe → claim → model → validate (one
 // repair) → budget → persist. Moved verbatim from run.ts; error mapping and
 // stage sequencing unchanged. External outcome is untouched here.
-import {
-	agentFindings,
-	agentRuns,
-	withTx,
-	type Db,
-} from "@credit/db/research";
+import { agentFindings, agentRuns, withTx, type Db } from "@credit/db/research";
 import { signInternalHeaders, type Logger } from "@credit/service-kit";
 import { eq, sql } from "drizzle-orm";
-import { projectCostUsd } from "./agent.js";
+import { projectCostUsd, asOfDate } from "./agents/case-brief/index.js";
 import { auditResearch } from "./access.js";
 import {
 	ContextTimeoutError,
 	ContextUnavailableError,
 	type ContextAgentRunner,
-} from "./context-agent.js";
-import { ContextToolError } from "./context-tools.js";
-import {
+	ContextToolError,
 	CONTEXT_PROMPT_VERSION,
 	CONTEXT_VALIDATOR_VERSION,
 	validateContextOutput,
-} from "./context-validator.js";
+} from "./agents/context-analyst/index.js";
 import type { ResearchEnv } from "./env.js";
 import {
 	claimContextStage,
@@ -34,7 +27,6 @@ import {
 	StaleRunError,
 } from "./lifecycle.js";
 import type { Observability } from "./observability.js";
-import { asOfDate } from "./validator.js";
 
 export class ContextValidationFailure extends Error {}
 export class CostExceededError extends Error {}

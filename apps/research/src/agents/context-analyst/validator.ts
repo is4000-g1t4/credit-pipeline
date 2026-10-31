@@ -12,12 +12,11 @@
 // narrative is ignored.
 import { z } from "zod";
 import { SIGNAL_TYPES } from "@credit/core";
-import { isUuid } from "./ids.js";
-import { scanForbidden, scanProtected } from "./validator.js";
-import type { CandidateSnapshot } from "./context-tools.js";
+import { isUuid } from "../../ids.js";
+import { scanForbidden, scanProtected } from "../case-brief/brief-schema.js";
+import type { CandidateSnapshot } from "./tool-context.js";
 
 export const CONTEXT_VALIDATOR_VERSION = "context-v4";
-export const CONTEXT_PROMPT_VERSION = "context-v5";
 
 const signalTypeSchema = z.enum(SIGNAL_TYPES);
 

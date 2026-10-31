@@ -20,11 +20,13 @@ import {
 	type ResearchContextResult,
 } from "../../src/auto-trigger.js";
 import { grantResearchAccess } from "../../src/access.js";
-import { stubAgentRunner } from "../../src/agent.js";
+import {
+	stubAgentRunner,
+	stubLanguageRepair,
+	stubSupportJudge,
+} from "../../src/agents/case-brief/index.js";
 import { loadEnv } from "../../src/env.js";
 import { ensureRun, resumeQueuedRuns, type CaseFactsPayload } from "../../src/lifecycle.js";
-import { stubLanguageRepair } from "../../src/repair.js";
-import { stubSupportJudge } from "../../src/support.js";
 import {
 	caseFacts,
 	degradedObservability,

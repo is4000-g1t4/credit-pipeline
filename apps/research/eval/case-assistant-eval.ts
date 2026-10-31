@@ -10,13 +10,14 @@
 // evidence token is present, and no forbidden token or applicant PII leaked.
 // There is no judge column.
 import { createDb } from "@credit/db/applications";
-import OpenAI from "openai";
-import { OPENROUTER_BASE_URL } from "../src/agent.js";
+import { createOpenRouterClient } from "@credit/agent-kit";
+import { createLogger } from "@credit/service-kit";
+import type OpenAI from "openai";
 import {
 	CASE_ASSISTANT_AGENT_VERSION,
 	CASE_ASSISTANT_PROMPT_VERSION,
 	createRealCaseAssistantRunner,
-} from "../src/case-assistant.js";
+} from "../src/agents/case-assistant/index.js";
 import { loadEnv, type AllowedModel, type ResearchEnv } from "../src/env.js";
 import { getObservability } from "../src/observability.js";
 import {
@@ -475,9 +476,17 @@ if (selectedModels.length === 0) {
 	process.exit(1);
 }
 const env = loadEnv();
-const openai = new OpenAI({
+const logger = createLogger("research-eval");
+const openai = createOpenRouterClient({
 	apiKey: env.openrouterApiKey || "unconfigured",
-	baseURL: OPENROUTER_BASE_URL,
+	// Retry metadata only (attempt, reason, status, delay); never bodies.
+	retry: {
+		onRetry: ({ attempt, reason, status, delayMs }) =>
+			logger.warn(
+				{ agent: "case-assistant", attempt, reason, status, delayMs },
+				"model call retry",
+			),
+	},
 });
 const { sql } = createDb(process.env.APPLICATIONS_DATABASE_URL as string);
 const { sql: loansSql } = createDb(process.env.LOANS_DATABASE_URL as string);

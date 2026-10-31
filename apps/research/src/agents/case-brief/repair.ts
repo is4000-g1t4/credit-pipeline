@@ -9,8 +9,8 @@
 import type OpenAI from "openai";
 import { z } from "zod";
 import { callJsonModel } from "./model-call.js";
-import type { Observability } from "./observability.js";
-import { modelBriefSchema, type ModelBrief } from "./validator.js";
+import type { Observability } from "../../observability.js";
+import { modelBriefSchema, type ModelBrief } from "./brief-schema.js";
 
 export interface RepairUsage {
 	inputTokens: number;

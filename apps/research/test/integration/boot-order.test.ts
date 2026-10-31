@@ -21,10 +21,12 @@ vi.mock("../../src/lifecycle.js", async (importOriginal) => {
 });
 
 import { bootRecovery } from "../../src/auto-trigger.js";
-import { stubAgentRunner } from "../../src/agent.js";
+import {
+	stubAgentRunner,
+	stubLanguageRepair,
+	stubSupportJudge,
+} from "../../src/agents/case-brief/index.js";
 import { createLogger } from "@credit/service-kit";
-import { stubLanguageRepair } from "../../src/repair.js";
-import { stubSupportJudge } from "../../src/support.js";
 import { degradedObservability, successFixture } from "../helper.js";
 
 describe("bootRecovery order", () => {

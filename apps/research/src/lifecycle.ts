@@ -6,7 +6,7 @@ import { agentRuns, contextSignals, withTx, type Db, type Tx } from "@credit/db/
 import { HttpError } from "@credit/service-kit";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { ResearchEnv } from "./env.js";
-import { AGENT_VERSION, promptHash, PROMPT_VERSION } from "./prompt.js";
+import { AGENT_VERSION, promptHash, PROMPT_VERSION } from "./agents/case-brief/prompt.js";
 import { caseFactsSchema, type CaseFacts } from "@credit/core";
 import { isUuid } from "./ids.js";
 

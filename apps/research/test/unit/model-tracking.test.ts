@@ -71,8 +71,11 @@ import {
 	type ModelCallOpts,
 	type Observability,
 } from "../../src/observability.js";
-import { createLlmLanguageRepair } from "../../src/repair.js";
-import { createLlmSupportJudge, judgeWithRepair } from "../../src/support.js";
+import {
+	createLlmLanguageRepair,
+	createLlmSupportJudge,
+	judgeWithRepair,
+} from "../../src/agents/case-brief/index.js";
 import { fakeOpenAi, modelBrief } from "../fixtures.js";
 
 const MODEL = "deepseek/deepseek-v3.2-exp";

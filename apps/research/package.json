@@ -16,6 +16,7 @@
 		"eval:case-assistant": "tsx eval/case-assistant-eval.ts"
 	},
 	"dependencies": {
+		"@credit/agent-kit": "workspace:*",
 		"@credit/agent-observability": "workspace:*",
 		"@credit/core": "workspace:*",
 		"@credit/db": "workspace:*",

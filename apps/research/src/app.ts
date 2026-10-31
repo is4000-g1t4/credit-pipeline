@@ -7,16 +7,14 @@ import {
 	type Logger,
 	type ServiceApp,
 } from "@credit/service-kit";
-import type { AgentRunner } from "./agent.js";
-import type { CaseAssistantRunner } from "./case-assistant.js";
+import type { AgentRunner, LanguageRepair, SupportJudge } from "./agents/case-brief/index.js";
+import type { CaseAssistantRunner } from "./agents/case-assistant/index.js";
 import { getAutoTriggerStatus } from "./auto-trigger.js";
-import type { ContextAgentRunner } from "./context-agent.js";
+import type { ContextAgentRunner } from "./agents/context-analyst/index.js";
 import type { ResearchEnv } from "./env.js";
 import { getObservability, type Observability } from "./observability.js";
-import type { LanguageRepair } from "./repair.js";
 import { researchRoutes } from "./routes.js";
-import type { SupportJudge } from "./support.js";
-import type { PolicyRunner } from "./policy-stage.js";
+import type { PolicyRunner } from "./agents/policy-review/index.js";
 
 export interface ResearchDeps {
 	db: Db;

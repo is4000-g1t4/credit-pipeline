@@ -14,15 +14,18 @@ dotenv.config({
 import { randomUUID } from "node:crypto";
 import { createDb } from "@credit/db/research";
 import { createLogger, signInternalHeaders } from "@credit/service-kit";
-import { stubAgentRunner, type FetchedEvidence } from "../src/agent.js";
+import {
+	stubAgentRunner,
+	type FetchedEvidence,
+	stubLanguageRepair,
+	stubSupportJudge,
+} from "../src/agents/case-brief/index.js";
 import { createApp } from "../src/app.js";
-import { stubCaseAssistantRunner } from "../src/case-assistant.js";
-import { stubContextRunner } from "../src/context-agent.js";
+import { stubCaseAssistantRunner } from "../src/agents/case-assistant/index.js";
+import { stubContextRunner } from "../src/agents/context-analyst/index.js";
 import { loadEnv } from "../src/env.js";
 import { getRun, type CaseFactsPayload } from "../src/lifecycle.js";
 import { resetObservability, type Observability } from "../src/observability.js";
-import { stubLanguageRepair } from "../src/repair.js";
-import { stubSupportJudge } from "../src/support.js";
 
 process.env.LOG_LEVEL ??= "silent";
 

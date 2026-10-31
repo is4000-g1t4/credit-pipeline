@@ -2,10 +2,12 @@
 // survives with no judge call) and one reject (bad citation drops the
 // finding without judging another passage's quote).
 import { describe, expect, it } from "vitest";
-import { validateAndBuild } from "../../src/brief-validation.js";
-import type { LanguageRepair } from "../../src/repair.js";
-import type { SupportJudge } from "../../src/support.js";
-import type { CaseEntity } from "../../src/validator.js";
+import {
+	validateAndBuild,
+	type LanguageRepair,
+	type SupportJudge,
+	type CaseEntity,
+} from "../../src/agents/case-brief/index.js";
 import { modelBrief } from "../fixtures.js";
 
 const ENTITY: CaseEntity = {

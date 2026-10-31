@@ -180,11 +180,11 @@ The validators are already the best deterministic graders we have:
   PII / URL scans, all-or-nothing. Invalid output becomes
   `needs_policy_owner`; `apps/policy/src/routes.ts` logs the validation
   errors but does not persist the raw output.
-- `apps/research/src/validator.ts` — external brief schema, quote
+- `apps/research/src/agents/case-brief/validator.ts` — external brief schema, quote
   verification, forbidden/protected scans.
 - `apps/research/src/run.ts` — entity match, source independence, as-of
   checks, repair/judge, persistence. `executeRun` is the production path.
-- `apps/research/src/context-validator.ts` — candidate tuple matching, no
+- `apps/research/src/agents/context-analyst/validator.ts` — candidate tuple matching, no
   invented numbers, server-composed prose, `dropped` reasons.
 
 Existing evals:

@@ -8,7 +8,7 @@ import {
 	createContextTools,
 	ContextToolError,
 	isContextToolName,
-} from "../../src/context-tools.js";
+} from "../../src/agents/context-analyst/index.js";
 import { loadEnv } from "../../src/env.js";
 
 const APP_ID = "11111111-1111-4111-8111-111111111111";
