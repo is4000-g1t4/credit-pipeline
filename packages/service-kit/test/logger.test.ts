@@ -80,6 +80,79 @@ describe("logger redaction", () => {
 		expect(typeof last().err.stack).toBe("string");
 	});
 
+	it("redacts sensitive own props on logged errors, keeping the std err shape", () => {
+		const { logger, last } = capture();
+		class UpstreamError extends Error {}
+		const err = Object.assign(new UpstreamError("upstream failed"), {
+			body: '{"email":"a@b.co"}',
+			email: "a@b.co",
+			status: 502,
+			details: { nationalId: "123-45-6789", reason: "bad" },
+		});
+		logger.error({ err }, "failed");
+		const out = last().err;
+		expect(out.type).toBe("UpstreamError");
+		expect(out.message).toBe("upstream failed");
+		expect(typeof out.stack).toBe("string");
+		expect(out.status).toBe(502);
+		expect(out.body).toBe("[REDACTED]");
+		expect(out.email).toBe("[REDACTED]");
+		expect(out.details.nationalId).toBe("[REDACTED]");
+		expect(out.details.reason).toBe("bad");
+		// caller's error is untouched
+		expect(err.email).toBe("a@b.co");
+	});
+
+	it("redacts errors logged directly and through their cause chain", () => {
+		const { logger, last } = capture();
+		const inner = Object.assign(new Error("inner"), { phone: "555-0100", code: "E1" });
+		const outer = new Error("outer", { cause: inner });
+		logger.error(outer);
+		const out = last().err;
+		expect(out.type).toBe("Error");
+		expect(out.message).toBe("outer");
+		expect(out.cause.message).toBe("inner");
+		expect(out.cause.code).toBe("E1");
+		expect(out.cause.phone).toBe("[REDACTED]");
+		expect(last().msg).toBe("outer");
+	});
+
+	it("survives error cause cycles", () => {
+		const { logger, last } = capture();
+		const err = new Error("loop") as Error & { cause?: unknown };
+		err.cause = err;
+		logger.error({ err });
+		expect(last().err.cause).toBe("[Circular]");
+	});
+
+	it("redacts class instances and keeps Date/Buffer values", () => {
+		const { logger, last } = capture();
+		class Applicant {
+			constructor(
+				public id: string,
+				public email: string,
+			) {}
+		}
+		const at = new Date("2026-01-02T03:04:05.000Z");
+		logger.info({ applicant: new Applicant("a1", "a@b.co"), at, raw: Buffer.from("hi") });
+		expect(last().applicant).toEqual({ id: "a1", email: "[REDACTED]" });
+		expect(last().at).toBe("2026-01-02T03:04:05.000Z");
+		expect(last().raw).toEqual({ type: "Buffer", data: [104, 105] });
+	});
+
+	it("redacts child logger bindings", () => {
+		const { logger, last } = capture();
+		const child = logger.child({ email: "a@b.co", runId: "r1", nested: { phone: "555" } });
+		child.info("hello");
+		expect(last().email).toBe("[REDACTED]");
+		expect(last().nested.phone).toBe("[REDACTED]");
+		expect(last().runId).toBe("r1");
+		expect(last().service).toBe("test");
+		child.child({ email: "c@d.co" }).info("grandchild");
+		expect(last().email).toBe("[REDACTED]");
+		expect(last().runId).toBe("r1");
+	});
+
 	it("still redacts request cookie/authorization headers", () => {
 		const { logger, last } = capture();
 		logger.info({ req: { headers: { cookie: "s=1", authorization: "Bearer x", host: "h" } } });
