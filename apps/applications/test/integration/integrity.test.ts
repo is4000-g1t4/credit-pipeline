@@ -17,13 +17,24 @@ import {
 	fraudReviews,
 	generatedArtifacts,
 } from "@credit/db/applications";
+import { createAgentRunStarter, type AgentRunStarter } from "@credit/agent-kit/temporal/client";
+import { createAgentWorker } from "@credit/agent-kit/temporal/worker";
+import type { AgentRunInput } from "@credit/agent-kit/temporal/types";
 import { createLogger } from "@credit/service-kit";
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ExtractionResult, OcrAdapter } from "../../src/documents/ocr.js";
 import type { ScannerAdapter } from "../../src/documents/scanner.js";
 import { runDocumentRetention } from "../../src/documents/retention.js";
-import { drainIntegrityRuns } from "../../src/integrity/runs.js";
+import { createIntegrityActivities } from "../../src/integrity/activities.js";
+import {
+	claimIntegrityRunById,
+	createIntegrityRun,
+	executeIntegrityRun,
+	failIntegrityRun,
+	INTEGRITY_RUN_KIND,
+} from "../../src/integrity/runs.js";
+import { sweepQueuedIntegrityRuns } from "../../src/integrity/sweep.js";
 import type { IntegrityAgentRunner, IntegrityConfig } from "../../src/integrity/types.js";
 import {
 	createUser,
@@ -161,6 +172,17 @@ const fakeOcr: OcrAdapter = {
 	},
 };
 
+// Delegating starter: tests swap `startImpl` (record, throw, or real Temporal).
+const startCalls: AgentRunInput[] = [];
+let startImpl: AgentRunStarter["start"] = async (input) => {
+	startCalls.push(input);
+	return { started: true, workflowId: `${input.kind}:${input.runId}:${input.token}` };
+};
+const testStarter: AgentRunStarter = {
+	start: (input) => startImpl(input),
+	close: async () => {},
+};
+
 let ctx: TestContext;
 let storageDir: string;
 let runner = fakeRunner();
@@ -180,6 +202,7 @@ function setupIntegrity(overrides: Partial<IntegrityConfig> = {}): TestContext {
 		integrity: {
 			config: { ...integrityConfig, ...overrides },
 			agentRunner: runner,
+			starter: testStarter,
 		},
 	});
 }
@@ -190,7 +213,15 @@ function runDeps(context: TestContext, config: Partial<IntegrityConfig> = {}) {
 		config: { ...integrityConfig, ...config },
 		runner,
 		logger: createLogger("integrity-test"),
+		starter: testStarter,
 	};
+}
+
+/** Claims and executes one specific run, as the agent-worker activity does. */
+async function executeRun(context: TestContext, runId: string): Promise<void> {
+	const claim = await claimIntegrityRunById(runDeps(context), runId, 1);
+	if (claim.kind !== "claimed") throw new Error(`run not claimable: ${claim.kind}`);
+	await executeIntegrityRun(runDeps(context), claim.row);
 }
 
 async function newCase(): Promise<{ appId: string; owner: TestUser; officer: TestUser }> {
@@ -308,7 +339,7 @@ describe("document integrity", () => {
 		const queued = await api(officer, "POST", `/api/applications/${appId}/integrity/analyses`);
 		expect(queued.status).toBe(202);
 		const { run } = (await queued.json()) as { run: { id: string } };
-		await drainIntegrityRuns(runDeps(ctx));
+		await executeRun(ctx, run.id);
 		await waitRun(run.id);
 		expect(calls).toContain("analysis");
 
@@ -361,7 +392,12 @@ describe("document integrity", () => {
 		const { review } = (await flagged.json()) as { review: { id: string; version: number } };
 
 		// The combined extraction+brief run is queued by the flag route.
-		await drainIntegrityRuns(runDeps(ctx));
+		const [queuedRun] = await ctx.db
+			.select()
+			.from(documentIntegrityRuns)
+			.where(eq(documentIntegrityRuns.fraudReviewId, review.id));
+		expect(queuedRun?.status).toBe("queued");
+		await executeRun(ctx, queuedRun!.id);
 		for (let i = 0; i < 40; i++) {
 			const [row] = await ctx.db
 				.select()
@@ -559,5 +595,281 @@ describe("document integrity", () => {
 		});
 		expect(panel.status).toBe(404);
 		await off.sql.end();
+	});
+});
+
+// --- Run dispatch: claim by id, fencing, cleanup, sweep, API start ---------
+
+async function queueAnalysis(
+	officer: TestUser,
+	appId: string,
+): Promise<{ status: number; runId: string }> {
+	const res = await api(officer, "POST", `/api/applications/${appId}/integrity/analyses`);
+	const body = (await res.json()) as { run: { id: string } };
+	return { status: res.status, runId: body.run.id };
+}
+
+async function analysisCase(): Promise<{ appId: string; officer: TestUser; runId: string }> {
+	const { appId, officer } = await newCase();
+	expect((await upload(officer, appId, randomUUID())).status).toBe(201);
+	const { status, runId } = await queueAnalysis(officer, appId);
+	expect(status).toBe(202);
+	return { appId, officer, runId };
+}
+
+async function runRow(runId: string) {
+	const [row] = await ctx.db
+		.select()
+		.from(documentIntegrityRuns)
+		.where(eq(documentIntegrityRuns.id, runId));
+	return row!;
+}
+
+async function waitTerminal(runId: string, timeoutMs = 30_000) {
+	const deadline = Date.now() + timeoutMs;
+	for (;;) {
+		const row = await runRow(runId);
+		if (["succeeded", "failed", "cancelled"].includes(row.status)) return row;
+		if (Date.now() > deadline) throw new Error(`run stuck in ${row.status}`);
+		await new Promise((resolve) => setTimeout(resolve, 100));
+	}
+}
+
+describe("integrity run dispatch", () => {
+	it("starts the workflow after insert, once, and tolerates Temporal being down", async () => {
+		startCalls.length = 0;
+		const { appId, officer, runId } = await analysisCase();
+		expect(startCalls).toHaveLength(1);
+		expect(startCalls[0]).toMatchObject({
+			kind: INTEGRITY_RUN_KIND,
+			runId,
+			token: runId,
+			timeoutMs: 30_000,
+		});
+		expect((await runRow(runId)).status).toBe("queued");
+
+		// A replayed request does not start a second workflow.
+		const replay = await queueAnalysis(officer, appId);
+		expect(replay).toEqual({ status: 200, runId });
+		expect(startCalls).toHaveLength(1);
+
+		// Temporal down: the request still succeeds and the row stays queued.
+		const previous = startImpl;
+		startImpl = async () => {
+			throw new Error("temporal unavailable");
+		};
+		try {
+			const down = await newCase();
+			expect((await upload(down.officer, down.appId, randomUUID())).status).toBe(201);
+			const queued = await queueAnalysis(down.officer, down.appId);
+			expect(queued.status).toBe(202);
+			expect((await runRow(queued.runId)).status).toBe("queued");
+		} finally {
+			startImpl = previous;
+		}
+	});
+
+	it("claims by id: attempt 1 takes queued, attempt 2 re-leases and fences the zombie", async () => {
+		const { runId } = await analysisCase();
+		const deps = runDeps(ctx);
+		const first = await claimIntegrityRunById(deps, runId, 1);
+		if (first.kind !== "claimed") throw new Error("expected claim");
+		expect(first.row.attempts).toBe(1);
+		// A second attempt-1 claim finds a running row and does nothing.
+		expect(await claimIntegrityRunById(deps, runId, 1)).toEqual({
+			kind: "skip",
+			status: "running",
+		});
+
+		const second = await claimIntegrityRunById(deps, runId, 2);
+		if (second.kind !== "claimed") throw new Error("expected re-lease");
+		expect(second.row.attempts).toBe(2);
+		expect(second.row.lease_token).not.toBe(first.row.lease_token);
+
+		// The dead attempt's late write is rejected by the lease-token guard.
+		await executeIntegrityRun(deps, first.row);
+		const afterZombie = await runRow(runId);
+		expect(afterZombie.status).toBe("running");
+		expect(afterZombie.leaseToken).toBe(second.row.lease_token);
+		const zombieCandidates = await ctx.db
+			.select()
+			.from(documentFieldCandidates)
+			.where(eq(documentFieldCandidates.runId, runId));
+		expect(zombieCandidates).toHaveLength(0);
+
+		await executeIntegrityRun(deps, second.row);
+		expect((await runRow(runId)).status).toBe("succeeded");
+	});
+
+	it("respects max_attempts and reports missing or terminal rows", async () => {
+		const { runId } = await analysisCase();
+		const deps = runDeps(ctx);
+		expect((await claimIntegrityRunById(deps, runId, 1)).kind).toBe("claimed");
+		expect((await claimIntegrityRunById(deps, runId, 2)).kind).toBe("claimed");
+		expect((await runRow(runId)).attempts).toBe(2);
+		expect((await claimIntegrityRunById(deps, runId, 3)).kind).toBe("exhausted");
+		const exhausted = await runRow(runId);
+		expect(exhausted).toMatchObject({ status: "failed", errorCode: "LEASE_EXPIRED", attempts: 2 });
+		expect(exhausted.leaseToken).toBeNull();
+		// Terminal now: nothing to claim.
+		expect(await claimIntegrityRunById(deps, runId, 2)).toEqual({
+			kind: "skip",
+			status: "failed",
+		});
+		expect(await claimIntegrityRunById(deps, randomUUID(), 1)).toEqual({ kind: "missing" });
+	});
+
+	it("cancels with FEATURE_DISABLED when the flag is off at execution time", async () => {
+		const { runId } = await analysisCase();
+		const deps = runDeps(ctx, { enabled: false });
+		const claim = await claimIntegrityRunById(deps, runId, 1);
+		if (claim.kind !== "claimed") throw new Error("expected claim");
+		await executeIntegrityRun(deps, claim.row);
+		expect(await runRow(runId)).toMatchObject({
+			status: "cancelled",
+			errorCode: "FEATURE_DISABLED",
+		});
+	});
+
+	it("failAgentRun fails an active run idempotently and never touches terminal rows", async () => {
+		const { runId } = await analysisCase();
+		const deps = runDeps(ctx);
+		const activities = createIntegrityActivities(deps);
+		const input: AgentRunInput = {
+			kind: INTEGRITY_RUN_KIND,
+			runId,
+			token: runId,
+			timeoutMs: 30_000,
+		};
+		await claimIntegrityRunById(deps, runId, 1);
+		await activities.failAgentRun(input, { code: "timeout", message: "activity timeout" });
+		const failed = await runRow(runId);
+		expect(failed).toMatchObject({ status: "failed", errorCode: "LEASE_EXPIRED" });
+		expect(failed.leaseToken).toBeNull();
+		expect(failed.finishedAt).not.toBeNull();
+
+		await activities.failAgentRun(input, { code: "error", message: "again" });
+		const again = await runRow(runId);
+		expect(again.errorCode).toBe("LEASE_EXPIRED");
+		expect(again.finishedAt).toEqual(failed.finishedAt);
+
+		const done = await analysisCase();
+		const claim = await claimIntegrityRunById(deps, done.runId, 1);
+		if (claim.kind !== "claimed") throw new Error("expected claim");
+		await executeIntegrityRun(deps, claim.row);
+		expect(await failIntegrityRun(deps, done.runId, "INTERNAL_ERROR", "late")).toBe(false);
+		expect((await runRow(done.runId)).status).toBe("succeeded");
+	});
+
+	it("sweep restarts stale queued rows and fails overdue ones", async () => {
+		const { appId } = await newCase();
+		const deps = runDeps(ctx);
+		const make = async (ageMs: number) =>
+			(
+				await createIntegrityRun(deps, {
+					applicationId: appId,
+					inputHash: randomUUID(),
+					documentSha256: [],
+					requestedBy: randomUUID(),
+					now: new Date(Date.now() - ageMs),
+				})
+			).run.id;
+		const fresh = await make(1_000);
+		const stale = await make(20_000);
+		const overdue = await make(10 * 60_000);
+		startCalls.length = 0;
+
+		const result = await sweepQueuedIntegrityRuns(deps, { dispatch: true });
+		expect(result.failed).toBeGreaterThanOrEqual(1);
+		const started = startCalls.map((call) => call.runId);
+		expect(started).toContain(stale);
+		expect(started).not.toContain(fresh);
+		expect(started).not.toContain(overdue);
+		expect((await runRow(overdue)).errorCode).toBe("LEASE_EXPIRED");
+		expect((await runRow(overdue)).status).toBe("failed");
+		expect((await runRow(stale)).status).toBe("queued");
+		expect((await runRow(fresh)).status).toBe("queued");
+
+		// Re-issued starts are idempotent for the same row (same workflow id).
+		startCalls.length = 0;
+		await sweepQueuedIntegrityRuns(deps, { dispatch: true });
+		expect(startCalls.map((call) => call.runId)).toContain(stale);
+	});
+});
+
+// --- Real Temporal: the actual activities on a unique task queue ------------
+
+describe("integrity runs on Temporal", () => {
+	const address = process.env.TEMPORAL_ADDRESS ?? "localhost:7233";
+	const taskQueue = `applications-agents-test-${randomUUID()}`;
+	let crashUntilAttempt = 0;
+	let shutdown: (() => Promise<void>) | null = null;
+	let previousStart: AgentRunStarter["start"];
+	const realStarter = createAgentRunStarter({ address, taskQueue });
+
+	beforeAll(async () => {
+		const activities = createIntegrityActivities(runDeps(ctx), {
+			afterClaim(_claimed, attempt) {
+				if (attempt <= crashUntilAttempt) throw new Error("worker crashed after claim");
+			},
+		});
+		const { worker, connection } = await createAgentWorker({ address, taskQueue, activities });
+		const running = worker.run();
+		shutdown = async () => {
+			worker.shutdown();
+			await running;
+			await connection.close();
+		};
+		previousStart = startImpl;
+		startImpl = (input) => realStarter.start(input);
+	});
+
+	afterAll(async () => {
+		startImpl = previousStart;
+		await shutdown?.();
+		await realStarter.close();
+	});
+
+	it("runs a queued analysis to success", async () => {
+		crashUntilAttempt = 0;
+		const { runId } = await analysisCase();
+		const row = await waitTerminal(runId);
+		expect(row).toMatchObject({ status: "succeeded", attempts: 1 });
+	});
+
+	it("re-leases after an attempt-1 crash and succeeds on attempt 2", async () => {
+		crashUntilAttempt = 1;
+		try {
+			const { runId } = await analysisCase();
+			const row = await waitTerminal(runId);
+			expect(row).toMatchObject({ status: "succeeded", attempts: 2 });
+		} finally {
+			crashUntilAttempt = 0;
+		}
+	});
+
+	it("fails the run through failAgentRun once every attempt crashed", async () => {
+		crashUntilAttempt = 99;
+		try {
+			const { appId } = await newCase();
+			const { run } = await createIntegrityRun(runDeps(ctx), {
+				applicationId: appId,
+				inputHash: randomUUID(),
+				documentSha256: [],
+				requestedBy: randomUUID(),
+			});
+			await realStarter.start({
+				kind: INTEGRITY_RUN_KIND,
+				runId: run.id,
+				token: run.id,
+				timeoutMs: 30_000,
+				maxAttempts: 2,
+			});
+			const row = await waitTerminal(run.id, 45_000);
+			expect(row).toMatchObject({ status: "failed", errorCode: "INTERNAL_ERROR", attempts: 2 });
+			expect(row.leaseToken).toBeNull();
+		} finally {
+			crashUntilAttempt = 0;
+		}
 	});
 });

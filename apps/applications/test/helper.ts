@@ -67,6 +67,7 @@ export interface SetupOpts {
 		config?: Partial<IntegrityConfig>;
 		agentRunner?: IntegrityAgentRunner;
 		now?: () => Date;
+		starter?: import("@credit/agent-kit/temporal/client").AgentRunStarter | null;
 	};
 }
 

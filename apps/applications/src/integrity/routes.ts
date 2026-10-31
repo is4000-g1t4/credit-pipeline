@@ -37,7 +37,7 @@ import {
 	requireIntegrityCaseAccess,
 	type IntegrityActor,
 } from "./access.js";
-import { analysisInputHash, createIntegrityRun, drainIntegrityRunsSafely } from "./runs.js";
+import { analysisInputHash, createIntegrityRun, startIntegrityRun } from "./runs.js";
 import { queueIntegrityRunForReview, reevaluateIntegrity } from "./evaluate.js";
 import {
 	buildResolutionDraft,
@@ -126,6 +126,7 @@ function runDeps(deps: IntegrityRouteDeps) {
 		runner: deps.runtime.agentRunner,
 		logger: deps.logger,
 		now: deps.runtime.now,
+		starter: deps.runtime.starter,
 	};
 }
 
@@ -281,7 +282,7 @@ export function integrityRoutes(deps: IntegrityRouteDeps): ServiceApp {
 				agentVersion: config.agentVersion,
 			},
 		});
-		void drainIntegrityRunsSafely(runDeps(deps));
+		if (!replayed) await startIntegrityRun(runDeps(deps), run);
 		return c.json({ run: runTraceDto(run) }, replayed ? 200 : 202);
 	});
 

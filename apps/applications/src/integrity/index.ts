@@ -15,9 +15,11 @@ export {
 export {
 	analysisInputHash,
 	createIntegrityRun,
-	drainIntegrityRuns,
-	drainIntegrityRunsSafely,
-	startIntegrityWorker,
+	claimIntegrityRunById,
+	executeIntegrityRun,
+	failIntegrityRun,
+	INTEGRITY_RUN_KIND,
+	startIntegrityRun,
 	type IntegrityRunDeps,
 } from "./runs.js";
 export {

@@ -30,13 +30,13 @@ Non-negotiables:
 
 ## Boundary: deterministic vs AI
 
-| Layer                              | Owns                                                                           | Never                                                       |
-| ---------------------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------- |
-| Fingerprint (`fingerprint.ts`)     | sha/size/MIME/pages, known-software tokens, edit codes, `unknown` fallback     | Text, names, inference                                      |
-| Signals (`signals.ts`)             | Severity + `shouldFlag` threshold                                              | Proof (every signal is "signal, not proof")                 |
-| Validators (`validator.ts`)        | Exact quote offsets, format/date/amount rules, deterministic pair confirmation | Model prose (explanations are server-composed from quotes)  |
-| Agent (`agents/integrity/`)        | Candidate extraction + consistency proposals + optional advisory brief         | New ids, values, parties, amounts; confirmed-fraud language |
-| Assigned officer                   | Confirm candidates, escalate mismatches, resolve reviews                       | — (only a human resolves)                                   |
+| Layer                          | Owns                                                                           | Never                                                       |
+| ------------------------------ | ------------------------------------------------------------------------------ | ----------------------------------------------------------- |
+| Fingerprint (`fingerprint.ts`) | sha/size/MIME/pages, known-software tokens, edit codes, `unknown` fallback     | Text, names, inference                                      |
+| Signals (`signals.ts`)         | Severity + `shouldFlag` threshold                                              | Proof (every signal is "signal, not proof")                 |
+| Validators (`validator.ts`)    | Exact quote offsets, format/date/amount rules, deterministic pair confirmation | Model prose (explanations are server-composed from quotes)  |
+| Agent (`agents/integrity/`)    | Candidate extraction + consistency proposals + optional advisory brief         | New ids, values, parties, amounts; confirmed-fraud language |
+| Assigned officer               | Confirm candidates, escalate mismatches, resolve reviews                       | — (only a human resolves)                                   |
 
 ## EN-04 fingerprint and provenance
 
@@ -138,16 +138,22 @@ evaluation merges signal codes/document refs and keeps the higher severity.
 
 ## AI extraction, consistency, and brief (one run)
 
-There is one agent run type and one queue. `POST .../integrity/analyses` on an
+There is one agent run type, dispatched through Temporal. `POST .../integrity/analyses` on an
 unflagged case queues an extraction-only run; an automatic run for an open
 review also drafts the advisory brief. Both are `document_analysis` rows (the
 legacy `document_triage` enum value is unused) and both use the same model,
 prompt family, validation loop, and trace. The route returns `202` for a new
 run, `200` for a replay on identical `inputHash`, `429 RETRY_LIMIT` past
 `DOCUMENT_INTEGRITY_MAX_RUNS_PER_HASH` (default 3 per hash per 24h), and `503
-INTEGRITY_AGENT_UNAVAILABLE` when the agent is off or keyless. The worker leases
-one row (`FOR UPDATE SKIP LOCKED`, `max_attempts` 2) and finalizes under the
-lease token.
+INTEGRITY_AGENT_UNAVAILABLE` when the agent is off or keyless. After the
+queued row commits, the API starts an `integrity.run` workflow on the
+`applications-agents` queue (workflow id `integrity.run:<runId>:<runId>`). The
+Node `agent-worker` claims that run by id, bumps `attempts` (`max_attempts` 2)
+and finalizes under a lease token. If the start fails the row stays `queued`;
+the worker sweep (every 15s) re-issues starts for rows older than 10s and fails
+rows queued longer than lease + 5 min (`LEASE_EXPIRED`). Business failures
+finalize the row as `failed` and are not retried; a crash or lost heartbeat
+makes Temporal retry, and attempt 2 re-leases the row with a new token.
 
 The agent starts with `list_documents` and `list_signals`; it can call
 `search_pages`/`get_page`, and—only when a brief is requested—also
@@ -211,7 +217,7 @@ applied to this internal brief because it contains common words such as
 "single"; PII and cross-customer checks remain active.
 
 Async/lease flow: trigger on flag create/evaluate/escalate or evidence change
-→ one run claimed by the worker → `runIntegrityAnalysis` re-checks review
+→ one run claimed by the agent worker → `runIntegrityAnalysis` re-checks review
 active + version, runs the agent, then commits candidates, brief, run, and
 review link in one fenced transaction (review still active at the same
 version; worker still owns the lease). An officer resolving mid-run cancels the

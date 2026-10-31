@@ -58,6 +58,8 @@ export interface ApplicationsDeps {
 		config?: Partial<IntegrityConfig>;
 		agentRunner?: IntegrityAgentRunner;
 		now?: () => Date;
+		/** Temporal run starter; absent in tests that do not dispatch. */
+		starter?: import("@credit/agent-kit/temporal/client").AgentRunStarter | null;
 	};
 }
 
@@ -147,6 +149,7 @@ export function createApp(deps: ApplicationsDeps): ServiceApp {
 		documentsEnabled: documentConfig.featureEnabled,
 		agentRunner: deps.integrity?.agentRunner ?? null,
 		now: deps.integrity?.now ?? (() => new Date()),
+		starter: deps.integrity?.starter ?? null,
 	};
 	const integrityDeps = {
 		db: deps.db,
@@ -154,6 +157,7 @@ export function createApp(deps: ApplicationsDeps): ServiceApp {
 		runner: integrityRuntime.agentRunner,
 		logger: deps.logger,
 		now: integrityRuntime.now,
+		starter: integrityRuntime.starter,
 	};
 	routes.route(
 		"/",

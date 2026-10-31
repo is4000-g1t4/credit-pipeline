@@ -1,15 +1,16 @@
+import { createAgentRunStarter } from "@credit/agent-kit/temporal/client";
+import { AGENT_TASK_QUEUES } from "@credit/agent-kit/temporal/types";
 import { createDb } from "@credit/db";
 import { createLogger, createTemporalGateway } from "@credit/service-kit";
 import { assertDemoBoot } from "@credit/service-kit";
 import { createApp } from "./app.js";
-import { createAgentsIntegrityRunner } from "./agents/integrity/index.js";
 import {
 	createAgentsPolicyExceptionRunner,
 	createHttpPolicyClient,
 } from "./agents/policy-exception/index.js";
 import { createAgentsMemoRunner, startArtifactRetention } from "./assist/index.js";
 import { applicationObservability } from "./observability.js";
-import { startIntegrityWorker } from "./integrity/runs.js";
+import { createIntegrityRunnerFromEnv, integrityDispatchEnabled } from "./integrity/wiring.js";
 import { configFromEnv } from "./documents/index.js";
 import { startDocumentMaintenance } from "./documents/retention.js";
 import { loadEnv } from "./env.js";
@@ -30,20 +31,16 @@ assertDemoBoot({
 	customerStorageDir: env.customer.storageDir,
 });
 
-const integrityRunner =
-	env.integrity.agentEnabled && env.integrity.openRouterApiKey
-		? createAgentsIntegrityRunner({
-				apiKey: env.integrity.openRouterApiKey,
-				baseUrl: env.integrity.openRouterBaseUrl,
-				model: env.integrity.model,
-				agentVersion: env.integrity.agentVersion,
-				promptVersion: env.integrity.promptVersion,
-				maxToolCalls: env.integrity.maxToolCalls,
-				maxOutputTokens: env.integrity.maxOutputTokens,
-				timeoutMs: env.integrity.timeoutMs,
-				logger,
-			})
-		: null;
+const integrityRunner = createIntegrityRunnerFromEnv(env, logger);
+// Integrity runs execute in the Node agent worker (src/agent-worker.ts); the
+// API only starts their Temporal workflows, and only when a model runner exists
+// and a feature flag is on.
+const integrityStarter = integrityDispatchEnabled(env, integrityRunner)
+	? createAgentRunStarter({
+			address: env.temporalAddress,
+			taskQueue: AGENT_TASK_QUEUES.applications,
+		})
+	: null;
 
 // Start the OTel providers before any agent client is used. Metadata-only;
 // a missing endpoint/token degrades observability, never the service.
@@ -112,7 +109,7 @@ const app = createApp({
 				}
 			: {}),
 	},
-	integrity: { agentRunner: integrityRunner ?? undefined },
+	integrity: { agentRunner: integrityRunner ?? undefined, starter: integrityStarter },
 });
 
 // D1b document maintenance (SPEC-t01-t02 §6): boot + daily sweep of
@@ -143,18 +140,6 @@ startArtifactRetention({
 	logger,
 	fraudReviewEnabled: env.integrity.fraudReviewEnabled,
 });
-
-// E2 queued integrity runs. Start only when a model runner exists; a disabled
-// feature can still recover a stale row but cannot claim new work without a
-// runner.
-if (integrityRunner && (env.integrity.enabled || env.integrity.fraudReviewEnabled)) {
-	startIntegrityWorker({
-		db,
-		config: env.integrity,
-		runner: integrityRunner,
-		logger,
-	});
-}
 
 // Bun entry: `bun --watch --env-file=../../.env src/server.ts` (see
 // package.json dev). Bun serves the default export; `app.ts` stays a pure

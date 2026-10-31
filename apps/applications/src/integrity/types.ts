@@ -74,6 +74,8 @@ export interface IntegrityRuntime {
 	documentsEnabled: boolean;
 	agentRunner: IntegrityAgentRunner | null;
 	now: () => Date;
+	/** Starts the Temporal workflow for a queued run (null = no dispatch). */
+	starter?: import("@credit/agent-kit/temporal/client").AgentRunStarter | null;
 }
 
 export interface IntegrityPage {

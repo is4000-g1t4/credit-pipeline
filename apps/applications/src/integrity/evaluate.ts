@@ -14,7 +14,7 @@ import { createFraudReview, findActiveFraudReview } from "./fraud.js";
 import {
 	analysisInputHash,
 	createIntegrityRun,
-	drainIntegrityRunsSafely,
+	startIntegrityRun,
 	type IntegrityRunDeps,
 } from "./runs.js";
 import { loadIntegritySource } from "./source.js";
@@ -158,7 +158,7 @@ async function synchronizeRun(
 			},
 		});
 	});
-	void drainIntegrityRunsSafely(deps);
+	if (!queued.replayed) await startIntegrityRun(deps, queued.run);
 }
 
 /** Manual/created-item path: queue the combined run for an active item. */

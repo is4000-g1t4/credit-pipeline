@@ -1,16 +1,19 @@
-// Single async integrity run queue.
+// Integrity run rows + per-run execution.
 //
 // One run per case/evidence hash. The same agent call produces extraction and
 // consistency candidates; for a flagged case it also produces the advisory
-// brief. A short claim transaction leases one row with FOR UPDATE SKIP LOCKED;
-// the model call runs outside that transaction and a second transaction
-// finalizes under the lease token. Attempts increment at claim, so a crash
-// cannot buy unbounded retries.
+// brief. Dispatch is Temporal (see ./activities.ts): the API inserts a queued
+// row and starts a workflow; the agent worker claims THAT row by id (a short
+// UPDATE that mints a lease token), runs the model outside any transaction,
+// and finalizes under the lease token. Attempts increment at every claim, so a
+// crash cannot buy unbounded retries, and a re-lease on retry rotates the
+// token so a zombie attempt's writes are fenced out.
 
 import { randomUUID } from "node:crypto";
 import { documentIntegrityRuns, fraudReviews, type Db } from "@credit/db/applications";
 import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { hashCanonical } from "@credit/core";
+import type { AgentRunStarter } from "@credit/agent-kit/temporal/client";
 import { HttpError, writeAudit, type Logger } from "@credit/service-kit";
 import { runIntegrityAnalysis } from "../agents/integrity/index.js";
 import { lockApplication } from "../documents/access.js";
@@ -29,6 +32,16 @@ export interface IntegrityRunDeps {
 	runner: IntegrityAgentRunner | null;
 	logger: Logger;
 	now?: () => Date;
+	/** API side only: starts the run's Temporal workflow. Null/absent = no dispatch. */
+	starter?: AgentRunStarter | null;
+}
+
+/** Dispatch key shared by the API starter and the agent worker activities. */
+export const INTEGRITY_RUN_KIND = "integrity.run";
+
+/** One attempt's lease: the model deadline plus headroom (min 30s). */
+export function integrityLeaseSeconds(config: Pick<IntegrityConfig, "timeoutMs">): number {
+	return Math.max(30, Math.ceil((config.timeoutMs * 1.5) / 1000));
 }
 
 type RunRow = typeof documentIntegrityRuns.$inferSelect;
@@ -191,7 +204,7 @@ export async function createIntegrityRun(
 	return { run: winner, replayed: true };
 }
 
-interface ClaimedRow {
+export interface ClaimedRow {
 	id: string;
 	application_id: string;
 	input_hash: string;
@@ -217,17 +230,31 @@ function mapClaimed(row: Record<string, unknown>): ClaimedRow {
 	};
 }
 
-export async function claimIntegrityRun(deps: IntegrityRunDeps): Promise<ClaimedRow | null> {
+export type ClaimResult =
+	| { kind: "claimed"; row: ClaimedRow }
+	| { kind: "missing" }
+	/** Terminal, or running under another live attempt: nothing to do. */
+	| { kind: "skip"; status: string }
+	/** Active but out of attempts: finalized failed. */
+	| { kind: "exhausted" };
+
+/**
+ * Claims one specific run for a Temporal activity attempt.
+ *
+ * Attempt 1 claims a `queued` row. Attempt > 1 force re-leases a `running`
+ * row (Temporal says the previous attempt is dead) or a still-`queued` one
+ * (the previous attempt died before claiming) with a fresh lease token, so a
+ * zombie's lease-token-guarded writes fail. Every claim increments attempts
+ * and respects max_attempts.
+ */
+export async function claimIntegrityRunById(
+	deps: IntegrityRunDeps,
+	runId: string,
+	attempt: number,
+): Promise<ClaimResult> {
 	const { db, config } = deps;
-	await db.execute(sql`
-		UPDATE document_integrity_runs
-		SET status = 'failed', error_code = 'LEASE_EXPIRED', finished_at = now()
-		WHERE feature = 'document_analysis'
-			AND status = 'running'
-			AND lease_expires_at < now()
-			AND attempts >= max_attempts
-	`);
-	const leaseSeconds = Math.max(30, Math.ceil((config.timeoutMs * 1.5) / 1000));
+	const leaseSeconds = integrityLeaseSeconds(config);
+	const statuses = attempt > 1 ? sql`('queued','running')` : sql`('queued')`;
 	const result = await db.execute(sql`
 		UPDATE document_integrity_runs
 		SET status = 'running',
@@ -235,23 +262,109 @@ export async function claimIntegrityRun(deps: IntegrityRunDeps): Promise<Claimed
 			lease_token = ${randomUUID()}::uuid,
 			lease_expires_at = now() + (${leaseSeconds} * interval '1 second'),
 			started_at = COALESCE(started_at, now())
-		WHERE id = (
-			SELECT id FROM document_integrity_runs
-			WHERE feature = 'document_analysis'
-			AND (
-				status = 'queued'
-				OR (status = 'running' AND lease_expires_at < now())
-				OR (status = 'running' AND lease_expires_at IS NULL)
-			)
+		WHERE id = ${runId}::uuid
+			AND feature = 'document_analysis'
+			AND status IN ${statuses}
 			AND attempts < max_attempts
-			ORDER BY created_at
-			LIMIT 1
-			FOR UPDATE SKIP LOCKED
-		)
 		RETURNING *
 	`);
 	const rows = result as unknown as Array<Record<string, unknown>>;
-	return rows[0] ? mapClaimed(rows[0]) : null;
+	if (rows[0]) return { kind: "claimed", row: mapClaimed(rows[0]) };
+	const [row] = await db
+		.select({
+			status: documentIntegrityRuns.status,
+			attempts: documentIntegrityRuns.attempts,
+			maxAttempts: documentIntegrityRuns.maxAttempts,
+		})
+		.from(documentIntegrityRuns)
+		.where(
+			and(
+				eq(documentIntegrityRuns.id, runId),
+				eq(documentIntegrityRuns.feature, "document_analysis"),
+			),
+		);
+	if (!row) return { kind: "missing" };
+	const active = row.status === "queued" || row.status === "running";
+	if (active && row.attempts >= row.maxAttempts) {
+		await failIntegrityRun(deps, runId, "LEASE_EXPIRED", "attempts exhausted");
+		return { kind: "exhausted" };
+	}
+	return { kind: "skip", status: row.status };
+}
+
+/**
+ * Marks a still-active (queued/running) run failed and clears its lease.
+ * Idempotent; never touches a terminal row. Returns whether it changed one.
+ */
+export async function failIntegrityRun(
+	deps: Pick<IntegrityRunDeps, "db" | "logger">,
+	runId: string,
+	errorCode: string,
+	detail: string,
+): Promise<boolean> {
+	const [failed] = await deps.db
+		.update(documentIntegrityRuns)
+		.set({
+			status: "failed",
+			errorCode,
+			errorDetail: `${errorCode}: ${detail}`.slice(0, 200),
+			finishedAt: new Date(),
+			leaseToken: null,
+			leaseExpiresAt: null,
+		})
+		.where(
+			and(
+				eq(documentIntegrityRuns.id, runId),
+				eq(documentIntegrityRuns.feature, "document_analysis"),
+				sql`${documentIntegrityRuns.status} IN ('queued','running')`,
+			),
+		)
+		.returning({
+			id: documentIntegrityRuns.id,
+			applicationId: documentIntegrityRuns.applicationId,
+		});
+	if (!failed) return false;
+	await deps.db
+		.transaction(async (tx) => {
+			await writeAudit(tx, {
+				applicationId: failed.applicationId,
+				actor: "system:integrity",
+				action: "integrity.analysis_failed",
+				entity: "document_integrity_run",
+				payload: { feature: "document_integrity", runId, errorCode },
+			});
+		})
+		.catch(() => {});
+	deps.logger.warn(
+		{ runId, applicationId: failed.applicationId, errorCode },
+		"integrity run failed by cleanup",
+	);
+	return true;
+}
+
+/**
+ * Starts the run's Temporal workflow after its row committed. Never throws:
+ * on failure the row stays queued and the agent-worker sweep re-issues the
+ * (idempotent) start. Metadata-only logging.
+ */
+export async function startIntegrityRun(
+	deps: IntegrityRunDeps,
+	run: { id: string },
+): Promise<void> {
+	if (!deps.starter) return;
+	try {
+		await deps.starter.start({
+			kind: INTEGRITY_RUN_KIND,
+			runId: run.id,
+			token: run.id,
+			timeoutMs: integrityLeaseSeconds(deps.config) * 1000,
+		});
+	} catch (err) {
+		deps.logger.warn(
+			{ runId: run.id, error: err instanceof Error ? err.name : "unknown" },
+			"integrity run start failed; left queued for sweep",
+		);
+	}
 }
 
 class ReviewClosed extends Error {
@@ -350,9 +463,12 @@ async function persistBrief(
 	});
 }
 
-export async function drainIntegrityRuns(deps: IntegrityRunDeps): Promise<void> {
-	const claimed = await claimIntegrityRun(deps);
-	if (!claimed) return;
+/** Runs one claimed row to a terminal state (business failures finalize here). */
+export async function executeIntegrityRun(
+	deps: IntegrityRunDeps,
+	claimed: ClaimedRow,
+	opts: { signal?: AbortSignal } = {},
+): Promise<void> {
 	if (!deps.config.enabled) {
 		await deps.db
 			.update(documentIntegrityRuns)
@@ -412,6 +528,7 @@ export async function drainIntegrityRuns(deps: IntegrityRunDeps): Promise<void> 
 			evidenceHash: claimed.input_hash,
 			generateBrief,
 			conversationId: claimed.id,
+			signal: opts.signal,
 		});
 		const persisted = await deps.db.transaction(async (tx) => {
 			await lockApplication(tx, claimed.application_id, 5_000);
@@ -523,14 +640,14 @@ export async function drainIntegrityRuns(deps: IntegrityRunDeps): Promise<void> 
 				: err instanceof HttpError
 					? err.code
 					: "INTERNAL_ERROR";
-		const retry = claimed.attempts < claimed.max_attempts;
+		// Business failure: finalize. Temporal retries only crashes, never this.
 		const fenced = await deps.db
 			.update(documentIntegrityRuns)
 			.set({
-				status: retry ? "queued" : "failed",
+				status: "failed",
 				errorCode,
 				errorDetail: `${errorCode}: ${Date.now() - started}ms`.slice(0, 200),
-				finishedAt: retry ? null : new Date(),
+				finishedAt: new Date(),
 			})
 			.where(
 				and(
@@ -588,30 +705,4 @@ export async function drainIntegrityRuns(deps: IntegrityRunDeps): Promise<void> 
 		},
 		"integrity run finished",
 	);
-}
-
-let draining = false;
-
-export async function drainIntegrityRunsSafely(deps: IntegrityRunDeps): Promise<void> {
-	if (draining) return;
-	draining = true;
-	try {
-		await drainIntegrityRuns(deps);
-	} catch (err) {
-		deps.logger.warn(
-			{ error: err instanceof Error ? err.message : "unknown" },
-			"integrity drain failed",
-		);
-	} finally {
-		draining = false;
-	}
-}
-
-export function startIntegrityWorker(deps: IntegrityRunDeps, intervalMs = 10_000): () => void {
-	void drainIntegrityRunsSafely(deps);
-	const timer = setInterval(() => {
-		void drainIntegrityRunsSafely(deps);
-	}, intervalMs);
-	timer.unref?.();
-	return () => clearInterval(timer);
 }
