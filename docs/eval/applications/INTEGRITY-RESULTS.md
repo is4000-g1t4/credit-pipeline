@@ -3,7 +3,7 @@
 Feature: E2 document integrity + EN-04/EN-05 (`apps/applications`).
 Archetype: explain/classify + structured extraction, with an advisory brief
 produced by the same agent call. Production path:
-`apps/applications/src/integrity/agent.ts` (`runIntegrityAnalysis`, one combined
+`apps/applications/src/agents/integrity/orchestrator.ts` (`runIntegrityAnalysis`, one combined
 run; `runIntegrityTriage` is a thin eval/test wrapper), the real OpenRouter
 runner, and the shared validator. No HTTP/DB/auth in the runner (fixture
 sources).

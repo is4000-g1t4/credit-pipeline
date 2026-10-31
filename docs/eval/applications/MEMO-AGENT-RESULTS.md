@@ -10,7 +10,7 @@ Dataset: 8 code-defined cases in `apps/applications/eval/memo-agent-eval.ts`
 (synthetic application/evidence fixtures, scripted `MemoAgentRunner`). The
 runner uses the production orchestrator (`runMemoAgent`) and the production
 shared validator (`validateGeneratedText`); production swaps in the
-`@openai/agents` runner (`memo-agent-sdk.ts`).
+`@openai/agents` runner (`agents/memo-writer/agent.ts`).
 
 | Metric             | Result                      |
 | ------------------ | --------------------------- |

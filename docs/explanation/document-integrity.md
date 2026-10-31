@@ -34,8 +34,8 @@ Non-negotiables:
 | ---------------------------------- | ------------------------------------------------------------------------------ | ----------------------------------------------------------- |
 | Fingerprint (`fingerprint.ts`)     | sha/size/MIME/pages, known-software tokens, edit codes, `unknown` fallback     | Text, names, inference                                      |
 | Signals (`signals.ts`)             | Severity + `shouldFlag` threshold                                              | Proof (every signal is "signal, not proof")                 |
-| Validators (`validators.ts`)       | Exact quote offsets, format/date/amount rules, deterministic pair confirmation | Model prose (explanations are server-composed from quotes)  |
-| Agent (`agent.ts`, `agent-sdk.ts`) | Candidate extraction + consistency proposals + optional advisory brief         | New ids, values, parties, amounts; confirmed-fraud language |
+| Validators (`validator.ts`)        | Exact quote offsets, format/date/amount rules, deterministic pair confirmation | Model prose (explanations are server-composed from quotes)  |
+| Agent (`agents/integrity/`)        | Candidate extraction + consistency proposals + optional advisory brief         | New ids, values, parties, amounts; confirmed-fraud language |
 | Assigned officer                   | Confirm candidates, escalate mismatches, resolve reviews                       | — (only a human resolves)                                   |
 
 ## EN-04 fingerprint and provenance
@@ -163,7 +163,7 @@ Bounds: `DOCUMENT_INTEGRITY_MAX_STEPS` (24), `DOCUMENT_INTEGRITY_MAX_TOOL_CALLS`
 is required (`NO_TOOL_USE` otherwise). One repair attempt with codes/paths
 only; persistent failure throws `INVALID_OUTPUT` and persists nothing.
 
-Validation (`validators.ts`):
+Validation (`agents/integrity/validator.ts`):
 
 - Candidates: quote must be an exact code-point excerpt of the cited page
   (`quote_not_found` → rejected); value must appear in its quote; per-field

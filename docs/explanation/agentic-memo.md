@@ -40,7 +40,7 @@ contract and error codes), [configuration](../reference/configuration.md)
 
 ## Bounded tool loop
 
-The agent writer (`memo-agent.ts` orchestrator + `memo-agent-sdk.ts`) uses
+The agent writer (`orchestrator.ts` + `agent.ts` in `apps/applications/src/agents/memo-writer/`) uses
 `@openai/agents` (`Agent` + `OpenAIChatCompletionsModel` + `Runner` + `tool`)
 over the pure evidence tools. The orchestrator owns bounds, validation,
 grounding, repair, and the trace; the SDK runner produces one draft per run.
