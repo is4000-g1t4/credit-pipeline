@@ -46,7 +46,8 @@ export function assertProductionSecrets(
 	secrets: Record<string, string | undefined | null>,
 	options: ProductionSecretOptions = {},
 ): void {
-	if (options.nodeEnv !== "production") return;
+	// Normalized so "Production" or " production" cannot slip past the check.
+	if (options.nodeEnv?.trim().toLowerCase() !== "production") return;
 	const problems = findWeakSecrets(secrets, options.optional);
 	if (problems.length > 0) {
 		throw new Error(`Refusing to start in production with weak secrets: ${problems.join("; ")}`);

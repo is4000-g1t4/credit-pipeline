@@ -182,26 +182,25 @@ const parsed = createEnv({
 });
 
 // Production refuses weak/default secrets (names only in the error).
-if (!process.env.SKIP_ENV_VALIDATION) {
-	assertProductionSecrets(
-		{
-			INTERNAL_SECRET: parsed.INTERNAL_SECRET,
-			CONTEXT_CURSOR_SECRET: parsed.CONTEXT_CURSOR_SECRET,
-			POLICY_INTERNAL_SECRET: parsed.POLICY_INTERNAL_SECRET,
-			POLICY_RULE_CONTEXT_SECRET: parsed.POLICY_RULE_CONTEXT_SECRET,
-			POLICY_AUDIT_HASH_SECRET: parsed.POLICY_AUDIT_HASH_SECRET,
-		},
-		{
-			nodeEnv: parsed.NODE_ENV,
-			optional: [
-				"CONTEXT_CURSOR_SECRET",
-				"POLICY_INTERNAL_SECRET",
-				"POLICY_RULE_CONTEXT_SECRET",
-				"POLICY_AUDIT_HASH_SECRET",
-			],
-		},
-	);
-}
+// Enforced even with SKIP_ENV_VALIDATION (that flag only skips the zod schema).
+assertProductionSecrets(
+	{
+		INTERNAL_SECRET: parsed.INTERNAL_SECRET,
+		CONTEXT_CURSOR_SECRET: parsed.CONTEXT_CURSOR_SECRET,
+		POLICY_INTERNAL_SECRET: parsed.POLICY_INTERNAL_SECRET,
+		POLICY_RULE_CONTEXT_SECRET: parsed.POLICY_RULE_CONTEXT_SECRET,
+		POLICY_AUDIT_HASH_SECRET: parsed.POLICY_AUDIT_HASH_SECRET,
+	},
+	{
+		nodeEnv: parsed.NODE_ENV,
+		optional: [
+			"CONTEXT_CURSOR_SECRET",
+			"POLICY_INTERNAL_SECRET",
+			"POLICY_RULE_CONTEXT_SECRET",
+			"POLICY_AUDIT_HASH_SECRET",
+		],
+	},
+);
 
 export const env = {
 	databaseUrl: parsed.APPLICATIONS_DATABASE_URL,

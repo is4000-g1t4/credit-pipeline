@@ -49,4 +49,15 @@ describe("policy env in production", () => {
 		const mod = await import("../src/env.js");
 		expect(mod.env.auditHashSecret).toBe("dev-policy-audit-secret");
 	});
+
+	it.each(["1", "false"])(
+		"still rejects unset secrets when SKIP_ENV_VALIDATION=%s",
+		async (skip) => {
+			stub("production", { SKIP_ENV_VALIDATION: skip });
+			vi.stubEnv("POLICY_CITATION_SECRET", "");
+			const err = await import("../src/env.js").catch((e: Error) => e);
+			expect(err).toBeInstanceOf(Error);
+			expect((err as Error).message).toContain("POLICY_CITATION_SECRET");
+		},
+	);
 });

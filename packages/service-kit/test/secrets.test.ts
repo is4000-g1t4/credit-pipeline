@@ -44,6 +44,12 @@ describe("assertProductionSecrets", () => {
 		}
 	});
 
+	it("enforces for case/whitespace variants of production", () => {
+		for (const nodeEnv of ["Production", "PRODUCTION", " production\n"]) {
+			expect(() => assertProductionSecrets({ A_SECRET: "short" }, { nodeEnv })).toThrow(/A_SECRET/);
+		}
+	});
+
 	it("flags a known dev default", () => {
 		expect(findWeakSecrets({ A: "dev-policy-rule-context-secret" })[0]).toMatch(/A is/);
 	});

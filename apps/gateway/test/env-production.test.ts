@@ -37,6 +37,16 @@ describe("gateway env in production", () => {
 		expect((err as Error).message).toContain("INTERNAL_SECRET");
 	});
 
+	it.each(["1", "true", "false"])(
+		"still rejects weak secrets when SKIP_ENV_VALIDATION=%s",
+		async (skip) => {
+			stub("production", { SKIP_ENV_VALIDATION: skip, SESSION_SECRET: "short" });
+			const err = await import("../src/env.js").catch((e: Error) => e);
+			expect(err).toBeInstanceOf(Error);
+			expect((err as Error).message).toContain("SESSION_SECRET");
+		},
+	);
+
 	it("accepts short secrets outside production", async () => {
 		stub("test", { SESSION_SECRET: "short", INTERNAL_SECRET: "short" });
 		await expect(import("../src/env.js")).resolves.toBeDefined();

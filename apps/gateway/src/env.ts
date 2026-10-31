@@ -39,15 +39,14 @@ const parsed = createEnv({
 });
 
 // Production refuses weak/default secrets (names only in the error).
-if (!process.env.SKIP_ENV_VALIDATION) {
-	assertProductionSecrets(
-		{
-			SESSION_SECRET: parsed.SESSION_SECRET,
-			INTERNAL_SECRET: parsed.INTERNAL_SECRET,
-		},
-		{ nodeEnv: parsed.NODE_ENV },
-	);
-}
+// Enforced even with SKIP_ENV_VALIDATION (that flag only skips the zod schema).
+assertProductionSecrets(
+	{
+		SESSION_SECRET: parsed.SESSION_SECRET,
+		INTERNAL_SECRET: parsed.INTERNAL_SECRET,
+	},
+	{ nodeEnv: parsed.NODE_ENV },
+);
 
 /** Validated gateway config in the shape the app already consumes. */
 export const env = {

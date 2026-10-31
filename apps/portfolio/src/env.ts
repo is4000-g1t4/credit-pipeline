@@ -26,14 +26,13 @@ const parsed = createEnv({
 });
 
 // Production refuses weak/default secrets (names only in the error).
-if (!process.env.SKIP_ENV_VALIDATION) {
-	assertProductionSecrets(
-		{
-			INTERNAL_SECRET: parsed.INTERNAL_SECRET,
-		},
-		{ nodeEnv: process.env.NODE_ENV },
-	);
-}
+// Enforced even with SKIP_ENV_VALIDATION (that flag only skips the zod schema).
+assertProductionSecrets(
+	{
+		INTERNAL_SECRET: parsed.INTERNAL_SECRET,
+	},
+	{ nodeEnv: process.env.NODE_ENV },
+);
 
 export const env = {
 	databaseUrl: parsed.PORTFOLIO_DATABASE_URL,
