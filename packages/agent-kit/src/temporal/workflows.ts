@@ -49,25 +49,32 @@ export async function agentRunWorkflow(input: AgentRunInput): Promise<void> {
 	});
 
 	for (let attempt = 1; ; attempt++) {
+		let failed: unknown;
 		try {
 			await executeAgentRun({ ...input, attempt, maxAttempts });
 			return;
 		} catch (err) {
-			if (attempt < maxAttempts && isRetryableAttemptFailure(err)) {
+			failed = err;
+		}
+		if (attempt < maxAttempts && isRetryableAttemptFailure(failed)) {
+			try {
 				await sleep(agentRunBackoffMs(attempt));
 				continue;
+			} catch (sleepErr) {
+				// Cancelled during backoff: fall through to cleanup.
+				failed = sleepErr;
 			}
-			const failure = describeFailure(err);
-			// Cleanup must run even when the workflow itself is being cancelled.
-			await CancellationScope.nonCancellable(() =>
-				failAgentRun({ ...input, attempt, maxAttempts }, failure),
-			);
-			if (isCancellation(err)) throw err;
-			throw ApplicationFailure.nonRetryable(
-				`agent run ${input.kind} failed: ${failure.code}`,
-				"AgentRunFailed",
-			);
 		}
+		const failure = describeFailure(failed);
+		// Cleanup must run even when the workflow itself is being cancelled.
+		await CancellationScope.nonCancellable(() =>
+			failAgentRun({ ...input, attempt, maxAttempts }, failure),
+		);
+		if (isCancellation(failed)) throw failed;
+		throw ApplicationFailure.nonRetryable(
+			`agent run ${input.kind} failed: ${failure.code}`,
+			"AgentRunFailed",
+		);
 	}
 }
 

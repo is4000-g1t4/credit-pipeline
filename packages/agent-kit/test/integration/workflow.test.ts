@@ -134,4 +134,26 @@ describe("agentRunWorkflow", () => {
 		expect(attempts.get(runId)).toEqual([1]);
 		expect(failures.get(runId)?.code).toBe("timeout");
 	});
+
+	it("still cleans up when cancelled during the retry backoff", async () => {
+		const runId = randomUUID();
+		behaviour.set(runId, "always-throw");
+		const starter = createAgentRunStarter({ address, taskQueue, client });
+		const { workflowId } = await starter.start({
+			kind: "test.run",
+			runId,
+			token: randomUUID(),
+			timeoutMs: 10_000,
+		});
+		const handle = client.workflow.getHandle(workflowId);
+		// Wait until attempt 1 failed and the workflow is sleeping in backoff.
+		for (let i = 0; i < 50 && (attempts.get(runId)?.length ?? 0) < 1; i++) {
+			await new Promise((r) => setTimeout(r, 100));
+		}
+		await new Promise((r) => setTimeout(r, 300));
+		await handle.cancel();
+		await handle.result().catch(() => undefined);
+		expect(attempts.get(runId)).toEqual([1]);
+		expect(failures.get(runId)?.code).toBe("cancelled");
+	});
 });
