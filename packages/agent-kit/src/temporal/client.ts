@@ -18,10 +18,19 @@ export function agentRunWorkflowId(input: Pick<AgentRunInput, "kind" | "runId" |
 }
 
 export interface AgentRunStarter {
-	/** Starts the run's workflow; `started: false` when it already exists. */
-	start(input: AgentRunInput): Promise<{ started: boolean; workflowId: string }>;
+	/**
+	 * Starts the run's workflow; `started: false` when it already exists.
+	 * Then `closed` says whether that workflow already finished (completed,
+	 * failed, terminated...): a closed workflow will never run the row again,
+	 * so a sweep must not treat it as live backlog.
+	 */
+	start(input: AgentRunInput): Promise<AgentRunStartResult>;
 	close(): Promise<void>;
 }
+
+export type AgentRunStartResult =
+	| { started: true; workflowId: string }
+	| { started: false; workflowId: string; closed: boolean };
 
 export interface AgentRunStarterOptions {
 	address: string;
@@ -62,7 +71,8 @@ export function createAgentRunStarter(opts: AgentRunStarterOptions): AgentRunSta
 				return { started: true, workflowId };
 			} catch (err) {
 				if (err instanceof WorkflowExecutionAlreadyStartedError) {
-					return { started: false, workflowId };
+					const { status } = await client.workflow.getHandle(workflowId).describe();
+					return { started: false, workflowId, closed: status.name !== "RUNNING" };
 				}
 				throw err;
 			}

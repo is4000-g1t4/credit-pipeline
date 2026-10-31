@@ -929,7 +929,11 @@ describe("integrity run dispatch", () => {
 		const previous = startImpl;
 		startImpl = async (input) => {
 			startCalls.push(input);
-			return { started: false, workflowId: `${input.kind}:${input.runId}:${input.token}` };
+			return {
+				started: false,
+				closed: false,
+				workflowId: `${input.kind}:${input.runId}:${input.token}`,
+			};
 		};
 		try {
 			await sweepQueuedIntegrityRuns(deps, { dispatch: true });

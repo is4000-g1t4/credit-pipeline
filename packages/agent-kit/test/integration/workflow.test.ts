@@ -3,7 +3,12 @@
 import { randomUUID } from "node:crypto";
 import { Client, Connection } from "@temporalio/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { runAttempt, nonRetryableAgentError, startHeartbeat } from "../../src/temporal/activity.js";
+import {
+	activityCancellationSignal,
+	nonRetryableAgentError,
+	runAttempt,
+	startHeartbeat,
+} from "../../src/temporal/activity.js";
 import { createAgentRunStarter } from "../../src/temporal/client.js";
 import type { AgentRunFailure, AgentRunInput } from "../../src/temporal/types.js";
 import { createAgentWorker } from "../../src/temporal/worker.js";
@@ -155,5 +160,80 @@ describe("agentRunWorkflow", () => {
 		await handle.result().catch(() => undefined);
 		expect(attempts.get(runId)).toEqual([1]);
 		expect(failures.get(runId)?.code).toBe("cancelled");
+	});
+
+	it("reports an existing workflow as closed once it finished", async () => {
+		const { runId } = await run("ok");
+		const starter = createAgentRunStarter({ address, taskQueue, client });
+		const desc = await client.workflow.list({
+			query: `WorkflowId STARTS_WITH "test.run:${runId}"`,
+		});
+		let workflowId = "";
+		for await (const w of desc) workflowId = w.workflowId;
+		const [, , tok] = workflowId.split(":");
+		const again = await starter.start({ kind: "test.run", runId, token: tok!, timeoutMs: 10_000 });
+		expect(again).toEqual({ started: false, workflowId, closed: true });
+	});
+});
+
+describe("graceful worker shutdown", () => {
+	it("retries the run on the next worker instead of failing it", async () => {
+		const queue = `agent-kit-shutdown-${randomUUID()}`;
+		const seen: number[] = [];
+		const failed: AgentRunFailure[] = [];
+		let release: () => void = () => undefined;
+		const blocked = new Promise<void>((r) => (release = r));
+		const acts = {
+			async executeAgentRun(input: AgentRunInput): Promise<void> {
+				const attempt = runAttempt(input);
+				seen.push(attempt);
+				if (attempt > 1) return;
+				const stop = startHeartbeat(200);
+				const signal = activityCancellationSignal();
+				release();
+				try {
+					// Like a model call: rejects with the abort reason when cancelled.
+					await new Promise<void>((_res, rej) => {
+						signal.addEventListener("abort", () => rej(signal.reason), { once: true });
+					});
+				} finally {
+					stop();
+				}
+			},
+			async failAgentRun(_input: AgentRunInput, failure: AgentRunFailure): Promise<void> {
+				failed.push(failure);
+			},
+		};
+		const first = await createAgentWorker({ address, taskQueue: queue, activities: acts });
+		const firstRun = first.worker.run();
+		const starter = createAgentRunStarter({ address, taskQueue: queue, client });
+		const { workflowId } = await starter.start({
+			kind: "test.run",
+			runId: randomUUID(),
+			token: randomUUID(),
+			timeoutMs: 20_000,
+			heartbeatTimeoutMs: 2_000,
+		});
+		await blocked;
+		first.worker.shutdown();
+		await firstRun;
+		await first.connection.close();
+
+		const second = await createAgentWorker({ address, taskQueue: queue, activities: acts });
+		const secondRun = second.worker.run();
+		try {
+			const outcome = await client.workflow
+				.getHandle(workflowId)
+				.result()
+				.then(() => "completed" as const)
+				.catch(() => "failed" as const);
+			expect(outcome).toBe("completed");
+			expect(seen).toEqual([1, 2]);
+			expect(failed).toEqual([]);
+		} finally {
+			second.worker.shutdown();
+			await secondRun;
+			await second.connection.close();
+		}
 	});
 });
