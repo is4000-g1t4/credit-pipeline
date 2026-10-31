@@ -34,6 +34,7 @@ import {
 	executeIntegrityRun,
 	failIntegrityRun,
 	INTEGRITY_RUN_KIND,
+	INTEGRITY_START_TIMEOUT_MS,
 	IntegrityAttemptFailed,
 	startIntegrityRun,
 } from "../../src/integrity/runs.js";
@@ -691,6 +692,22 @@ describe("integrity run dispatch", () => {
 			const down = await newCase();
 			expect((await upload(down.officer, down.appId, randomUUID())).status).toBe(201);
 			const queued = await queueAnalysis(down.officer, down.appId);
+			expect(queued.status).toBe(202);
+			expect((await runRow(queued.runId)).status).toBe("queued");
+		} finally {
+			startImpl = previous;
+		}
+	});
+
+	it("bounds a hanging workflow start on the request path and leaves the row queued", async () => {
+		const previous = startImpl;
+		startImpl = () => new Promise(() => {});
+		try {
+			const { appId, officer } = await newCase();
+			expect((await upload(officer, appId, randomUUID())).status).toBe(201);
+			const began = Date.now();
+			const queued = await queueAnalysis(officer, appId);
+			expect(Date.now() - began).toBeLessThan(INTEGRITY_START_TIMEOUT_MS + 2_000);
 			expect(queued.status).toBe(202);
 			expect((await runRow(queued.runId)).status).toBe("queued");
 		} finally {

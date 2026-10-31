@@ -371,31 +371,59 @@ export async function failIntegrityRun(
 	return true;
 }
 
+/** Bound on one workflow start; it runs on the request path. */
+export const INTEGRITY_START_TIMEOUT_MS = 2_000;
+
+/** `exists`: the workflow was already started (a re-issued start is a no-op). */
+export type IntegrityStartOutcome = "started" | "exists" | "failed" | "skipped";
+
+class StartTimeout extends Error {
+	constructor() {
+		super("workflow start timed out");
+		this.name = "StartTimeout";
+	}
+}
+
 /**
- * Starts the run's Temporal workflow after its row committed. Never throws:
- * on failure the row stays queued and the agent-worker sweep re-issues the
- * (idempotent) start. The workflow runs the row's `max_attempts`, so
- * Temporal's attempt loop and the claim's attempt limit agree.
- * Metadata-only logging.
+ * Starts the run's Temporal workflow after its row committed. Never throws
+ * and waits at most `INTEGRITY_START_TIMEOUT_MS`: on failure or timeout the
+ * row stays queued and the agent-worker sweep re-issues the (idempotent)
+ * start. The workflow runs the row's `max_attempts`, so Temporal's attempt
+ * loop and the claim's attempt limit agree. Metadata-only logging.
  */
 export async function startIntegrityRun(
 	deps: IntegrityRunDeps,
 	run: { id: string; maxAttempts: number },
-): Promise<void> {
-	if (!deps.starter) return;
+	opts: { timeoutMs?: number } = {},
+): Promise<IntegrityStartOutcome> {
+	if (!deps.starter) return "skipped";
+	let timer: ReturnType<typeof setTimeout> | undefined;
 	try {
-		await deps.starter.start({
+		const pending = deps.starter.start({
 			kind: INTEGRITY_RUN_KIND,
 			runId: run.id,
 			token: run.id,
 			timeoutMs: integrityLeaseSeconds(deps.config) * 1000,
 			maxAttempts: run.maxAttempts,
 		});
+		// A start that settles after the timeout must not surface as unhandled.
+		pending.catch(() => {});
+		const timeout = new Promise<never>((_, reject) => {
+			timer = setTimeout(
+				() => reject(new StartTimeout()),
+				opts.timeoutMs ?? INTEGRITY_START_TIMEOUT_MS,
+			);
+		});
+		const result = await Promise.race([pending, timeout]);
+		return result.started ? "started" : "exists";
 	} catch (err) {
 		deps.logger.warn(
 			{ runId: run.id, error: err instanceof Error ? err.name : "unknown" },
 			"integrity run start failed; left queued for sweep",
 		);
+		return "failed";
+	} finally {
+		clearTimeout(timer);
 	}
 }
 
