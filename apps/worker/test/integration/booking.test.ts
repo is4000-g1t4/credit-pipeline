@@ -300,6 +300,65 @@ describe("bookLoan (integration)", () => {
 		expect(reflipped?.status).toBe("booked");
 	});
 
+	it("auto route refuses to book over an existing declined decision", async () => {
+		const applicationId = await fixture();
+		await appsDb.insert(decisions).values({
+			applicationId,
+			outcome: "declined",
+			decidedBy: "system",
+			reasons: [{ code: "POLICY_DECLINE", text: "Declined by policy." }],
+			snapshot: {},
+		});
+
+		await expect(bookLoan({ applicationId, route: "auto" })).rejects.toThrow(/declined/);
+
+		const loanRows = await loansDb
+			.select({ id: loans.id })
+			.from(loans)
+			.where(eq(loans.applicationId, applicationId));
+		expect(loanRows).toHaveLength(0);
+		const rows = await appsDb
+			.select()
+			.from(decisions)
+			.where(eq(decisions.applicationId, applicationId));
+		expect(rows).toHaveLength(1);
+		expect(rows[0]?.outcome).toBe("declined");
+	});
+
+	it("officer route refuses to book a same-request replay over a declined decision", async () => {
+		const applicationId = await fixture("pending_review");
+		await appsDb
+			.update(applications)
+			.set({ financial: { monthlyIncomeCents: 420000, existingDebtCents: 61000 } })
+			.where(eq(applications.id, applicationId));
+		const requestId = randomUUID();
+		const officerUserId = randomUUID();
+		await appsDb.insert(decisions).values({
+			applicationId,
+			outcome: "declined",
+			decidedBy: "officer",
+			officerUserId,
+			requestId,
+			reasons: [{ code: "OFFICER_JUDGEMENT", text: "Declined by officer." }],
+			snapshot: {},
+		});
+
+		await expect(
+			bookLoan({ applicationId, route: "officer", requestId, officerUserId }),
+		).rejects.toThrow(/declined/);
+
+		const loanRows = await loansDb
+			.select({ id: loans.id })
+			.from(loans)
+			.where(eq(loans.applicationId, applicationId));
+		expect(loanRows).toHaveLength(0);
+		const [app] = await appsDb
+			.select()
+			.from(applications)
+			.where(eq(applications.id, applicationId));
+		expect(app?.status).toBe("pending_review");
+	});
+
 	it("officer booking copies the frozen research bundle into decision.snapshot.research", async () => {
 		const applicationId = await fixture("pending_review");
 		// Officer-route booking validates DTI against the stored finances.

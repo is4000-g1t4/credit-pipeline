@@ -150,6 +150,13 @@ export async function bookLoan(input: BookLoanInput): Promise<BookLoanResult> {
 			if (input.route === "officer" && !sameRequest(existing[0].requestId)) {
 				throw conflict(`bookLoan: decision already exists for ${input.applicationId}`);
 			}
+			// A replay may only resume an approved decision; never book a loan
+			// over a declined one.
+			if (existing[0].outcome !== "approved") {
+				throw conflict(
+					`bookLoan: decision is ${existing[0].outcome} for ${input.applicationId}, cannot book`,
+				);
+			}
 			return existing[0].id;
 		}
 
@@ -189,6 +196,11 @@ export async function bookLoan(input: BookLoanInput): Promise<BookLoanResult> {
 			if (!winner[0]) throw new Error("bookLoan: insert lost");
 			if (input.route === "officer" && !sameRequest(winner[0].requestId)) {
 				throw conflict(`bookLoan: decision already exists for ${input.applicationId}`);
+			}
+			if (winner[0].outcome !== "approved") {
+				throw conflict(
+					`bookLoan: decision is ${winner[0].outcome} for ${input.applicationId}, cannot book`,
+				);
 			}
 			return winner[0].id;
 		}
