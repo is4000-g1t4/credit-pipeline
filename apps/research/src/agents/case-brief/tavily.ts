@@ -64,10 +64,12 @@ export function createTavilyClient(opts: {
 	/** Retry tuning for the default transport (metadata-only `onRetry`). */
 	retry?: RetryOptions;
 }): TavilyClient {
-	// Transient Tavily failures (429/5xx, network, per-call timeout) retry
-	// with the shared policy. The per-call `timeoutMs` signal below is the
-	// caller's abort, so it bounds all attempts together; the status-to-error
-	// mapping further down is unchanged and sees only the final response.
+	// Transient Tavily failures (408/409/429/5xx, network errors) retry with
+	// the shared policy. Timeouts are NOT retried: the per-call `timeoutMs`
+	// signal below is the caller's abort (no per-attempt timeout is set), so
+	// it bounds all attempts together and ends the call when it fires. The
+	// status-to-error mapping further down sees only the final response.
+	// Each retried extract is a new paid request and consumes Tavily credits.
 	const fetchImpl = opts.fetchImpl ?? createRetryingFetch(opts.retry ?? {});
 	const timeoutMs = opts.timeoutMs ?? 20_000;
 	const post = async (url: string, body: Record<string, unknown>): Promise<unknown> => {
