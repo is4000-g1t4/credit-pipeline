@@ -666,7 +666,7 @@ async function failedAudits(appId: string) {
 		);
 }
 
-async function queuedRun(appId: string, ageMs: number): Promise<string> {
+async function insertQueuedRun(appId: string, ageMs: number): Promise<string> {
 	const { run } = await createIntegrityRun(runDeps(ctx), {
 		applicationId: appId,
 		inputHash: randomUUID(),
@@ -920,10 +920,10 @@ describe("integrity run dispatch", () => {
 		await clearQueuedBacklog();
 		const { appId } = await newCase();
 		const deps = runDeps(ctx);
-		const fresh = await queuedRun(appId, 1_000);
-		const stale = await queuedRun(appId, 20_000);
+		const fresh = await insertQueuedRun(appId, 1_000);
+		const stale = await insertQueuedRun(appId, 20_000);
 		// Past the run horizon, but its workflow exists: waiting for a worker slot.
-		const backlogged = await queuedRun(appId, 10 * 60_000);
+		const backlogged = await insertQueuedRun(appId, 10 * 60_000);
 		expect(10 * 60_000).toBeGreaterThan(integrityRunHorizonMs(integrityConfig, 2));
 		startCalls.length = 0;
 		const previous = startImpl;
@@ -955,9 +955,9 @@ describe("integrity run dispatch", () => {
 		await clearQueuedBacklog();
 		const { appId } = await newCase();
 		const deps = runDeps(ctx);
-		const stale = await queuedRun(appId, 20_000);
-		const overdue = await queuedRun(appId, 10 * 60_000);
-		const abandoned = await queuedRun(appId, SWEEP_ABANDON_AFTER_MS + 60_000);
+		const stale = await insertQueuedRun(appId, 20_000);
+		const overdue = await insertQueuedRun(appId, 10 * 60_000);
+		const abandoned = await insertQueuedRun(appId, SWEEP_ABANDON_AFTER_MS + 60_000);
 		const previous = startImpl;
 		startImpl = async () => {
 			throw new Error("temporal unavailable");
@@ -973,12 +973,12 @@ describe("integrity run dispatch", () => {
 		expect((await runRow(stale)).status).toBe("queued");
 
 		// A worker that does not dispatch cannot start it either.
-		const undispatched = await queuedRun(appId, 10 * 60_000);
+		const undispatched = await insertQueuedRun(appId, 10 * 60_000);
 		await sweepQueuedIntegrityRuns(deps, { dispatch: false });
 		expect((await runRow(undispatched)).status).toBe("failed");
 
 		// A day-old backlog is failed even though its workflow exists.
-		const ancient = await queuedRun(appId, SWEEP_ABANDON_AFTER_MS + 60_000);
+		const ancient = await insertQueuedRun(appId, SWEEP_ABANDON_AFTER_MS + 60_000);
 		await sweepQueuedIntegrityRuns(deps, { dispatch: true });
 		expect((await runRow(ancient)).status).toBe("failed");
 		await clearQueuedBacklog();
@@ -987,7 +987,7 @@ describe("integrity run dispatch", () => {
 	it("the queued-overdue path never fails a row claimed after selection", async () => {
 		const { appId } = await newCase();
 		const deps = runDeps(ctx);
-		const runId = await queuedRun(appId, 10 * 60_000);
+		const runId = await insertQueuedRun(appId, 10 * 60_000);
 		expect((await claimIntegrityRunById(deps, runId, 1)).kind).toBe("claimed");
 		expect(
 			await failIntegrityRun(deps, runId, "LEASE_EXPIRED", "queued too long", {
@@ -1002,7 +1002,7 @@ describe("integrity run dispatch", () => {
 		const deps = runDeps(ctx);
 		const horizonMs = integrityRunHorizonMs(integrityConfig, 2);
 		const claimRunning = async (leaseAgeMs: number) => {
-			const runId = await queuedRun(appId, 1_000);
+			const runId = await insertQueuedRun(appId, 1_000);
 			const claim = await claimIntegrityRunById(deps, runId, 1);
 			if (claim.kind !== "claimed") throw new Error("expected claim");
 			await ctx.db
