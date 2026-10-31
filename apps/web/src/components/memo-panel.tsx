@@ -18,6 +18,7 @@ import {
 } from "../lib/api";
 import { asMemoContent } from "./memo-content";
 import { TraceDetails } from "./trace-details";
+import { ToolActivity } from "./tool-activity";
 import { Button } from "./ui/button";
 import { Card, EmptyState, ErrorBox, Skeleton, StatusBadge } from "./ui";
 
@@ -141,6 +142,7 @@ export function MemoPanel({
 			title="Credit memo"
 			actions={artifact ? <StatusBadge status={artifact.status} /> : undefined}
 		>
+			{drafting && <ToolActivity entries={[]} running pendingLabel="Reading case evidence…" />}
 			{memos.isPending ? (
 				<Skeleton label="Loading credit memo" />
 			) : memos.isError ? (
@@ -233,7 +235,6 @@ export function MemoPanel({
 						</div>
 					)}
 					<TraceDetails
-						title="Agent trace (metadata)"
 						trace={
 							artifact.agentTrace
 								? {

@@ -1,11 +1,12 @@
-// Live tool activity for the Ask tab. Rows appear while the assistant runs
-// (present tense + spinner), then settle to result count and duration. Metadata
-// only — never raw args or tool output.
-import { Check, ChevronDown, Loader2, Terminal, X } from "lucide-react";
+// Shared live/settled tool activity. Rows appear while an agent runs
+// (present tense + spinner), then settle to result count and duration.
+// Metadata only — never raw args or tool output.
+import { Check, ChevronDown, Loader2, Wrench, X } from "lucide-react";
 import { useState } from "react";
-import type { AssistantToolEntry } from "../lib/api";
+import type { ToolActivityEntry } from "../lib/api";
 
 const TOOL_ACTIONS: Record<string, { running: string; done: string }> = {
+	// Case assistant
 	get_case_facts: { running: "Reading case facts", done: "Read case facts" },
 	get_case_assessment: {
 		running: "Reading score and policy assessment",
@@ -33,6 +34,30 @@ const TOOL_ACTIONS: Record<string, { running: string; done: string }> = {
 		done: "Read external research",
 	},
 	search_policy: { running: "Searching policy", done: "Searched policy" },
+	// Memo writer
+	list_evidence: { running: "Listing evidence", done: "Listed evidence" },
+	search_evidence: { running: "Searching evidence", done: "Searched evidence" },
+	get_evidence: { running: "Reading evidence", done: "Read evidence" },
+	list_unavailable: {
+		running: "Listing unavailable sources",
+		done: "Listed unavailable sources",
+	},
+	// Policy exception
+	list_failed_rules: { running: "Listing failed rules", done: "Listed failed rules" },
+	get_rule_mapping: { running: "Reading rule mapping", done: "Read rule mapping" },
+	get_exception_path: { running: "Reading exception path", done: "Read exception path" },
+	get_policy_section: { running: "Reading policy section", done: "Read policy section" },
+	// Document integrity
+	list_documents: { running: "Listing documents", done: "Listed documents" },
+	search_pages: { running: "Searching document pages", done: "Searched document pages" },
+	get_page: { running: "Reading document page", done: "Read document page" },
+	list_customer_evidence: {
+		running: "Listing customer evidence",
+		done: "Listed customer evidence",
+	},
+	get_customer_page: { running: "Reading customer page", done: "Read customer page" },
+	list_signals: { running: "Listing integrity signals", done: "Listed integrity signals" },
+	get_duplicate_context: { running: "Reading duplicate context", done: "Read duplicate context" },
 };
 
 function actionsFor(name: string): { running: string; done: string } {
@@ -50,7 +75,7 @@ function formatDuration(ms: number): string {
 	return ms < 1000 ? `${Math.max(1, Math.round(ms))}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
 
-function labelFor(entry: AssistantToolEntry): string {
+function labelFor(entry: ToolActivityEntry): string {
 	const actions = actionsFor(entry.name);
 	if (entry.status === "running") return actions.running;
 	if (entry.status === "error") {
@@ -59,12 +84,14 @@ function labelFor(entry: AssistantToolEntry): string {
 	return actions.done;
 }
 
-export function AssistantToolTrace({
+export function ToolActivity({
 	entries,
 	running = false,
+	pendingLabel = "Reading case data…",
 }: {
-	entries: AssistantToolEntry[];
+	entries: ToolActivityEntry[];
 	running?: boolean;
+	pendingLabel?: string;
 }) {
 	const [open, setOpen] = useState(true);
 	if (entries.length === 0) {
@@ -72,7 +99,7 @@ export function AssistantToolTrace({
 		return (
 			<output className="mt-3 flex items-center gap-2 text-sm text-slate" aria-live="polite">
 				<Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
-				Reading case data…
+				{pendingLabel}
 			</output>
 		);
 	}
@@ -86,7 +113,7 @@ export function AssistantToolTrace({
 				className="flex w-full items-center gap-2 px-3 py-2 text-left"
 			>
 				<span className="flex size-6 shrink-0 items-center justify-center rounded-sm border border-rule bg-card text-slate">
-					<Terminal className="size-3.5" aria-hidden="true" />
+					<Wrench className="size-3.5" aria-hidden="true" />
 				</span>
 				<span className="text-sm font-medium text-ink">
 					{running ? "Using" : "Used"} {count} {count === 1 ? "tool" : "tools"}

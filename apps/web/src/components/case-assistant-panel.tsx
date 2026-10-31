@@ -9,12 +9,12 @@ import {
 	askCaseAssistant,
 	capAssistantHistory,
 	toTraceEntries,
-	type AssistantToolEntry,
+	type ToolActivityEntry,
 	type CaseAssistantAnswer,
 	type CaseAssistantMessage,
 } from "../lib/api";
 import { clean } from "../lib/format";
-import { AssistantToolTrace } from "./assistant-tool-trace";
+import { ToolActivity } from "./tool-activity";
 import { PolicySources } from "./policy-citations";
 import { Button } from "./ui/button";
 import { ErrorBox } from "./ui";
@@ -29,7 +29,7 @@ const SUGGESTED = [
 
 type Entry =
 	| { kind: "user"; text: string }
-	| { kind: "assistant"; answer: CaseAssistantAnswer; tools: AssistantToolEntry[] };
+	| { kind: "assistant"; answer: CaseAssistantAnswer; tools: ToolActivityEntry[] };
 
 type PanelError = { message: string; code: string; retryable: boolean };
 
@@ -48,11 +48,11 @@ function AssistantEntry({
 	tools,
 }: {
 	answer: CaseAssistantAnswer;
-	tools: AssistantToolEntry[];
+	tools: ToolActivityEntry[];
 }) {
 	return (
 		<div>
-			<AssistantToolTrace entries={tools} />
+			<ToolActivity entries={tools} />
 			<p className={`text-xs font-medium text-slate ${tools.length > 0 ? "mt-2" : ""}`}>
 				Assistant
 			</p>
@@ -88,7 +88,7 @@ export function CaseAssistantPanel({
 	const [entries, setEntries] = useState<Entry[]>([]);
 	const [draft, setDraft] = useState("");
 	const [pending, setPending] = useState(false);
-	const [liveTools, setLiveTools] = useState<AssistantToolEntry[]>([]);
+	const [liveTools, setLiveTools] = useState<ToolActivityEntry[]>([]);
 	const [error, setError] = useState<PanelError | null>(null);
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const stick = useRef(true);
@@ -107,7 +107,7 @@ export function CaseAssistantPanel({
 		setPending(true);
 		setError(null);
 		setLiveTools([]);
-		let live: AssistantToolEntry[] = [];
+		let live: ToolActivityEntry[] = [];
 		try {
 			const answer = await askCaseAssistant(applicationId, question, history, (event) => {
 				live = applyToolEvent(live, event);
@@ -214,8 +214,8 @@ export function CaseAssistantPanel({
 						/>
 					),
 				)}
-				{pending && <AssistantToolTrace entries={liveTools} running />}
-				{!pending && error && liveTools.length > 0 && <AssistantToolTrace entries={liveTools} />}
+				{pending && <ToolActivity entries={liveTools} running />}
+				{!pending && error && liveTools.length > 0 && <ToolActivity entries={liveTools} />}
 			</div>
 
 			{consentMissing && (

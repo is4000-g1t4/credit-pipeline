@@ -1,8 +1,9 @@
-// Shared agent-trace renderer: metadata only — never prompts or
-// chain-of-thought. One component for the memo, policy-exception, and
-// integrity panels; each caller passes only the fields it already showed,
-// so labels/order stay identical per panel.
+// Shared agent trace: the same tool timeline used by the case assistant,
+// followed by compact run metadata. Metadata only — never prompts or
+// chain-of-thought.
+import { toTraceEntries } from "../lib/api";
 import { clean, shortId } from "../lib/format";
+import { ToolActivity } from "./tool-activity";
 import { StatusBadge } from "./ui";
 
 export interface TraceFacts {
@@ -31,17 +32,11 @@ export interface TraceFacts {
 	errorCode?: string | null;
 }
 
-export function TraceDetails({
-	trace,
-	title = "Trace (metadata)",
-}: {
-	trace: TraceFacts | null | undefined;
-	title?: string;
-}) {
+export function TraceDetails({ trace }: { trace: TraceFacts | null | undefined }) {
 	if (!trace) return null;
 	return (
-		<details className="mt-3 rounded border border-rule p-3">
-			<summary className="cursor-pointer text-sm font-semibold">{title}</summary>
+		<div>
+			<ToolActivity entries={toTraceEntries(trace.toolCalls ?? [])} />
 			<dl className="mt-2 grid gap-x-4 gap-y-1 text-xs text-slate sm:grid-cols-2">
 				{trace.runId !== undefined && (
 					<div>
@@ -148,28 +143,6 @@ export function TraceDetails({
 					</div>
 				)}
 			</dl>
-			{(trace.toolCalls?.length ?? 0) > 0 && (
-				<table className="mt-2 w-full text-xs">
-					<thead>
-						<tr className="text-left text-slate">
-							<th className="py-1 pr-2 font-medium">Step</th>
-							<th className="py-1 pr-2 font-medium">Tool</th>
-							<th className="py-1 pr-2 font-medium">Results</th>
-							<th className="py-1 font-medium">Source types</th>
-						</tr>
-					</thead>
-					<tbody>
-						{(trace.toolCalls ?? []).map((call, i) => (
-							<tr key={`${call.step}-${call.name}-${i}`} className="border-t border-rule">
-								<td className="py-1 pr-2 tabular-nums">{call.step}</td>
-								<td className="py-1 pr-2 font-mono">{clean(call.name)}</td>
-								<td className="py-1 pr-2 tabular-nums">{call.resultCount}</td>
-								<td className="py-1 text-slate">{clean(call.sourceTypes.join(", ")) || "-"}</td>
-							</tr>
-						))}
-					</tbody>
-				</table>
-			)}
-		</details>
+		</div>
 	);
 }

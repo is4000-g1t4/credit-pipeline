@@ -734,7 +734,6 @@ export function IntegrityPanel({ applicationId }: { applicationId: string }) {
 
 					{data.latestAnalysis !== null && (
 						<TraceDetails
-							title="Latest analysis (metadata)"
 							trace={{
 								runId: data.latestAnalysis.id,
 								runStatus: data.latestAnalysis.status,

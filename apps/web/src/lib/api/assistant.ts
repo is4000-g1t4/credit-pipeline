@@ -1,3 +1,4 @@
+import { readSseEvents } from "./sse";
 // Case-scoped officer assistant (Ask tab, case-assistant). Read-only Q&A
 // over the case evidence bundle; advisory only — answers never decide,
 // score, price, or book the case.
@@ -10,7 +11,7 @@ export interface CaseAssistantToolCall {
 }
 
 /** UI row for a tool call, live or settled (metadata only). */
-export interface AssistantToolEntry {
+export interface ToolActivityEntry {
 	callId?: number;
 	name: string;
 	status: "running" | "complete" | "error";
@@ -20,7 +21,7 @@ export interface AssistantToolEntry {
 }
 
 /** Final answer trace → settled entries (no durations available there). */
-export function toTraceEntries(calls: CaseAssistantToolCall[]): AssistantToolEntry[] {
+export function toTraceEntries(calls: CaseAssistantToolCall[]): ToolActivityEntry[] {
 	return calls.map((call) => ({
 		name: call.name,
 		status: "complete",
@@ -31,11 +32,11 @@ export function toTraceEntries(calls: CaseAssistantToolCall[]): AssistantToolEnt
 
 /** Upsert by callId so a running row settles in place. */
 export function applyToolEvent(
-	entries: AssistantToolEntry[],
+	entries: ToolActivityEntry[],
 	event: CaseAssistantToolEvent,
-): AssistantToolEntry[] {
+): ToolActivityEntry[] {
 	const next = entries.findIndex((entry) => entry.callId === event.callId);
-	const row: AssistantToolEntry = { ...event };
+	const row: ToolActivityEntry = { ...event };
 	if (next < 0) return [...entries, row];
 	return entries.map((entry, i) => (i === next ? { ...entry, ...row } : entry));
 }
@@ -127,7 +128,7 @@ export async function askCaseAssistant(
 		return (await res.json()) as CaseAssistantAnswer;
 	}
 	if (!res.body) throw new ApiError(502, "BAD_GATEWAY", "assistant stream unavailable");
-	for await (const event of readStreamEvents(res.body)) {
+	for await (const event of readSseEvents<StreamEvent>(res.body)) {
 		if (event.type === "tool") {
 			onTool(event);
 		} else if (event.type === "answer") {
@@ -137,34 +138,4 @@ export async function askCaseAssistant(
 		}
 	}
 	throw new ApiError(502, "BAD_GATEWAY", "assistant stream ended unexpectedly");
-}
-
-/** Parse one SSE response body into typed events. Exported for tests. */
-export async function* readStreamEvents(
-	body: ReadableStream<Uint8Array>,
-): AsyncGenerator<StreamEvent> {
-	const reader = body.getReader();
-	const decoder = new TextDecoder();
-	let buffer = "";
-	try {
-		while (true) {
-			const { done, value } = await reader.read();
-			if (done) break;
-			buffer += decoder.decode(value, { stream: true });
-			let boundary = buffer.indexOf("\n\n");
-			while (boundary >= 0) {
-				const frame = buffer.slice(0, boundary);
-				buffer = buffer.slice(boundary + 2);
-				const data = frame
-					.split("\n")
-					.filter((line) => line.startsWith("data:"))
-					.map((line) => line.slice(5).trimStart())
-					.join("\n");
-				if (data) yield JSON.parse(data) as StreamEvent;
-				boundary = buffer.indexOf("\n\n");
-			}
-		}
-	} finally {
-		reader.releaseLock();
-	}
 }

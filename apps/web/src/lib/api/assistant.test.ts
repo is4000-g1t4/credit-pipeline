@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { readSseEvents } from "./sse";
 import {
 	applyToolEvent,
 	capAssistantHistory,
 	MAX_HISTORY_CHARS,
 	MAX_HISTORY_MESSAGES,
-	readStreamEvents,
 	toTraceEntries,
 	type CaseAssistantAnswer,
 } from "./assistant";
@@ -55,7 +55,7 @@ describe("readStreamEvents", () => {
 		const tool = 'data: {"type":"tool","callId":1,"name":"get_case_facts","status":"running"}\n\n';
 		const done = `data: ${JSON.stringify({ type: "answer", answer, latencyMs: 5 })}\n\n`;
 		const events = [];
-		for await (const event of readStreamEvents(
+		for await (const event of readSseEvents<Record<string, unknown>>(
 			streamFrom([tool.slice(0, 18), tool.slice(18) + done.slice(0, 20), done.slice(20)]),
 		)) {
 			events.push(event);
