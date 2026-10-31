@@ -343,6 +343,9 @@ importers:
 
   apps/applications:
     dependencies:
+      '@credit/agent-kit':
+        specifier: workspace:*
+        version: link:../../packages/agent-kit
       '@credit/agent-observability':
         specifier: workspace:*
         version: link:../../packages/agent-observability

@@ -24,7 +24,7 @@ import {
 	type DocumentIntegrityBriefContent,
 } from "@credit/core";
 import { HttpError, writeAudit } from "@credit/service-kit";
-import { memoAgentTraceSchema, type MemoAgentTrace } from "../assist/memo-trace.js";
+import { memoAgentTraceSchema, type MemoAgentTrace } from "../agents/shared/trace.js";
 import { createArtifactInTx } from "../assist/artifacts.js";
 import { lockApplication } from "../documents/access.js";
 import { countDuplicateDocuments } from "./duplicates.js";

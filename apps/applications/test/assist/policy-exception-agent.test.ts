@@ -14,15 +14,13 @@ import {
 	policyExceptionReplayKey,
 	runPolicyExceptionAgent,
 	type PolicyExceptionAgentConfig,
-} from "../../src/assist/policy-exception/agent.js";
-import { runPolicyExceptionTool } from "../../src/assist/policy-exception/tools.js";
-import type {
-	CaseRuleContext,
-	PolicyClient,
-	PolicyExceptionAgentRunner,
-	PolicyExceptionAgentRunResult,
-	PolicySectionDelivery,
-} from "../../src/assist/policy-exception/types.js";
+	runPolicyExceptionTool,
+	type CaseRuleContext,
+	type PolicyClient,
+	type PolicyExceptionAgentRunner,
+	type PolicyExceptionAgentRunResult,
+	type PolicySectionDelivery,
+} from "../../src/agents/policy-exception/index.js";
 
 const APP_ID = "55555555-5555-4555-8555-555555555555";
 const EVAL_ID = "33333333-3333-4333-8333-333333333333";

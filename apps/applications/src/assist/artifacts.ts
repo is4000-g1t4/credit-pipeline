@@ -16,7 +16,7 @@ import { HttpError, writeAudit } from "@credit/service-kit";
 import { and, desc, eq, isNull, lte, ne, sql } from "drizzle-orm";
 import { lockApplication } from "../documents/access.js";
 import { LockTimeout } from "../documents/pipeline.js";
-import { memoAgentTraceSchema, type MemoAgentTrace } from "./memo-trace.js";
+import { memoAgentTraceSchema, type MemoAgentTrace } from "../agents/shared/trace.js";
 import type { ArtifactAuditMetadata, ArtifactDto, ArtifactStatus, ArtifactType } from "./types.js";
 
 const ARTIFACT_LOCK_TIMEOUT_MS = 5_000;

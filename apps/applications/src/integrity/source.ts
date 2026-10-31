@@ -28,7 +28,7 @@ import type { OcrStatus, TextSource } from "../documents/ocr.js";
 import type { DocumentKind } from "../documents/pipeline.js";
 import { findDuplicateMatches } from "./duplicates.js";
 import { buildIntegritySignals } from "./signals.js";
-import { quoteMatchesOffset } from "./validators.js";
+import { quoteMatchesOffset } from "../agents/integrity/index.js";
 import type {
 	DeterministicSignal,
 	IntegrityCrosscheckFinding,

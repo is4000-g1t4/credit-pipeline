@@ -5,7 +5,7 @@ import {
 	parseAmountValue,
 	parseDateValue,
 	verifyQuote,
-} from "../../src/integrity/validators.js";
+} from "../../src/agents/integrity/index.js";
 import type { IntegrityConsistencyProposal } from "../../src/integrity/types.js";
 
 const page =

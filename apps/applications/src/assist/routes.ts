@@ -56,8 +56,10 @@ import {
 import { policyExceptionRoutes } from "./policy-exception/routes.js";
 import { policyExceptionEvidenceForArtifact } from "./policy-exception/view.js";
 import { RuleContextUnavailableError, UnsupportedPolicyVersionError } from "./policy-rules.js";
-import { composePolicyMemoContent } from "./policy-exception/memo.js";
-import { validatePolicyMemoDraft } from "./policy-exception/validate.js";
+import {
+	composePolicyMemoContent,
+	validatePolicyMemoDraft,
+} from "../agents/policy-exception/index.js";
 import {
 	buildAdverseActionLetter,
 	buildAdverseReasonFacts,
@@ -67,8 +69,8 @@ import {
 } from "./adverse.js";
 import { assembleCaseEvidence } from "./evidence.js";
 import { buildCreditMemo } from "./memo.js";
-import { MemoAgentError, runMemoAgent } from "./memo-agent.js";
-import { evidenceHash } from "./memo-trace.js";
+import { MemoAgentError, runMemoAgent } from "../agents/memo-writer/index.js";
+import { evidenceHash } from "../agents/shared/trace.js";
 import type {
 	ArtifactAuditMetadata,
 	ArtifactDto,

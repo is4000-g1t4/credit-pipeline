@@ -1,5 +1,9 @@
 // E3 policy-exception tools: allowlisted, case-scoped, never throwing.
 //
+// These are NOT model-callable (the manifest declares `tools: []`): the
+// orchestrator runs them in code to prefetch the rule facts and policy
+// section bodies the single-shot drafter is given. Hence no `tools/` dir.
+//
 // The five policy tools project the deterministic registry/context (no model
 // choice of mapping, approver, or mitigant) plus the injected policy client
 // for section bodies. The four evidence tools delegate to
@@ -14,7 +18,7 @@ import {
 	listUnavailableParams,
 	runMemoEvidenceTool,
 	searchEvidenceParams,
-} from "../memo-tools.js";
+} from "../memo-writer/tools/index.js";
 import {
 	PolicySourceError,
 	type CaseRuleContext,

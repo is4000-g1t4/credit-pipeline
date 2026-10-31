@@ -25,8 +25,13 @@ import {
 import { listArtifacts } from "../artifacts.js";
 import type { AssistActor } from "../access.js";
 import type { AssistRuntime } from "../types.js";
-import { policyExceptionReplayKey, type PolicyExceptionAgentConfig } from "./agent.js";
-import { PolicySourceError, type CaseRuleContext, type PolicySectionDelivery } from "./types.js";
+import {
+	PolicySourceError,
+	policyExceptionReplayKey,
+	type CaseRuleContext,
+	type PolicyExceptionAgentConfig,
+	type PolicySectionDelivery,
+} from "../../agents/policy-exception/index.js";
 
 export interface PolicyExceptionViewInput {
 	db: Db;
@@ -36,7 +41,7 @@ export interface PolicyExceptionViewInput {
 	};
 	actor: AssistActor;
 	runtime: AssistRuntime;
-	policyClient?: import("./types.js").PolicyClient;
+	policyClient?: import("../../agents/policy-exception/index.js").PolicyClient;
 	now?: Date;
 }
 
@@ -170,7 +175,7 @@ function dedupeRefs(context: CaseRuleContext): Array<{ policyKey: string; sectio
 }
 
 export async function resolvePolicyCatalog(input: {
-	policyClient?: import("./types.js").PolicyClient;
+	policyClient?: import("../../agents/policy-exception/index.js").PolicyClient;
 	context: CaseRuleContext;
 	actor: AssistActor;
 	extraRefs?: Array<{ policyKey: string; sectionId: string; versionId?: string }>;
@@ -333,7 +338,7 @@ async function baseEvidence(input: {
  * `sourceStatus: "unavailable"`, never a throw. */
 export async function buildPolicyExceptionView(
 	input: PolicyExceptionViewInput,
-): Promise<import("./types.js").PolicyExceptionView> {
+): Promise<import("../../agents/policy-exception/index.js").PolicyExceptionView> {
 	const deterministic = await buildCaseRuleContext({
 		db: input.db,
 		applicationId: input.kase.application.id,
@@ -390,7 +395,7 @@ export async function loadPolicyExceptionEvidence(input: {
 	};
 	actor: AssistActor;
 	runtime: AssistRuntime;
-	policyClient?: import("./types.js").PolicyClient;
+	policyClient?: import("../../agents/policy-exception/index.js").PolicyClient;
 	now?: Date;
 }): Promise<PolicyExceptionEvidence> {
 	const deterministic = await buildCaseRuleContext({
@@ -442,7 +447,7 @@ export async function policyExceptionEvidenceForArtifact(input: {
 	actor: AssistActor;
 	artifact: { citations: Array<{ ref: string }> };
 	runtime: AssistRuntime;
-	policyClient?: import("./types.js").PolicyClient;
+	policyClient?: import("../../agents/policy-exception/index.js").PolicyClient;
 	now?: Date;
 }): Promise<PolicyExceptionEvidence> {
 	const deterministic = await buildCaseRuleContext({

@@ -26,8 +26,12 @@ import {
 	type EvidenceItem,
 } from "@credit/core";
 import type { applications } from "@credit/db/applications";
-import { MemoAgentError, runMemoAgent, type MemoAgentConfig } from "../src/assist/memo-agent.js";
-import { createAgentsMemoRunner } from "../src/assist/memo-agent-sdk.js";
+import {
+	MemoAgentError,
+	runMemoAgent,
+	type MemoAgentConfig,
+	createAgentsMemoRunner,
+} from "../src/agents/memo-writer/index.js";
 import { applicationObservability } from "../src/observability.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));

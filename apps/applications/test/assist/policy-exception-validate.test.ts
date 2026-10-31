@@ -11,11 +11,9 @@ import {
 	validateExplanation,
 	validateFollowUp,
 	validatePolicyMemoDraft,
-} from "../../src/assist/policy-exception/validate.js";
-import type {
-	CaseRuleContext,
-	PolicySectionDelivery,
-} from "../../src/assist/policy-exception/types.js";
+	type CaseRuleContext,
+	type PolicySectionDelivery,
+} from "../../src/agents/policy-exception/index.js";
 
 const APP_ID = "55555555-5555-4555-8555-555555555555";
 const VERSION_ID = "22222222-2222-4222-8222-222222222222";

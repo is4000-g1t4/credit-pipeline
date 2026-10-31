@@ -22,9 +22,9 @@ import {
 	type MemoAgentErrorCode,
 	type MemoAgentRunResult,
 	type MemoAgentRunner,
-} from "../src/assist/memo-agent.js";
-import { runMemoEvidenceTool } from "../src/assist/memo-tools.js";
-import type { MemoAgentTrace } from "../src/assist/memo-trace.js";
+	runMemoEvidenceTool,
+} from "../src/agents/memo-writer/index.js";
+import type { MemoAgentTrace } from "../src/agents/shared/trace.js";
 
 dotenv.config({ path: fileURLToPath(new URL("../../../.env", import.meta.url)) });
 
@@ -570,7 +570,7 @@ console.log(JSON.stringify(summary, null, 2));
 if (passAt1 < 1) process.exitCode = 1;
 
 if (process.argv.includes("--live")) {
-	const { createAgentsMemoRunner } = await import("../src/assist/memo-agent-sdk.js");
+	const { createAgentsMemoRunner } = await import("../src/agents/memo-writer/index.js");
 	const { applicationObservability } = await import("../src/observability.js");
 	const apiKey = process.env.OPENROUTER_API_KEY ?? "";
 	if (!apiKey) throw new Error("OPENROUTER_API_KEY is required for --live");

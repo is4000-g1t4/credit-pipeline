@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import type { EvidenceBundle } from "@credit/core";
 import type { applications } from "@credit/db/applications";
-import { createAgentsMemoRunner } from "../../src/assist/memo-agent-sdk.js";
+import { createAgentsMemoRunner } from "../../src/agents/memo-writer/index.js";
 
 process.env.OTEL_SDK_DISABLED = "true";
 

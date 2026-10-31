@@ -20,7 +20,7 @@ import {
 } from "@credit/core";
 import { z } from "zod";
 import type { PolicyExceptionMemoContent } from "./memo.js";
-import { sectionKey } from "./tools.js";
+import { sectionKey } from "./prefetch-tools.js";
 import type {
 	CaseRuleContext,
 	CaseRuleFailure,

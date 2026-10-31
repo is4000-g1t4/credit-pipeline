@@ -2,10 +2,12 @@ import { createDb } from "@credit/db";
 import { createLogger, createTemporalGateway } from "@credit/service-kit";
 import { assertDemoBoot } from "@credit/service-kit";
 import { createApp } from "./app.js";
+import { createAgentsIntegrityRunner } from "./agents/integrity/index.js";
+import {
+	createAgentsPolicyExceptionRunner,
+	createHttpPolicyClient,
+} from "./agents/policy-exception/index.js";
 import { createAgentsMemoRunner, startArtifactRetention } from "./assist/index.js";
-import { createHttpPolicyClient } from "./assist/policy-exception/policy-client.js";
-import { createAgentsPolicyExceptionRunner } from "./assist/policy-exception/agent-sdk.js";
-import { createAgentsIntegrityRunner } from "./integrity/agent-sdk.js";
 import { applicationObservability } from "./observability.js";
 import { startIntegrityWorker } from "./integrity/runs.js";
 import { configFromEnv } from "./documents/index.js";
@@ -39,6 +41,7 @@ const integrityRunner =
 				maxToolCalls: env.integrity.maxToolCalls,
 				maxOutputTokens: env.integrity.maxOutputTokens,
 				timeoutMs: env.integrity.timeoutMs,
+				logger,
 			})
 		: null;
 
@@ -66,6 +69,7 @@ const app = createApp({
 						maxToolCalls: env.assist.memoMaxToolCalls,
 						maxOutputTokens: env.assist.memoMaxOutputTokens,
 						timeoutMs: env.assist.memoTimeoutMs,
+						logger,
 					}),
 				}
 			: {}),
@@ -96,6 +100,7 @@ const app = createApp({
 						maxToolCalls: env.assist.policyExceptionMaxToolCalls,
 						maxOutputTokens: env.assist.policyExceptionMaxOutputTokens,
 						timeoutMs: env.assist.policyExceptionTimeoutMs,
+						logger,
 						policyClient: createHttpPolicyClient({
 							baseUrl: env.assist.policyUrl,
 							secret: env.assist.policyInternalSecret,

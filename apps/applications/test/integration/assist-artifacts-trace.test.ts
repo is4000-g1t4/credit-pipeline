@@ -19,7 +19,7 @@ import {
 	tombstoneArtifact,
 	updateArtifact,
 } from "../../src/assist/artifacts.js";
-import type { MemoAgentTrace } from "../../src/assist/memo-trace.js";
+import type { MemoAgentTrace } from "../../src/agents/shared/trace.js";
 import { insertApplication } from "../helper.js";
 
 const TITLE = "SENTINEL-TRACE-TITLE-T404";

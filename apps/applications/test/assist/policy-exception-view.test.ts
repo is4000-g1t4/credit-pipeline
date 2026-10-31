@@ -2,7 +2,11 @@
 // replay-key stability (drawer tokens excluded), and source-unavailable.
 import { describe, expect, it } from "vitest";
 import { hashQuote, parseSourceRef, resolveExceptionPath, ruleDefinitionById } from "@credit/core";
-import { policyExceptionReplayKey } from "../../src/assist/policy-exception/agent.js";
+import {
+	policyExceptionReplayKey,
+	PolicySourceError,
+	type CaseRuleContext as SharedContext,
+} from "../../src/agents/policy-exception/index.js";
 import {
 	policyCatalogRefs,
 	policySectionRefFor,
@@ -10,8 +14,6 @@ import {
 	ruleFailureRef,
 	toSharedCaseRuleContext,
 } from "../../src/assist/policy-exception/view.js";
-import { PolicySourceError } from "../../src/assist/policy-exception/types.js";
-import type { CaseRuleContext as SharedContext } from "../../src/assist/policy-exception/types.js";
 
 const APP_ID = "55555555-5555-4555-8555-555555555555";
 const EVAL_ID = "33333333-3333-4333-8333-333333333333";

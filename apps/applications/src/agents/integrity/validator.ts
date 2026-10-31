@@ -13,15 +13,15 @@ import type {
 	IntegrityConsistencyProposal,
 	IntegritySeverity,
 	ValidatedConsistency,
-} from "./types.js";
+} from "../../integrity/types.js";
 import {
 	codePointSlice,
 	compareNames,
 	compareRegistration,
 	normalizeNameTokens,
 	normalizeRegistration,
-} from "../documents/crosscheck.js";
-import { sha256Hex } from "../documents/crypto.js";
+} from "../../documents/crosscheck.js";
+import { sha256Hex } from "../../documents/crypto.js";
 
 const MAX_QUOTE = 1_000;
 

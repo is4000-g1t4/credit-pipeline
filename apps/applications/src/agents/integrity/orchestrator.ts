@@ -17,7 +17,7 @@ import {
 	type EvidenceItem,
 	type UnavailableSource,
 } from "@credit/core";
-import type { MemoAgentTrace } from "../assist/memo-trace.js";
+import type { MemoAgentTrace } from "../shared/trace.js";
 import {
 	INTEGRITY_CANDIDATE_FIELDS,
 	INTEGRITY_CONSISTENCY_FIELDS,
@@ -35,9 +35,9 @@ import {
 	type IntegrityUsage,
 	type ValidatedCandidate,
 	type ValidatedConsistency,
-} from "./types.js";
-import { confirmConsistency, validateCandidate, verifyQuote } from "./validators.js";
-import { sha256Hex } from "../documents/crypto.js";
+} from "../../integrity/types.js";
+import { confirmConsistency, validateCandidate, verifyQuote } from "./validator.js";
+import { sha256Hex } from "../../documents/crypto.js";
 
 const MAX_PREVIOUS_OUTPUT = 8_000;
 const MAX_TOOL_REFS = 500;

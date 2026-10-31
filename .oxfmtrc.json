@@ -10,6 +10,8 @@
 		"apps/web/src/routeTree.gen.ts",
 		"e2e/test-results/**",
 		"e2e/logs/**",
-		"apps/*/src/agents/**/instructions.md"
+		"apps/*/src/agents/**/instructions.md",
+		"apps/applications/src/agents/integrity/brief.md",
+		"apps/applications/src/agents/policy-exception/memo-mode.md"
 	]
 }

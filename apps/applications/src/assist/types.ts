@@ -1,9 +1,9 @@
 import type { CitationRecord } from "@credit/core";
 import type { generatedArtifacts } from "@credit/db/applications";
-import type { MemoAgentRunner } from "./memo-agent.js";
-import type { MemoAgentTrace } from "./memo-trace.js";
+import type { MemoAgentRunner } from "../agents/memo-writer/index.js";
+import type { MemoAgentTrace } from "../agents/shared/trace.js";
 
-export type { MemoAgentTrace } from "./memo-trace.js";
+export type { MemoAgentTrace } from "../agents/shared/trace.js";
 
 export type ArtifactType = (typeof generatedArtifacts.$inferSelect)["type"];
 export type ArtifactStatus = (typeof generatedArtifacts.$inferSelect)["status"];
@@ -65,9 +65,9 @@ export interface AssistRuntime {
 	/** Test seam for the agentic memo writer; routes build the SDK runner. */
 	memoAgentRunner?: MemoAgentRunner;
 	/** E3 policy bridge; production is `createHttpPolicyClient`. */
-	policyClient?: import("./policy-exception/types.js").PolicyClient;
+	policyClient?: import("../agents/policy-exception/index.js").PolicyClient;
 	/** E3 agent runner; production is the SDK runner. */
-	policyExceptionAgentRunner?: import("./policy-exception/types.js").PolicyExceptionAgentRunner;
+	policyExceptionAgentRunner?: import("../agents/policy-exception/index.js").PolicyExceptionAgentRunner;
 }
 
 /** Public artifact shape. Content is whatever the validated type schema

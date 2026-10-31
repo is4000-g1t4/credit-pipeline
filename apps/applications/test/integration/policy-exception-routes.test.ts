@@ -24,7 +24,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../../src/app.js";
 import { createArtifact } from "../../src/assist/artifacts.js";
-import type { PolicySectionDelivery } from "../../src/assist/policy-exception/types.js";
+import type { PolicySectionDelivery } from "../../src/agents/policy-exception/index.js";
 import { loadEnv } from "../../src/env.js";
 import { createUser, signed, type TestContext, type TestUser } from "../helper.js";
 

@@ -40,22 +40,18 @@ import {
 	PolicyExceptionAgentError,
 	policyExceptionReplayKey,
 	type PolicyExceptionAgentConfig,
-} from "../src/assist/policy-exception/agent.js";
-import { createAgentsPolicyExceptionRunner } from "../src/assist/policy-exception/agent-sdk.js";
-import { toSharedCaseRuleContext } from "../src/assist/policy-exception/view.js";
-import {
+	createAgentsPolicyExceptionRunner,
 	runPolicyExceptionTool,
 	policyEvidenceRef,
 	sectionKey,
-} from "../src/assist/policy-exception/tools.js";
-import {
 	PolicySourceError,
 	type CaseRuleContext,
 	type PolicyClient,
 	type PolicyExceptionAgentRunner,
 	type PolicySectionDelivery,
-} from "../src/assist/policy-exception/types.js";
-import type { PolicyExceptionMemoContent } from "../src/assist/policy-exception/memo.js";
+	type PolicyExceptionMemoContent,
+} from "../src/agents/policy-exception/index.js";
+import { toSharedCaseRuleContext } from "../src/assist/policy-exception/view.js";
 import { applicationObservability } from "../src/observability.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -876,8 +872,8 @@ function createScriptedRunner(
 	return {
 		async run(
 			_input,
-		): Promise<import("../src/assist/policy-exception/types.js").PolicyExceptionAgentRunResult> {
-			const toolCalls: import("../src/assist/policy-exception/types.js").PolicyExceptionAgentRunResult["toolCalls"] =
+		): Promise<import("../src/agents/policy-exception/index.js").PolicyExceptionAgentRunResult> {
+			const toolCalls: import("../src/agents/policy-exception/index.js").PolicyExceptionAgentRunResult["toolCalls"] =
 				[];
 			const refs = new Set<string>();
 			const fresh: PolicySectionDelivery[] = [];

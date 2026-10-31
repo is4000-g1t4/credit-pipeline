@@ -32,9 +32,12 @@ import { requireAssistCaseAccess, requireMemoableCase, type AssistActor } from "
 import { createArtifact, listArtifacts } from "../artifacts.js";
 import { RuleContextUnavailableError, UnsupportedPolicyVersionError } from "../policy-rules.js";
 import type { AssistConfig, AssistRuntime } from "../types.js";
-import { PolicyExceptionAgentError, runPolicyExceptionAgent } from "./agent.js";
-import { PolicySourceError } from "./types.js";
-import { validatePolicyMemoDraft } from "./validate.js";
+import {
+	PolicyExceptionAgentError,
+	PolicySourceError,
+	runPolicyExceptionAgent,
+	validatePolicyMemoDraft,
+} from "../../agents/policy-exception/index.js";
 import { buildPolicyExceptionView, loadPolicyExceptionEvidence } from "./view.js";
 
 export interface PolicyExceptionRouteDeps {
@@ -107,9 +110,9 @@ function agentConfigFor(config: AssistConfig): {
 }
 
 function traceSummary(
-	trace: import("../memo-trace.js").MemoAgentTrace,
+	trace: import("../../agents/shared/trace.js").MemoAgentTrace,
 	config: AssistConfig,
-): import("./types.js").PolicyExceptionTraceSummary {
+): import("../../agents/policy-exception/index.js").PolicyExceptionTraceSummary {
 	return {
 		agentVersion: trace.agentVersion,
 		model: trace.model,
@@ -131,7 +134,7 @@ function traceSummary(
 
 function hydrateCitations<T extends { citations: Array<{ policyKey: string; sectionId: string }> }>(
 	content: T,
-	catalog: import("./types.js").PolicySectionDelivery[],
+	catalog: import("../../agents/policy-exception/index.js").PolicySectionDelivery[],
 ): T {
 	const byKey = new Map(
 		catalog.map((section) => [`${section.policyKey}#${section.sectionId}`, section]),
@@ -438,7 +441,8 @@ export function policyExceptionRoutes(deps: PolicyExceptionRouteDeps): ServiceAp
 						(content as { status: string }).status,
 						loaded.context.failedRules.map((rule) => rule.ruleId),
 					);
-					const explained = content as import("./types.js").PolicyExplanation;
+					const explained =
+						content as import("../../agents/policy-exception/index.js").PolicyExplanation;
 					return c.json({
 						...explained,
 						rules: explained.rules.map((rule) => hydrateCitations(rule, loaded.catalog)),
@@ -564,7 +568,7 @@ export function policyExceptionRoutes(deps: PolicyExceptionRouteDeps): ServiceAp
 						(content as { status: string }).status,
 						questionHmac,
 					);
-					const answer = content as import("./types.js").PolicyFollowUp;
+					const answer = content as import("../../agents/policy-exception/index.js").PolicyFollowUp;
 					return c.json({
 						...answer,
 						...hydrateCitations(answer, loaded.catalog),

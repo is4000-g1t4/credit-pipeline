@@ -16,9 +16,9 @@ import {
 	MemoAgentError,
 	type MemoAgentRunResult,
 	type MemoAgentRunner,
-} from "../../src/assist/memo-agent.js";
-import { runMemoEvidenceTool } from "../../src/assist/memo-tools.js";
-import type { MemoAgentTrace } from "../../src/assist/memo-trace.js";
+	runMemoEvidenceTool,
+} from "../../src/agents/memo-writer/index.js";
+import type { MemoAgentTrace } from "../../src/agents/shared/trace.js";
 import { createUser, setupApp, signed, type TestContext, type TestUser } from "../helper.js";
 
 process.env.LOG_LEVEL ??= "silent";

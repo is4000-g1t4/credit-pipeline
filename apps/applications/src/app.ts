@@ -48,8 +48,8 @@ export interface ApplicationsDeps {
 	assist?: {
 		config?: Partial<AssistConfig>;
 		memoAgentRunner?: MemoAgentRunner;
-		policyClient?: import("./assist/policy-exception/types.js").PolicyClient;
-		policyExceptionAgentRunner?: import("./assist/policy-exception/types.js").PolicyExceptionAgentRunner;
+		policyClient?: import("./agents/policy-exception/index.js").PolicyClient;
+		policyExceptionAgentRunner?: import("./agents/policy-exception/index.js").PolicyExceptionAgentRunner;
 		now?: () => Date;
 		researchFetchImpl?: typeof fetch;
 	};

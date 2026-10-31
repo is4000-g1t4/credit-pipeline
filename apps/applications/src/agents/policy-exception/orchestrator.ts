@@ -6,15 +6,19 @@
 // run, one bounded repair, then a typed `PolicyExceptionAgentError`. Fail
 // closed: no artifact is ever returned alongside issues.
 import { hashCanonical, type EvidenceBundle } from "@credit/core";
-import type { MemoAgentTrace } from "../memo-trace.js";
+import type { MemoAgentTrace } from "../shared/trace.js";
 import { composePolicyMemoContent, type PolicyExceptionMemoContent } from "./memo.js";
-import { isPolicyRetrievalTool, isRuleContextTool, runPolicyExceptionTool } from "./tools.js";
+import {
+	isPolicyRetrievalTool,
+	isRuleContextTool,
+	runPolicyExceptionTool,
+} from "./prefetch-tools.js";
 import {
 	knownCasePii,
 	validateExplanation,
 	validateFollowUp,
 	validatePolicyMemoDraft,
-} from "./validate.js";
+} from "./validator.js";
 import type {
 	CaseRuleContext,
 	PolicyClient,

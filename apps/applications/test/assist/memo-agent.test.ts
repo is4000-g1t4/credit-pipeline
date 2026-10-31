@@ -16,9 +16,9 @@ import {
 	type MemoAgentConfig,
 	type MemoAgentRunResult,
 	type MemoAgentRunner,
-} from "../../src/assist/memo-agent.js";
-import { MEMO_TOOL_NAMES } from "../../src/assist/memo-tools.js";
-import { evidenceHash } from "../../src/assist/memo-trace.js";
+	MEMO_TOOL_NAMES,
+} from "../../src/agents/memo-writer/index.js";
+import { evidenceHash } from "../../src/agents/shared/trace.js";
 
 type ApplicationRow = typeof applications.$inferSelect;
 

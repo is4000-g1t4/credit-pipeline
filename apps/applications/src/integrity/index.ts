@@ -1,13 +1,17 @@
 // E2 document integrity barrel.
 
 export { integrityRoutes, type IntegrityRouteDeps } from "./routes.js";
-export { createAgentsIntegrityRunner, type AgentsIntegrityRunnerOptions } from "./agent-sdk.js";
 export {
+	confirmConsistency,
+	createAgentsIntegrityRunner,
 	runIntegrityAnalysis,
 	runIntegrityTriage,
+	validateCandidate,
+	verifyQuote,
+	type AgentsIntegrityRunnerOptions,
 	type AnalysisOutcome,
 	type TriageOutcome,
-} from "./agent.js";
+} from "../agents/integrity/index.js";
 export {
 	analysisInputHash,
 	createIntegrityRun,
@@ -44,6 +48,5 @@ export {
 } from "./store.js";
 export { buildFingerprint, FINGERPRINT_VERSION, type FingerprintValues } from "./fingerprint.js";
 export { buildIntegritySignals, shouldFlag, maxSeverity } from "./signals.js";
-export { verifyQuote, validateCandidate, confirmConsistency } from "./validators.js";
 export { countDuplicateDocuments, findDuplicateDocuments } from "./duplicates.js";
 export * from "./types.js";

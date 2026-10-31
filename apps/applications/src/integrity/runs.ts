@@ -12,7 +12,7 @@ import { documentIntegrityRuns, fraudReviews, type Db } from "@credit/db/applica
 import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { hashCanonical } from "@credit/core";
 import { HttpError, writeAudit, type Logger } from "@credit/service-kit";
-import { runIntegrityAnalysis } from "./agent.js";
+import { runIntegrityAnalysis } from "../agents/integrity/index.js";
 import { lockApplication } from "../documents/access.js";
 import { insertAnalysisResults, insertBriefArtifact } from "./store.js";
 import { loadIntegritySource } from "./source.js";

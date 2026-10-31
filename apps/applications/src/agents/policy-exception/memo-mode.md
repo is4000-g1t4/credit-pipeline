@@ -1,0 +1,1 @@
+MEMO MODE: your top-level object MUST contain exactly "title", "sections", and "openItems". Never include "status", "rules", "segments", or "citations" at the top level. Even when the engine outcome is decline, write the reviewer memo for the pending exception case.

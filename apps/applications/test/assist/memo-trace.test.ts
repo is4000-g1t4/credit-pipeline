@@ -5,7 +5,7 @@ import {
 	evidenceHash,
 	memoAgentTraceSchema,
 	type MemoAgentTrace,
-} from "../../src/assist/memo-trace.js";
+} from "../../src/agents/shared/trace.js";
 
 function validTrace(): MemoAgentTrace {
 	return {

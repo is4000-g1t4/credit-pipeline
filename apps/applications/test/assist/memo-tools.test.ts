@@ -8,7 +8,7 @@ import {
 	MEMO_TOOL_NAMES,
 	runMemoEvidenceTool,
 	searchEvidenceParams,
-} from "../../src/assist/memo-tools.js";
+} from "../../src/agents/memo-writer/index.js";
 
 const APP_ID = "55555555-5555-4555-8555-555555555555";
 

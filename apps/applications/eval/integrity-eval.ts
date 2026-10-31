@@ -16,8 +16,14 @@ import {
 	containsBriefDecisionLanguage,
 	containsDefinitiveFraudLanguage,
 } from "@credit/core";
-import { runIntegrityAnalysis, runIntegrityTriage } from "../src/integrity/agent.js";
-import { createAgentsIntegrityRunner } from "../src/integrity/agent-sdk.js";
+import {
+	runIntegrityAnalysis,
+	runIntegrityTriage,
+	createAgentsIntegrityRunner,
+	extractCurrency,
+	normalizeCandidateValue,
+	parseAmountValue,
+} from "../src/agents/integrity/index.js";
 import { applicationObservability } from "../src/observability.js";
 import { signalSourceRef, shouldFlag } from "../src/integrity/signals.js";
 import {
@@ -32,11 +38,6 @@ import {
 	type IntegritySignalCode,
 	type IntegritySource,
 } from "../src/integrity/types.js";
-import {
-	extractCurrency,
-	normalizeCandidateValue,
-	parseAmountValue,
-} from "../src/integrity/validators.js";
 import {
 	extractCandidates,
 	normalizeNameTokens,

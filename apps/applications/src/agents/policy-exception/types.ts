@@ -11,7 +11,7 @@ import type {
 	PolicySectionRef,
 	PolicyApplicationKind,
 } from "@credit/core";
-import type { MemoAgentTrace } from "../memo-trace.js";
+import type { MemoAgentTrace } from "../shared/trace.js";
 
 export interface PolicySectionDelivery {
 	policyId: string;
