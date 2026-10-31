@@ -35,6 +35,7 @@ import {
 	failIntegrityRun,
 	INTEGRITY_RUN_KIND,
 	IntegrityAttemptFailed,
+	startIntegrityRun,
 } from "../../src/integrity/runs.js";
 import { sweepQueuedIntegrityRuns } from "../../src/integrity/sweep.js";
 import type { IntegrityAgentRunner, IntegrityConfig } from "../../src/integrity/types.js";
@@ -670,7 +671,10 @@ describe("integrity run dispatch", () => {
 			runId,
 			token: runId,
 			timeoutMs: 30_000,
+			// The workflow's attempt loop matches the row's claim limit.
+			maxAttempts: (await runRow(runId)).maxAttempts,
 		});
+		expect(startCalls[0]?.maxAttempts).toBe(2);
 		expect((await runRow(runId)).status).toBe("queued");
 
 		// A replayed request does not start a second workflow.
@@ -976,13 +980,8 @@ describe("integrity runs on Temporal", () => {
 				documentSha256: [],
 				requestedBy: randomUUID(),
 			});
-			await realStarter.start({
-				kind: INTEGRITY_RUN_KIND,
-				runId: run.id,
-				token: run.id,
-				timeoutMs: 30_000,
-				maxAttempts: 2,
-			});
+			// The production start path: attempts come from the row (DB default).
+			await startIntegrityRun(runDeps(ctx), run);
 			const row = await waitTerminal(run.id, 45_000);
 			expect(row).toMatchObject({ status: "failed", errorCode: "INTERNAL_ERROR", attempts: 2 });
 			expect(row.leaseToken).toBeNull();

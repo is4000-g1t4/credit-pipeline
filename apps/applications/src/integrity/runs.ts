@@ -374,11 +374,13 @@ export async function failIntegrityRun(
 /**
  * Starts the run's Temporal workflow after its row committed. Never throws:
  * on failure the row stays queued and the agent-worker sweep re-issues the
- * (idempotent) start. Metadata-only logging.
+ * (idempotent) start. The workflow runs the row's `max_attempts`, so
+ * Temporal's attempt loop and the claim's attempt limit agree.
+ * Metadata-only logging.
  */
 export async function startIntegrityRun(
 	deps: IntegrityRunDeps,
-	run: { id: string },
+	run: { id: string; maxAttempts: number },
 ): Promise<void> {
 	if (!deps.starter) return;
 	try {
@@ -387,6 +389,7 @@ export async function startIntegrityRun(
 			runId: run.id,
 			token: run.id,
 			timeoutMs: integrityLeaseSeconds(deps.config) * 1000,
+			maxAttempts: run.maxAttempts,
 		});
 	} catch (err) {
 		deps.logger.warn(

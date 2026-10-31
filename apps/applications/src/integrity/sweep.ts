@@ -19,9 +19,12 @@ export interface SweepResult {
 	failed: number;
 }
 
-async function queuedBefore(deps: IntegrityRunDeps, before: Date): Promise<Array<{ id: string }>> {
+async function queuedBefore(
+	deps: IntegrityRunDeps,
+	before: Date,
+): Promise<Array<{ id: string; maxAttempts: number }>> {
 	return deps.db
-		.select({ id: documentIntegrityRuns.id })
+		.select({ id: documentIntegrityRuns.id, maxAttempts: documentIntegrityRuns.maxAttempts })
 		.from(documentIntegrityRuns)
 		.where(
 			and(
