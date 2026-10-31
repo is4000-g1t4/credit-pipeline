@@ -50,6 +50,13 @@
       "when": 1792771556626,
       "tag": "0006_breezy_toad_men",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793455447980,
+      "tag": "0007_fresh_corsair",
+      "breakpoints": true
     }
   ]
 }

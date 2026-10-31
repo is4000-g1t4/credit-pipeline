@@ -153,8 +153,11 @@ const UTC_DAY_START = sql`date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZO
  * merges into the single `usage` ledger (counted by the `created_at` spend
  * query for same-day runs); a prior-day run retried today additionally
  * counts its `context_usage` by `context_started_at`, so today's retry spend
- * is never free and never double-counted. Returns the first exhausted
- * guard's machine-readable reason (audited, never PII).
+ * is never free and never double-counted. Spend of attempts that died
+ * before finalizing (`retained_cost_usd`: measured where checkpointed,
+ * else the started stages' caps) counts too, so retries never hide spend.
+ * Returns the first exhausted guard's machine-readable reason (audited,
+ * never PII).
  */
 export async function checkAutoCaps(
 	db: Db | Tx,
@@ -173,6 +176,19 @@ export async function checkAutoCaps(
 	if ((total[0]?.n ?? 0) >= env.autoTriggerMaxRunsPerDay) {
 		return { ok: false, reason: "global_daily_cap" };
 	}
+	const spent = await autoSpendTodayUsd(db, env);
+	if (spent >= env.autoTriggerDailyCostBudgetUsd) {
+		return { ok: false, reason: "daily_cost_budget" };
+	}
+	return { ok: true };
+}
+
+/**
+ * Today's auto spend the cost budget compares against (see checkAutoCaps):
+ * recorded usage, retained dead-attempt spend, prior-day retry/policy
+ * spend, plus a full reservation per in-flight auto run or stage.
+ */
+export async function autoSpendTodayUsd(db: Db | Tx, env: ResearchEnv): Promise<number> {
 	// Non-numeric costs (never server-written) count as 0, never as poison.
 	const cost = (await db.execute(
 		sql`SELECT coalesce(sum(CASE WHEN usage->>'costUsd' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (usage->>'costUsd')::double precision ELSE 0 END), 0)::float8 AS total FROM agent_runs WHERE trigger = 'auto' AND created_at >= ${UTC_DAY_START}`,
@@ -190,21 +206,27 @@ export async function checkAutoCaps(
 	const policyRetryCost = (await db.execute(
 		sql`SELECT coalesce(sum(CASE WHEN policy_usage->>'costUsd' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (policy_usage->>'costUsd')::double precision ELSE 0 END), 0)::float8 AS total FROM agent_runs WHERE trigger = 'auto' AND policy_started_at >= ${UTC_DAY_START} AND created_at < ${UTC_DAY_START}`,
 	)) as unknown as Array<{ total: number }>;
+	// Spend of fenced/dead attempts (retry rotation, failAgentRun, context
+	// retry fences): each attempt's `usage` ledger starts fresh, so without
+	// this a retried run counts only its last attempt (or $0). Counted for
+	// runs created today and for any run that retained spend today (a
+	// prior-day run is then counted whole: fail closed).
+	const retained = (await db.execute(
+		sql`SELECT coalesce(sum(retained_cost_usd), 0)::float8 AS total FROM agent_runs WHERE trigger = 'auto' AND (created_at >= ${UTC_DAY_START} OR retained_cost_at >= ${UTC_DAY_START})`,
+	)) as unknown as Array<{ total: number }>;
 	const inFlight = (await db.execute(
 		sql`SELECT count(*)::int AS n FROM agent_runs WHERE trigger = 'auto' AND ((created_at >= ${UTC_DAY_START} AND status IN ('queued', 'running')) OR (context_status = 'running' AND context_stage_token IS NOT NULL) OR (policy_status = 'running' AND policy_timeout_at IS NOT NULL))`,
 	)) as unknown as Array<{ n: number }>;
-	const spent =
+	return (
 		(cost[0]?.total ?? 0) +
+		(retained[0]?.total ?? 0) +
 		(retryCost[0]?.total ?? 0) +
 		(policyRetryCost[0]?.total ?? 0) +
 		(inFlight[0]?.n ?? 0) *
 			(env.maxCostUsd +
 				env.contextMaxCostUsd +
-				(env.policyAssistEnabled ? env.policyCaseMaxCostUsd : 0));
-	if (spent >= env.autoTriggerDailyCostBudgetUsd) {
-		return { ok: false, reason: "daily_cost_budget" };
-	}
-	return { ok: true };
+				(env.policyAssistEnabled ? env.policyCaseMaxCostUsd : 0))
+	);
 }
 
 async function auditAuto(

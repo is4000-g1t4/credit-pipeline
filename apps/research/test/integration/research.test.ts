@@ -432,7 +432,7 @@ describe("run token + failAgentRun (lifecycle)", () => {
 			).toBe(true);
 			// The workflow's input token is irrelevant: any active run fails.
 			for (const r of [queued, running, done]) {
-				await failResearchRun(ctx.db, runInput(r.id, randomUUID()), {
+				await failResearchRun(ctx.db, env, runInput(r.id, randomUUID()), {
 					code: "timeout",
 					message: "activity timeout",
 				});
@@ -448,7 +448,7 @@ describe("run token + failAgentRun (lifecycle)", () => {
 			// Terminal row untouched: original business failure retained.
 			expect(byId.get(done.id)?.errorCode).toBe("tool_error");
 			// Idempotent.
-			await failResearchRun(ctx.db, runInput(queued.id, randomUUID()), {
+			await failResearchRun(ctx.db, env, runInput(queued.id, randomUUID()), {
 				code: "timeout",
 				message: "again",
 			});
@@ -716,7 +716,7 @@ describe("run token + failAgentRun (lifecycle)", () => {
 			expect(await claimRun(ctx.db, run.id, token)).toBe(true);
 			// Temporal gave up on the run (heartbeat timeout): failAgentRun
 			// takes it and the token turns over (null).
-			await failResearchRun(ctx.db, runInput(run.id, token), {
+			await failResearchRun(ctx.db, env, runInput(run.id, token), {
 				code: "timeout",
 				message: "activity timeout",
 			});
@@ -773,7 +773,7 @@ describe("run token + failAgentRun (lifecycle)", () => {
 			// guard must reject the write — no seam, just a slow agent.
 			const failingRunner = {
 				async runBrief(): Promise<AgentResult> {
-					await failResearchRun(ctx.db, runInput(run.id, token), {
+					await failResearchRun(ctx.db, env, runInput(run.id, token), {
 						code: "timeout",
 						message: "activity timeout",
 					});

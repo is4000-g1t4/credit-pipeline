@@ -859,7 +859,9 @@ describe("durable auto-event log (redelivery after change)", () => {
 		try {
 			const spendToday = async (): Promise<number> => {
 				const rows = (await ctx.db.execute(
-					sql`SELECT coalesce(sum(CASE WHEN usage->>'costUsd' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (usage->>'costUsd')::double precision ELSE 0 END), 0)::float8 AS total FROM agent_runs WHERE trigger = 'auto' AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`,
+					// Recorded usage plus retained dead-attempt spend (checkAutoCaps sums both).
+					sql`SELECT (SELECT coalesce(sum(CASE WHEN usage->>'costUsd' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (usage->>'costUsd')::double precision ELSE 0 END), 0) FROM agent_runs WHERE trigger = 'auto' AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')::float8
+						+ (SELECT coalesce(sum(retained_cost_usd), 0) FROM agent_runs WHERE trigger = 'auto' AND (created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' OR retained_cost_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'))::float8 AS total`,
 				)) as unknown as Array<{ total: number }>;
 				return rows[0]?.total ?? 0;
 			};
@@ -989,7 +991,9 @@ describe("durable auto-event log (redelivery after change)", () => {
 			const env = autoEnv();
 			const spendToday = async (): Promise<number> => {
 				const rows = (await ctx.db.execute(
-					sql`SELECT coalesce(sum(CASE WHEN usage->>'costUsd' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (usage->>'costUsd')::double precision ELSE 0 END), 0)::float8 AS total FROM agent_runs WHERE trigger = 'auto' AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`,
+					// Recorded usage plus retained dead-attempt spend (checkAutoCaps sums both).
+					sql`SELECT (SELECT coalesce(sum(CASE WHEN usage->>'costUsd' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (usage->>'costUsd')::double precision ELSE 0 END), 0) FROM agent_runs WHERE trigger = 'auto' AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')::float8
+						+ (SELECT coalesce(sum(retained_cost_usd), 0) FROM agent_runs WHERE trigger = 'auto' AND (created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' OR retained_cost_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'))::float8 AS total`,
 				)) as unknown as Array<{ total: number }>;
 				return rows[0]?.total ?? 0;
 			};

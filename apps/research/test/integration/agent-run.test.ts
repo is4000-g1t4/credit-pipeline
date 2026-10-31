@@ -22,6 +22,7 @@ import {
 	startAfterCommit,
 } from "../../src/agent-run.js";
 import { sweepAgentRuns } from "../../src/agent-sweep.js";
+import { autoSpendTodayUsd, checkAutoCaps } from "../../src/auto-trigger.js";
 import { executeContextRetry } from "../../src/context-stage.js";
 import {
 	stubAgentRunner,
@@ -39,6 +40,7 @@ import {
 	failActiveRun,
 	failOrphanedStages,
 	failOrphanedRuns,
+	failRunningContextStage,
 	finalizeFailure,
 	getRun,
 	initContextStage,
@@ -230,14 +232,14 @@ describe("rotateContextStageForRetry (context-retry fence)", () => {
 			// Fresh retry claims have never heartbeated (the sweep relies on it).
 			expect((await getRun(ctx.db, run.id))?.contextHeartbeatAt).toBeNull();
 
-			const s2 = await rotateContextStageForRetry(ctx.db, run.id);
+			const s2 = await rotateContextStageForRetry(ctx.db, env, run.id);
 			expect(s2).not.toBeNull();
 			expect(s2).not.toBe(retry!.stageToken);
 			const data = { brief: {}, validation: {}, usage: {}, signals: [] };
 			expect(await persistContextSuccess(ctx.db, run.id, retry!.stageToken, data)).toBe(false);
 			expect(await persistContextSuccess(ctx.db, run.id, s2!, data)).toBe(true);
 			// Stage is no longer running: nothing left to fence.
-			expect(await rotateContextStageForRetry(ctx.db, run.id)).toBeNull();
+			expect(await rotateContextStageForRetry(ctx.db, env, run.id)).toBeNull();
 		} finally {
 			await teardown(ctx);
 		}
@@ -259,7 +261,7 @@ describe("failAgentRun", () => {
 			);
 
 			// Non-timeout failures map to the existing internal_error code.
-			await failResearchRun(ctx.db, input(run.id, token), { code: "error", message: "boom" });
+			await failResearchRun(ctx.db, env, input(run.id, token), { code: "error", message: "boom" });
 			const failed = await getRun(ctx.db, run.id);
 			expect(failed).toMatchObject({
 				status: "failed",
@@ -275,7 +277,10 @@ describe("failAgentRun", () => {
 			expect(failed?.contextFinishedAt).not.toBeNull();
 
 			// Idempotent: a second call (workflow cleanup retry) changes nothing.
-			await failResearchRun(ctx.db, input(run.id, token), { code: "timeout", message: "late" });
+			await failResearchRun(ctx.db, env, input(run.id, token), {
+				code: "timeout",
+				message: "late",
+			});
 			expect(await getRun(ctx.db, run.id)).toEqual(failed);
 		} finally {
 			await teardown(ctx);
@@ -302,7 +307,7 @@ describe("failAgentRun", () => {
 			);
 			const done = await getRun(ctx.db, run.id);
 			expect(done?.status).toBe("succeeded");
-			await failResearchRun(ctx.db, input(run.id, token), { code: "timeout", message: "x" });
+			await failResearchRun(ctx.db, env, input(run.id, token), { code: "timeout", message: "x" });
 			expect(await getRun(ctx.db, run.id)).toEqual(done);
 			expect((await counts(ctx, run.id)).evidence).toBe(2);
 		} finally {
@@ -328,11 +333,11 @@ describe("failAgentRun", () => {
 			expect(retry).not.toBeNull();
 
 			// A run-kind cleanup (terminal run) must not clobber the retry stage.
-			await failResearchRun(ctx.db, input(run.id, token), { code: "timeout", message: "x" });
+			await failResearchRun(ctx.db, env, input(run.id, token), { code: "timeout", message: "x" });
 			expect((await getRun(ctx.db, run.id))?.contextStatus).toBe("running");
 
 			const retryInput = input(run.id, retry!.stageToken, RESEARCH_CONTEXT_RETRY_KIND);
-			await failResearchRun(ctx.db, retryInput, { code: "timeout", message: "x" });
+			await failResearchRun(ctx.db, env, retryInput, { code: "timeout", message: "x" });
 			const after = await getRun(ctx.db, run.id);
 			expect(after).toMatchObject({
 				status: "succeeded",
@@ -342,7 +347,7 @@ describe("failAgentRun", () => {
 			});
 			expect(after?.brief).toEqual({ summary: "kept" });
 			// Idempotent.
-			await failResearchRun(ctx.db, retryInput, { code: "error", message: "again" });
+			await failResearchRun(ctx.db, env, retryInput, { code: "error", message: "again" });
 			expect(await getRun(ctx.db, run.id)).toEqual(after);
 		} finally {
 			await teardown(ctx);
@@ -612,6 +617,7 @@ describe("agent-worker sweep", () => {
 			expect(
 				await failActiveRun(
 					ctx.db,
+					env,
 					live.run.id,
 					{ code: "timeout", message: "x" },
 					{ staleForSecs: horizonSecs },
@@ -966,7 +972,7 @@ describe("context retry attempt fencing", () => {
 			});
 			expect(await auditActions(ctx, run.id)).not.toContain("context.failed");
 			// Attempt 2 can still fence and run the one allowed retry stage.
-			expect(await rotateContextStageForRetry(ctx.db, run.id)).not.toBeNull();
+			expect(await rotateContextStageForRetry(ctx.db, env, run.id)).not.toBeNull();
 		} finally {
 			await teardown(ctx);
 		}
@@ -981,7 +987,7 @@ describe("context retry attempt fencing", () => {
 				...stubContextRunner({ outputs: [{}] }),
 				async runContext() {
 					// Attempt 2 fences this attempt mid-call.
-					rotated = await rotateContextStageForRetry(ctx.db, run.id);
+					rotated = await rotateContextStageForRetry(ctx.db, env, run.id);
 					throw new ContextToolError("late failure");
 				},
 			};
@@ -992,6 +998,159 @@ describe("context retry attempt fencing", () => {
 			expect(row).toMatchObject({ contextStatus: "running", contextStageToken: rotated });
 			expect(await auditActions(ctx, run.id)).not.toContain("context.failed");
 		} finally {
+			await teardown(ctx);
+		}
+	});
+});
+
+describe("auto daily budget sees prior-attempt spend", () => {
+	// Auto rows count toward today's shared budget: remove them afterwards
+	// so other suites' budget baselines stay clean.
+	const created: Array<{ ctx: TestContext; id: string }> = [];
+	async function dropAutoRuns(): Promise<void> {
+		for (const { ctx, id } of created.splice(0)) {
+			await ctx.db.execute(sql`DELETE FROM agent_runs WHERE id = ${id}`);
+		}
+	}
+
+	async function autoRun(ctx: TestContext) {
+		const facts = caseFacts();
+		const { run } = await ensureRun(ctx.db, env, {
+			applicationId: facts.applicationId,
+			requestedBy: env.autoTriggerServiceUserId,
+			requestedByRole: "service",
+			trigger: "auto",
+			triggerEventId: randomUUID(),
+			applicantUserId: randomUUID(),
+			caseFacts: facts,
+			aiResearchConsent: true,
+		});
+		created.push({ ctx, id: run.id });
+		return { run, token: run.runToken as string };
+	}
+
+	it("carries a dead attempt's spend across rotation and into the final ledger", async () => {
+		const ctx = setupApp();
+		try {
+			const before = await autoSpendTodayUsd(ctx.db, env);
+			const { run, token } = await autoRun(ctx);
+			const queued = await autoSpendTodayUsd(ctx.db, env);
+			// Attempt 1 claimed (may have spent up to the external cap) and died
+			// before checkpointing anything; attempt 2 fences it.
+			expect(await claimRun(ctx.db, run.id, token)).toBe(true);
+			const t2 = (await rotateRunForRetry(ctx.db, env, run.id)) as string;
+			const rotated = await getRun(ctx.db, run.id);
+			expect(rotated?.retainedCostUsd).toBeCloseTo(env.maxCostUsd, 6);
+			expect(rotated?.retainedCostAt).not.toBeNull();
+			expect(await autoSpendTodayUsd(ctx.db, env)).toBeCloseTo(queued + env.maxCostUsd, 6);
+
+			// Attempt 2 finalizes with its own (small) ledger: the run counts
+			// both attempts, not just the last.
+			expect(await claimRun(ctx.db, run.id, t2)).toBe(true);
+			expect(
+				await finalizeFailure(ctx.db, run.id, t2, "tool_error", "x", "degraded", {
+					costUsd: 0.01,
+				}),
+			).toBe(true);
+			const spent = await autoSpendTodayUsd(ctx.db, env);
+			expect(spent).toBeCloseTo(before + 0.01 + env.maxCostUsd, 6);
+			expect(
+				await checkAutoCaps(
+					ctx.db,
+					{
+						...env,
+						// Run-count caps out of the way: only the cost guard is under test.
+						autoTriggerMaxRunsPerDay: 1_000_000,
+						autoTriggerDailyCostBudgetUsd: before + 0.01 + env.maxCostUsd / 2,
+					},
+					randomUUID(),
+				),
+			).toEqual({ ok: false, reason: "daily_cost_budget" });
+		} finally {
+			await dropAutoRuns();
+			await teardown(ctx);
+		}
+	});
+
+	it("retains measured external spend plus the started context stage's cap on rotation", async () => {
+		const use = successFixture();
+		const ctx = setupApp(use, { env: { contextEnabled: true } });
+		try {
+			const { run, token } = await autoRun(ctx);
+			let rotatedTo: string | null = null;
+			const fencingContext = {
+				...stubContextRunner({ outputs: [{}] }),
+				async runContext(): Promise<never> {
+					rotatedTo = await rotateRunForRetry(ctx.db, env, run.id);
+					throw new ContextToolError("zombie");
+				},
+			};
+			await executeRun(
+				{
+					db: ctx.db,
+					env,
+					logger,
+					runner: stubAgentRunner({ brief: use.brief, fetched: use.fetched }),
+					judge: stubSupportJudge(),
+					repair: stubLanguageRepair(),
+					observability: degradedObservability,
+					contextRunner: fencingContext,
+					fetchContextConsent: async () => true,
+				},
+				run.id,
+				token,
+			);
+			expect(rotatedTo).not.toBeNull();
+			const row = await getRun(ctx.db, run.id);
+			// External finished and checkpointed its measured cost (far below
+			// its cap); the context stage was mid-flight, so its cap counts.
+			const external = (row?.retainedCostUsd ?? 0) - env.contextMaxCostUsd;
+			expect(external).toBeGreaterThan(0);
+			expect(external).toBeLessThan(env.maxCostUsd);
+			expect(row?.externalCostUsd).toBeNull();
+		} finally {
+			await dropAutoRuns();
+			await teardown(ctx);
+		}
+	});
+
+	it("failAgentRun retains the last attempt's spend; context-retry fences retain the stage cap", async () => {
+		const ctx = setupApp();
+		try {
+			const { run, token } = await autoRun(ctx);
+			expect(await claimRun(ctx.db, run.id, token)).toBe(true);
+			// External checkpointed $0.05, then the attempt died in context.
+			await ctx.db.execute(
+				sql`UPDATE agent_runs SET external_cost_usd = 0.05, context_status = 'running', context_started_at = now() WHERE id = ${run.id}`,
+			);
+			await failResearchRun(ctx.db, env, input(run.id, token), { code: "error", message: "x" });
+			const failed = await getRun(ctx.db, run.id);
+			expect(failed?.status).toBe("failed");
+			expect(failed?.retainedCostUsd).toBeCloseTo(0.05 + env.contextMaxCostUsd, 6);
+
+			// Context retry: a fenced attempt and the final cleanup each retain
+			// the stage cap (their spend never merged into usage).
+			const retry = await claimedRetry(ctx);
+			const base = (await getRun(ctx.db, retry.run.id))?.retainedCostUsd ?? 0;
+			expect(await rotateContextStageForRetry(ctx.db, env, retry.run.id)).not.toBeNull();
+			await failResearchRun(
+				ctx.db,
+				env,
+				input(retry.run.id, retry.stageToken, RESEARCH_CONTEXT_RETRY_KIND),
+				{ code: "timeout", message: "x" },
+			);
+			expect((await getRun(ctx.db, retry.run.id))?.retainedCostUsd).toBeCloseTo(
+				base + 2 * env.contextMaxCostUsd,
+				6,
+			);
+
+			// A never-started retry stage made no model call: nothing retained.
+			const unstarted = await claimedRetry(ctx);
+			const before = (await getRun(ctx.db, unstarted.run.id))?.retainedCostUsd ?? 0;
+			expect(await failRunningContextStage(ctx.db, env, unstarted.run.id, "timeout")).toBe(true);
+			expect((await getRun(ctx.db, unstarted.run.id))?.retainedCostUsd).toBeCloseTo(before, 6);
+		} finally {
+			await dropAutoRuns();
 			await teardown(ctx);
 		}
 	});

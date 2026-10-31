@@ -215,6 +215,9 @@ export async function runContextStage(
 		if (!stageToken) throw new StaleRunError();
 	}
 	const token: string = stageToken;
+	// Beat once before any model call: a stage with a heartbeat counts as
+	// started, so its unmerged spend is retained if the attempt dies.
+	await heartbeatContextStage(db, runId, token);
 	const beat = setInterval(() => {
 		void (async () => {
 			try {

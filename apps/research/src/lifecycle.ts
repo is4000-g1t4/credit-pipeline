@@ -869,6 +869,53 @@ export function contextRetryLeaseMs(env: ResearchEnv): number {
 	return env.contextTimeoutMs + 30_000;
 }
 
+/** Row columns a dead attempt's spend is reconstructed from. */
+interface AttemptSpendRow {
+	started_at: unknown;
+	external_cost_usd: number | null;
+	context_started_at: unknown;
+	context_usage: unknown;
+	policy_started_at: unknown;
+	policy_usage: unknown;
+}
+
+const ATTEMPT_SPEND_COLUMNS = sql.raw(
+	"started_at, external_cost_usd, context_started_at, context_usage, policy_started_at, policy_usage",
+);
+
+function measuredCostUsd(usage: unknown): number | null {
+	const v = (usage as { costUsd?: unknown } | null)?.costUsd;
+	return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
+}
+
+/**
+ * Fail-closed spend of an attempt that died without finalizing (its
+ * `usage` ledger was never written). Real measured spend where the attempt
+ * checkpointed it (external cost at the stage boundary, persisted
+ * context/policy usage); otherwise the cap of every stage it started,
+ * since it may have consumed all of it. A never-claimed attempt made no
+ * model call and costs nothing.
+ */
+export function deadAttemptCostUsd(env: ResearchEnv, row: AttemptSpendRow): number {
+	if (!row.started_at) return 0;
+	let cost = typeof row.external_cost_usd === "number" ? row.external_cost_usd : env.maxCostUsd;
+	if (row.context_started_at) cost += measuredCostUsd(row.context_usage) ?? env.contextMaxCostUsd;
+	if (row.policy_started_at) cost += measuredCostUsd(row.policy_usage) ?? env.policyCaseMaxCostUsd;
+	return cost;
+}
+
+/** Retained-spend columns to set when `cost` more dollars carry forward. */
+function retainSpend(cost: number): {
+	retainedCostUsd?: ReturnType<typeof sql>;
+	retainedCostAt?: Date;
+} {
+	if (!(cost > 0)) return {};
+	return {
+		retainedCostUsd: sql`${agentRuns.retainedCostUsd} + ${cost}::double precision`,
+		retainedCostAt: new Date(),
+	};
+}
+
 /**
  * Fence a retried attempt (attempt > 1) before it does any work. In one
  * transaction, only while the run is non-terminal: rotate `run_token` to a
@@ -878,8 +925,10 @@ export function contextRetryLeaseMs(env: ResearchEnv): number {
  * stages from scratch. The dead attempt's token-guarded writes then fail.
  * Returns the new token, or null when the run is terminal/missing (no work).
  *
- * Spend already incurred by the dead attempt is not carried forward (the
- * rerun's own ledger starts fresh).
+ * Spend already incurred by the dead attempt carries forward into
+ * `retained_cost_usd` (deadAttemptCostUsd: measured where checkpointed,
+ * else the started stages' caps); the rerun's own `usage` ledger starts
+ * fresh and the auto daily budget sums both.
  */
 export async function rotateRunForRetry(
 	db: Db,
@@ -889,10 +938,11 @@ export async function rotateRunForRetry(
 	if (!isUuid(runId)) return null;
 	return withTx(db, async (tx) => {
 		const rows = (await tx.execute(
-			sql`SELECT status FROM agent_runs WHERE id = ${runId} FOR UPDATE`,
-		)) as unknown as Array<{ status: string }>;
+			sql`SELECT status, ${ATTEMPT_SPEND_COLUMNS} FROM agent_runs WHERE id = ${runId} FOR UPDATE`,
+		)) as unknown as Array<{ status: string } & AttemptSpendRow>;
 		const row = rows[0];
 		if (!row || (row.status !== "queued" && row.status !== "running")) return null;
+		const deadCost = deadAttemptCostUsd(env, row);
 		await tx.delete(agentEvidence).where(eq(agentEvidence.runId, runId));
 		await tx.delete(agentFindings).where(eq(agentFindings.runId, runId));
 		await tx.delete(contextSignals).where(eq(contextSignals.runId, runId));
@@ -903,6 +953,8 @@ export async function rotateRunForRetry(
 			.set({
 				runToken: token,
 				status: "queued",
+				...retainSpend(deadCost),
+				externalCostUsd: null,
 				startedAt: null,
 				// Stamped so the sweep never mistakes the rotated token for a
 				// never-started row (it only restarts heartbeat-less rows).
@@ -945,14 +997,25 @@ export async function rotateRunForRetry(
 /**
  * Fence a retried context-retry attempt: rotate the stage token of the
  * running stage on a terminal run (the dead attempt's stage writes then
- * fail). Null when no stage is running (it already finished or failed).
+ * fail) and retain the dead attempt's spend at the stage cap. Null when no
+ * stage is running (it already finished or failed).
  */
-export async function rotateContextStageForRetry(db: Db, runId: string): Promise<string | null> {
+export async function rotateContextStageForRetry(
+	db: Db,
+	env: ResearchEnv,
+	runId: string,
+): Promise<string | null> {
 	if (!isUuid(runId)) return null;
 	const token = randomUUID();
+	// The fenced attempt ran but never merged its spend: carry the stage cap
+	// forward (fail closed; its partial usage is unknown).
 	const rows = await db
 		.update(agentRuns)
-		.set({ contextStageToken: token, contextHeartbeatAt: new Date() })
+		.set({
+			contextStageToken: token,
+			contextHeartbeatAt: new Date(),
+			...retainSpend(env.contextMaxCostUsd),
+		})
 		.where(
 			and(
 				eq(agentRuns.id, runId),
@@ -968,11 +1031,13 @@ export async function rotateContextStageForRetry(db: Db, runId: string): Promise
  * Terminal cleanup for a run whose workflow failed or was cancelled (or
  * whose start never happened): fail a still-active run (queued/running,
  * any token) and the stages the dead attempt left queued/running, clearing
- * the token. Idempotent; a terminal run (and its persisted brief/stages)
- * is never touched. Returns whether this call failed the run.
+ * the token, and retain the dead attempt's spend (deadAttemptCostUsd).
+ * Idempotent; a terminal run (and its persisted brief/stages) is never
+ * touched. Returns whether this call failed the run.
  */
 export async function failActiveRun(
 	db: Db,
+	env: ResearchEnv,
 	runId: string,
 	failure: { code: RunErrorCode; message: string },
 	opts: { staleForSecs?: number } = {},
@@ -983,15 +1048,17 @@ export async function failActiveRun(
 	const staleSecs = opts.staleForSecs ?? 0;
 	return withTx(db, async (tx) => {
 		const rows = (await tx.execute(
-			sql`SELECT status, context_status, policy_status,
+			sql`SELECT status, context_status, policy_status, ${ATTEMPT_SPEND_COLUMNS},
 				coalesce(heartbeat_at, created_at) < now() - make_interval(secs => ${staleSecs}) AS stale
 				FROM agent_runs WHERE id = ${runId} FOR UPDATE`,
-		)) as unknown as Array<{
-			status: string;
-			context_status: string;
-			policy_status: string;
-			stale: boolean;
-		}>;
+		)) as unknown as Array<
+			{
+				status: string;
+				context_status: string;
+				policy_status: string;
+				stale: boolean;
+			} & AttemptSpendRow
+		>;
 		const row = rows[0];
 		if (!row || (row.status !== "queued" && row.status !== "running")) return false;
 		if (opts.staleForSecs !== undefined && !row.stale) return false;
@@ -1005,6 +1072,10 @@ export async function failActiveRun(
 				error: failure.message,
 				finishedAt: now,
 				runToken: null,
+				// The last attempt never finalized its usage: retain its spend
+				// so the auto daily budget still counts it.
+				...retainSpend(deadAttemptCostUsd(env, row)),
+				externalCostUsd: null,
 				...(row.context_status === "queued" || row.context_status === "running"
 					? {
 							contextStatus: "failed" as const,
@@ -1029,17 +1100,22 @@ export async function failActiveRun(
 
 /**
  * Terminal cleanup for a context-retry workflow: fail the stage still
- * running on the (terminal) run. The stage token may have rotated across
- * attempts, so the match is the running stage itself; run status, brief
- * and evidence are never touched.
+ * running on the (terminal) run and retain its unmerged spend. The stage
+ * token may have rotated across attempts, so the match is the running
+ * stage itself; run status, brief and evidence are never touched.
  */
 export async function failRunningContextStage(
 	db: Db,
+	env: ResearchEnv,
 	runId: string,
 	code: string,
 	opts: { staleForSecs?: number } = {},
 ): Promise<boolean> {
 	if (!isUuid(runId)) return false;
+	// A heartbeated stage was started by an attempt that never merged its
+	// spend: retain the stage cap (fail closed). Never heartbeated means
+	// never started (no model call), so nothing is retained.
+	const cap = env.contextMaxCostUsd;
 	const rows = await db
 		.update(agentRuns)
 		.set({
@@ -1047,6 +1123,8 @@ export async function failRunningContextStage(
 			contextErrorCode: code,
 			contextFinishedAt: new Date(),
 			contextStageToken: null,
+			retainedCostUsd: sql`${agentRuns.retainedCostUsd} + CASE WHEN ${agentRuns.contextHeartbeatAt} IS NULL THEN 0 ELSE ${cap}::double precision END`,
+			retainedCostAt: sql`CASE WHEN ${agentRuns.contextHeartbeatAt} IS NULL OR ${cap}::double precision <= 0 THEN ${agentRuns.retainedCostAt} ELSE now() END`,
 		})
 		.where(
 			and(
@@ -1121,6 +1199,7 @@ export async function failOrphanedRuns(db: Db, env: ResearchEnv): Promise<string
 	for (const { id } of rows) {
 		const done = await failActiveRun(
 			db,
+			env,
 			id,
 			{ code: "timeout", message: "research run timed out" },
 			{ staleForSecs },
@@ -1145,7 +1224,7 @@ export async function failOrphanedStages(db: Db, env: ResearchEnv): Promise<stri
 	}>;
 	const failed: string[] = [];
 	for (const { id } of contextRows) {
-		const done = await failRunningContextStage(db, id, "timeout", {
+		const done = await failRunningContextStage(db, env, id, "timeout", {
 			staleForSecs: contextStaleSecs,
 		});
 		if (done) failed.push(id);

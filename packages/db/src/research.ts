@@ -4,6 +4,7 @@ import { sql } from "drizzle-orm";
 import {
 	date,
 	check,
+	doublePrecision,
 	index,
 	integer,
 	jsonb,
@@ -122,6 +123,14 @@ export const agentRuns = pgTable(
 		errorCode: agentErrorCode("error_code"),
 		error: text("error"),
 		usage: jsonb("usage"),
+		// Spend of fenced/dead attempts (retry rotation, failAgentRun, context
+		// retry fences), carried forward because each attempt's `usage`
+		// starts fresh. The auto daily budget sums it with `usage`.
+		retainedCostUsd: doublePrecision("retained_cost_usd").notNull().default(0),
+		retainedCostAt: ts("retained_cost_at"),
+		// Current attempt's measured external-stage spend, checkpointed at the
+		// stage boundary (null: not reached, counted at its cap if it dies).
+		externalCostUsd: doublePrecision("external_cost_usd"),
 		startedAt: ts("started_at"),
 		finishedAt: ts("finished_at"),
 		timeoutAt: ts("timeout_at").notNull(),

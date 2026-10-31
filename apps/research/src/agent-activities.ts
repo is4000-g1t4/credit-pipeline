@@ -48,7 +48,7 @@ export function createResearchActivities(
 			}
 		},
 		async failAgentRun(input: AgentRunInput, failure: AgentRunFailure): Promise<void> {
-			await failResearchRun(deps.db, input, failure);
+			await failResearchRun(deps.db, deps.env, input, failure);
 		},
 	};
 }

@@ -124,8 +124,9 @@ Temporal workflows instead of in-process fire-and-forget jobs.
   unreachable.
 - **Research retries** (`rotateRunForRetry`) rotate `run_token`, reset the
   row to `queued`, and clear the dead attempt's evidence, findings and
-  context/policy stage state before rerunning. Context retries rotate
-  `context_stage_token`.
+  context/policy stage state before rerunning. The dead attempt's spend
+  carries forward into `retained_cost_usd`, which the auto daily budget
+  counts. Context retries rotate `context_stage_token`.
 - **Integrity retries** (`claimIntegrityRunById`) re-lease the row with a
   fresh `lease_token` and still respect `max_attempts`, which the workflow
   also receives. Transient model failures before the last attempt throw

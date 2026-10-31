@@ -672,6 +672,7 @@ describe("context stage lifecycle (DB)", () => {
 			// run AND its running stage and clears the stage token.
 			await failResearchRun(
 				ctx.db,
+				env,
 				{ kind: RESEARCH_RUN_KIND, runId: run.id, token, timeoutMs: 300_000 },
 				{ code: "timeout", message: "activity timeout" },
 			);

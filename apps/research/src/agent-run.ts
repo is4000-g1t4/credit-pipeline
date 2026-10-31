@@ -135,7 +135,7 @@ export async function runAgentAttempt(
 	if (input.kind === RESEARCH_CONTEXT_RETRY_KIND) {
 		let stageToken = input.token;
 		if (attempt > 1) {
-			const rotated = await rotateContextStageForRetry(deps.db, input.runId);
+			const rotated = await rotateContextStageForRetry(deps.db, deps.env, input.runId);
 			if (!rotated) return;
 			stageToken = rotated;
 		}
@@ -148,20 +148,21 @@ export async function runAgentAttempt(
 /** Terminal cleanup after every attempt failed or the workflow was cancelled. */
 export async function failResearchRun(
 	db: Db,
+	env: ResearchEnv,
 	input: AgentRunInput,
 	failure: AgentRunFailure,
 ): Promise<void> {
 	const timedOut = failure.code === "timeout";
 	if (input.kind === RESEARCH_RUN_KIND) {
 		const code: RunErrorCode = timedOut ? "timeout" : "internal_error";
-		await failActiveRun(db, input.runId, {
+		await failActiveRun(db, env, input.runId, {
 			code,
 			message: timedOut ? "research run timed out" : "research run failed",
 		});
 		return;
 	}
 	if (input.kind === RESEARCH_CONTEXT_RETRY_KIND) {
-		await failRunningContextStage(db, input.runId, timedOut ? "timeout" : "internal_error");
+		await failRunningContextStage(db, env, input.runId, timedOut ? "timeout" : "internal_error");
 		return;
 	}
 	throw new Error(`unknown research agent kind: ${input.kind}`);

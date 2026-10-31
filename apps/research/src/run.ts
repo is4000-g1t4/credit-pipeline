@@ -242,13 +242,20 @@ export async function executeRun(deps: ExecDeps, runId: string, token: string): 
 				evidence: validated.evidence,
 				findings: validated.findings,
 				links: validated.links,
+				costUsd: usage.costUsd,
 			});
 			external = { ok: true as const, usage, brief: validated.brief, findings: validated.findings };
 		} catch (err) {
 			if (err instanceof StaleRunError) throw err;
 			throwIfCancelled(deps);
 			const [code, message] = mapError(err);
-			await persistExternalFailure(db, runId, token, code, message);
+			// Checkpoint the external stage's measured spend (floor: the stage
+			// cap when nothing was measured) so a later dead attempt still
+			// carries it into the auto budget.
+			const extIn = agentIn + judgeIn + repairIn;
+			const extOut = agentOut + judgeOut + repairOut;
+			const externalCost = extIn + extOut === 0 ? env.maxCostUsd : projectCostUsd(extIn, extOut);
+			await persistExternalFailure(db, runId, token, code, message, externalCost);
 			external = { ok: false as const, code, message };
 		}
 		// CONTEXT stage: independent of the external outcome. External
@@ -611,6 +618,8 @@ async function persistExternalSuccess(
 		evidence: ProcessedEvidence[];
 		findings: ValidatedFinding[];
 		links: Array<{ findingId: string; evidenceId: string }>;
+		/** Measured external-stage spend, checkpointed for retry accounting. */
+		costUsd: number;
 	},
 ): Promise<void> {
 	await withTx(db, async (tx) => {
@@ -665,14 +674,16 @@ async function persistExternalSuccess(
 			.set({
 				brief: data.brief,
 				validation: data.validation,
+				externalCostUsd: data.costUsd,
 			})
 			.where(eq(agentRuns.id, runId));
 	});
 }
 
 /**
- * Retain an external failure (code/message) while the run stays `running`
- * for the context stage. Finalization follows the retained outcome.
+ * Retain an external failure (code/message) and its spend checkpoint while
+ * the run stays `running` for the context stage. Finalization follows the
+ * retained outcome.
  */
 async function persistExternalFailure(
 	db: Db,
@@ -680,10 +691,11 @@ async function persistExternalFailure(
 	token: string,
 	code: RunErrorCode,
 	message: string,
+	costUsd: number,
 ): Promise<void> {
 	const rows = await db
 		.update(agentRuns)
-		.set({ errorCode: code, error: message })
+		.set({ errorCode: code, error: message, externalCostUsd: costUsd })
 		.where(
 			and(eq(agentRuns.id, runId), eq(agentRuns.status, "running"), eq(agentRuns.runToken, token)),
 		)
