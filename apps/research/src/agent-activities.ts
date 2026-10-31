@@ -2,7 +2,7 @@
 // wrappers over agent-run.ts: heartbeat for the whole run, thread activity
 // cancellation into the run's deadline, dispatch on `input.kind`.
 import {
-	activityAttempt,
+	runAttempt,
 	activityCancellationSignal,
 	startHeartbeat,
 } from "@credit/agent-kit/temporal/activity";
@@ -31,7 +31,7 @@ export function createResearchActivities(
 ): AgentRunActivities {
 	return {
 		async executeAgentRun(input: AgentRunInput): Promise<void> {
-			const attempt = activityAttempt();
+			const attempt = runAttempt(input);
 			// DB heartbeats (executeRun / stage timers) keep running too: the
 			// UI/status reads them. Temporal's heartbeat is what detects a
 			// dead worker.

@@ -68,9 +68,11 @@ and `@openai/agents`) or `createRetryingFetch` (raw fetch). Both share
   - a caller abort (the run deadline);
   - any failure after a response was returned. Schema and validator
     failures go through each agent's own repair path, not a retry.
-- **Budgets:** a retry is skipped when its backoff would cross the
-  caller's deadline (`deadlineAt`) or when `canRetry()` returns false,
-  for example when the cost budget is exhausted.
+- **Budgets:** in production, retries are bounded by the caller's abort
+  signal (the run or request deadline): an aborted call is never retried
+  and the backoff sleep is cut short. `deadlineAt` and `canRetry()` are
+  available for finer gating but are not wired into any agent yet. A
+  failed attempt returns no usage, so its tokens are not counted.
 - **Logging:** `onRetry` receives metadata only (attempt, status, delay).
   Bodies are never read.
 
@@ -90,9 +92,15 @@ Temporal workflows instead of in-process fire-and-forget jobs.
   never runs an agent.
 - **Workflow:** the generic `agentRunWorkflow` runs one `executeAgentRun`
   activity, which heartbeats every 10s with a 60s heartbeat timeout.
-- **Crash retries:** Temporal retries the whole run up to 3 times on a
-  crash, a lost heartbeat or an unexpected throw. Attempt n > 1 rotates
-  the run token first, so a zombie attempt's token-guarded writes fail.
+- **Crash retries:** the workflow drives up to 3 attempts itself, with
+  backoff of 2s doubling to a 30s cap. It retries on a crash, a lost
+  heartbeat or a retryable throw.
+- **What stops retrying:** a START_TO_CLOSE timeout (the attempt used
+  its whole budget), a non-retryable failure and cancellation all stop
+  the loop and go straight to cleanup.
+- **Fencing:** the attempt number travels in the input (`runAttempt`,
+  `isLastAttempt`). Attempt n > 1 rotates the run token first, so a
+  zombie attempt's token-guarded writes fail.
 - **Business failures** (validation, model unavailable after call-level
   retries, budget) are finalized on the run row. The activity then
   returns normally and is not retried.

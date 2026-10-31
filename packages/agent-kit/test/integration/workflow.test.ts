@@ -3,11 +3,7 @@
 import { randomUUID } from "node:crypto";
 import { Client, Connection } from "@temporalio/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-	activityAttempt,
-	nonRetryableAgentError,
-	startHeartbeat,
-} from "../../src/temporal/activity.js";
+import { runAttempt, nonRetryableAgentError, startHeartbeat } from "../../src/temporal/activity.js";
 import { createAgentRunStarter } from "../../src/temporal/client.js";
 import type { AgentRunFailure, AgentRunInput } from "../../src/temporal/types.js";
 import { createAgentWorker } from "../../src/temporal/worker.js";
@@ -15,19 +11,26 @@ import { createAgentWorker } from "../../src/temporal/worker.js";
 const address = process.env.TEMPORAL_ADDRESS ?? "localhost:7233";
 const taskQueue = `agent-kit-test-${randomUUID()}`;
 
-type Behaviour = "ok" | "throw-twice" | "always-throw" | "hang" | "non-retryable";
+type Behaviour = "ok" | "throw-twice" | "always-throw" | "hang" | "non-retryable" | "slow";
 const behaviour = new Map<string, Behaviour>();
 const attempts = new Map<string, number[]>();
 const failures = new Map<string, AgentRunFailure>();
 
 const activities = {
 	async executeAgentRun(input: AgentRunInput): Promise<void> {
-		const attempt = activityAttempt();
+		const attempt = runAttempt(input);
 		attempts.set(input.runId, [...(attempts.get(input.runId) ?? []), attempt]);
 		const mode = behaviour.get(input.runId);
 		if (mode === "throw-twice" && attempt < 3) throw new Error("worker crashed");
 		if (mode === "always-throw") throw new Error("boom");
 		if (mode === "non-retryable") throw nonRetryableAgentError("run row missing");
+		if (mode === "slow") {
+			// Heartbeats fine but overruns its start-to-close budget.
+			const stop = startHeartbeat(200);
+			await new Promise((r) => setTimeout(r, 4_000));
+			stop();
+			return;
+		}
 		if (mode === "hang") {
 			// No heartbeats: Temporal must time the attempt out and retry.
 			await new Promise((r) => setTimeout(r, 4_000));
@@ -122,6 +125,13 @@ describe("agentRunWorkflow", () => {
 		const { runId, outcome } = await run("hang", { heartbeatTimeoutMs: 1_000, maxAttempts: 2 });
 		expect(outcome).toBe("failed");
 		expect(attempts.get(runId)).toEqual([1, 2]);
+		expect(failures.get(runId)?.code).toBe("timeout");
+	});
+
+	it("does not retry a run that used its whole start-to-close budget", async () => {
+		const { runId, outcome } = await run("slow", { timeoutMs: 1_500 });
+		expect(outcome).toBe("failed");
+		expect(attempts.get(runId)).toEqual([1]);
 		expect(failures.get(runId)?.code).toBe("timeout");
 	});
 });

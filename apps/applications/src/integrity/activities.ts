@@ -3,7 +3,7 @@
 // finalized on the run row and the activity returns normally; only crashes,
 // lost heartbeats and unexpected throws reach Temporal's retry.
 import {
-	activityAttempt,
+	runAttempt,
 	activityCancellationSignal,
 	nonRetryableAgentError,
 	startHeartbeat,
@@ -45,7 +45,7 @@ export function createIntegrityActivities(
 	return {
 		async executeAgentRun(input) {
 			assertKind(input);
-			const attempt = activityAttempt();
+			const attempt = runAttempt(input);
 			const stopHeartbeat = startHeartbeat();
 			try {
 				const claim = await claimIntegrityRunById(deps, input.runId, attempt);

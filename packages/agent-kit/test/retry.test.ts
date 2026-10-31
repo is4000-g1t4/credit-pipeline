@@ -148,6 +148,32 @@ describe("createRetryingFetch", () => {
 	});
 });
 
+describe("caller signals and hints", () => {
+	it("treats a Request's own aborted signal as a caller abort", async () => {
+		const ctl = new AbortController();
+		const fn = vi.fn(async () => {
+			ctl.abort(new Error("deadline"));
+			throw new Error("aborted");
+		}) as unknown as typeof fetch;
+		const req = new Request("https://x", { signal: ctl.signal });
+		await expect(createRetryingFetch({ sleep: noSleep }, fn)(req)).rejects.toThrow("aborted");
+		expect(fn).toHaveBeenCalledTimes(1);
+	});
+
+	it("prefers retry-after-ms over retry-after", async () => {
+		const s = scripted(
+			{ status: 429, headers: { "retry-after-ms": "1500", "retry-after": "9" } },
+			200,
+		);
+		const events: RetryEvent[] = [];
+		await createRetryingFetch(
+			{ sleep: noSleep, random: () => 0, onRetry: (e) => events.push(e) },
+			s.fn,
+		)("https://x");
+		expect(events[0]?.delayMs).toBe(1500);
+	});
+});
+
 describe("helpers", () => {
 	it("parses Retry-After seconds and dates", () => {
 		expect(parseRetryAfterMs("2")).toBe(2000);

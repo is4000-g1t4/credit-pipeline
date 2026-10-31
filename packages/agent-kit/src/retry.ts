@@ -147,7 +147,10 @@ export function createRetryingFetch(options: RetryOptions = {}, base: FetchFn = 
 		input: Parameters<FetchFn>[0],
 		init?: Parameters<FetchFn>[1],
 	): Promise<Response> => {
-		const callerSignal = init?.signal ?? undefined;
+		// A Request carries its own signal when init has none; either way the
+		// caller's signal is authoritative and never retried past.
+		const callerSignal =
+			init?.signal ?? (input instanceof Request ? input.signal : undefined) ?? undefined;
 		const canReplay =
 			!(input instanceof Request && input.body !== null) && replayable(init?.body ?? undefined);
 		const maxAttempts = canReplay ? Math.max(1, policy.maxAttempts) : 1;
@@ -181,7 +184,11 @@ export function createRetryingFetch(options: RetryOptions = {}, base: FetchFn = 
 				if (!isRetryableStatus(res.status) || attempt >= maxAttempts) return res;
 				reason = "status";
 				status = res.status;
-				retryAfterMs = parseRetryAfterMs(res.headers.get("retry-after"), now());
+				const hintMs = Number(res.headers.get("retry-after-ms"));
+				retryAfterMs =
+					Number.isFinite(hintMs) && hintMs >= 0 && res.headers.has("retry-after-ms")
+						? hintMs
+						: parseRetryAfterMs(res.headers.get("retry-after"), now());
 				failure = res;
 			} catch (err) {
 				if (callerSignal?.aborted) throw err;

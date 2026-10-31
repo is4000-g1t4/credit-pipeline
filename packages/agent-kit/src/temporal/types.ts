@@ -22,6 +22,11 @@ export interface AgentRunInput {
 	timeoutMs: number;
 	/** Whole-run attempts on crash / heartbeat loss. Default 3. */
 	maxAttempts?: number;
+	/**
+	 * 1-based attempt, set by the workflow on every activity call (callers
+	 * never set it). Activities read it via `runAttempt(input)`.
+	 */
+	attempt?: number;
 	/** Heartbeat timeout in ms. Default 60s; activities heartbeat every 10s. */
 	heartbeatTimeoutMs?: number;
 	/** Small kind-specific scalars (ids, flags). Never PII, prompts, or documents. */
