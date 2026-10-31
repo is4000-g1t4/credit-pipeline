@@ -17,6 +17,7 @@
 		"eval:case-review": "tsx eval/case-review-eval.ts"
 	},
 	"dependencies": {
+		"@credit/agent-kit": "workspace:*",
 		"@credit/agent-observability": "workspace:*",
 		"@credit/core": "workspace:*",
 		"@credit/db": "workspace:*",

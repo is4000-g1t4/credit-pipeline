@@ -15,7 +15,7 @@ import {
 	validateNavigatorAnswer,
 	verifyDrawerToken,
 	type AnswerCitation,
-} from "./answer.js";
+} from "./agents/policy-answerer/index.js";
 import { policyCaseContextSchema } from "./case-context.js";
 import { verifyCaseToken } from "./case-token.js";
 import {

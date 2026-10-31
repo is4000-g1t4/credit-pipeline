@@ -2,11 +2,8 @@ import { createDb } from "@credit/db";
 import { createLogger } from "@credit/service-kit";
 import { createApp } from "./app.js";
 import { loadEnv } from "./env.js";
-import {
-	createOpenRouterAnswerer,
-	createOpenRouterEmbedder,
-	openRouterConfigFromEnv,
-} from "./openrouter.js";
+import { createOpenRouterAnswerer } from "./agents/policy-answerer/index.js";
+import { createOpenRouterEmbedder, openRouterConfigFromEnv } from "./openrouter.js";
 import { policyObservability } from "./observability.js";
 import { createPostgresPolicyStore } from "./postgres-store.js";
 
@@ -16,7 +13,7 @@ const logger = createLogger("policy");
 policyObservability();
 const { sql } = createDb(env.databaseUrl);
 const store = createPostgresPolicyStore(sql);
-const openRouter = openRouterConfigFromEnv(env);
+const openRouter = { ...openRouterConfigFromEnv(env), logger };
 const embedder = createOpenRouterEmbedder(openRouter);
 const answerer = createOpenRouterAnswerer(openRouter);
 const app = createApp({ sql, env, logger, store, embedder, answerer });

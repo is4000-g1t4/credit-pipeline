@@ -25,18 +25,16 @@ import {
 	containsDecisionLanguage,
 	containsForbidden,
 	validateCaseAnswer,
+	createOpenRouterAnswerer,
+	POLICY_CASE_PROMPT_VERSION,
 	type CaseAnswer,
-} from "../src/answer.js";
+} from "../src/agents/policy-answerer/index.js";
 import { loadEnv } from "../src/env.js";
 import { DOCUMENT_FAMILY, caseRetrievalText, policyFamiliesForSignal } from "../src/mapping.js";
-import {
-	createOpenRouterAnswerer,
-	createOpenRouterEmbedder,
-	POLICY_CASE_PROMPT_VERSION,
-} from "../src/openrouter.js";
+import { createOpenRouterEmbedder } from "../src/openrouter.js";
 import { policyObservability } from "../src/observability.js";
 import { rankChunks } from "../src/retrieval.js";
-import type { RetrievedSection } from "../src/answer.js";
+import type { RetrievedSection } from "../src/agents/policy-answerer/index.js";
 import { embedCorpus, loadCorpus, type CorpusSection } from "./corpus.js";
 import { evalArg as arg, mean, p95, wilson } from "./lib.js";
 

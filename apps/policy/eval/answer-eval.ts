@@ -15,17 +15,15 @@ import {
 	containsDecisionLanguage,
 	containsForbidden,
 	validateNavigatorAnswer,
+	createOpenRouterAnswerer,
+	POLICY_ANSWERER_PROMPT_VERSION,
 	type AnswerCitation,
 	type AnswerSegment,
 	type NavigatorAnswer,
-} from "../src/answer.js";
+} from "../src/agents/policy-answerer/index.js";
 import { loadEnv } from "../src/env.js";
 import { classifyScope, hasDirectIdentifier } from "../src/gates.js";
-import {
-	createOpenRouterAnswerer,
-	createOpenRouterEmbedder,
-	POLICY_ANSWERER_PROMPT_VERSION,
-} from "../src/openrouter.js";
+import { createOpenRouterEmbedder } from "../src/openrouter.js";
 import { policyObservability } from "../src/observability.js";
 import { rankChunks } from "../src/retrieval.js";
 import { embedCorpus, loadCorpus, type CorpusSection } from "./corpus.js";

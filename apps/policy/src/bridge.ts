@@ -1,5 +1,5 @@
 import { hashQuote } from "@credit/core";
-import { createDrawerToken } from "./answer.js";
+import { createDrawerToken } from "./agents/policy-answerer/index.js";
 import type { Actor } from "./retrieval.js";
 
 /** Service identity for the policy-exception bridge (resolve + search). */

@@ -4,7 +4,7 @@ import {
 	validateCaseAnswer,
 	validateNavigatorAnswer,
 	type RetrievedSection,
-} from "../src/answer.js";
+} from "../src/agents/policy-answerer/index.js";
 import { policyCaseContextSchema, signalRef } from "../src/case-context.js";
 import { signCaseToken, verifyCaseToken } from "../src/case-token.js";
 import { parsePolicyMarkdown } from "../src/markdown.js";

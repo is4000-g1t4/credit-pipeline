@@ -175,7 +175,7 @@ Grafana. The metadata-only choice is a feature.
 
 The validators are already the best deterministic graders we have:
 
-- `apps/policy/src/answer.ts` — `validateNavigatorAnswer`: strict schema,
+- `apps/policy/src/agents/policy-answerer/validator.ts` — `validateNavigatorAnswer`: strict schema,
   one claim per segment, 1–3 citations, exact-substring quote, forbidden /
   PII / URL scans, all-or-nothing. Invalid output becomes
   `needs_policy_owner`; `apps/policy/src/routes.ts` logs the validation

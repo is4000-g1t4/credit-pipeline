@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Hono } from "hono";
 import { signCaseToken } from "../src/case-token.js";
-import { createDrawerToken } from "../src/answer.js";
+import { createDrawerToken } from "../src/agents/policy-answerer/index.js";
 import type { PolicyDeps } from "../src/store.js";
 import type { ServiceVariables } from "@credit/service-kit";
 import { appWithUser, baseContext, baseDeps, fakePolicyStore } from "./helper.js";

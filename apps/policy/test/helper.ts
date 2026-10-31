@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { HttpError, type ServiceVariables } from "@credit/service-kit";
-import type { RetrievedSection } from "../src/answer.js";
+import type { RetrievedSection } from "../src/agents/policy-answerer/index.js";
 import { signalRef, type PolicyCaseContext } from "../src/case-context.js";
 import { createPolicyRoutes } from "../src/routes.js";
 import type { PolicyChunk, PolicyDeps, PolicyQueryRecord, PolicyStore } from "../src/store.js";

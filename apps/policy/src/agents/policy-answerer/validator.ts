@@ -1,8 +1,8 @@
 import { createHash, createHmac } from "node:crypto";
 import { locateQuote } from "@credit/core";
 import { z } from "zod";
-import { documentRef, signalRef, type PolicyCaseContext } from "./case-context.js";
-import { EMAIL_RE, NRIC_RE, PHONE_RE } from "./gates.js";
+import { documentRef, signalRef, type PolicyCaseContext } from "../../case-context.js";
+import { EMAIL_RE, NRIC_RE, PHONE_RE } from "../../gates.js";
 
 export interface RetrievedSection {
 	policyId: string;

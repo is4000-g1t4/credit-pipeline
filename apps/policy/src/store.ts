@@ -1,6 +1,6 @@
 import type { PolicySectionRow } from "@credit/core";
 import type { PolicyCaseContext } from "./case-context.js";
-import type { AnswerCitation, RetrievedSection } from "./answer.js";
+import type { AnswerCitation, RetrievedSection } from "./agents/policy-answerer/index.js";
 
 export interface ActiveIndex {
 	indexVersion: string;
