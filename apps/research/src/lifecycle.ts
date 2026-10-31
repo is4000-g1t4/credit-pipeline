@@ -215,8 +215,9 @@ export async function ensureRunTx(
 			grafanaConversationId: id,
 			observability: "degraded",
 			usage: {},
-			// T18 combined lease (§3.5): external + context stage + grace.
-			timeoutAt: new Date(Date.now() + env.timeoutMs + env.contextTimeoutMs + 30_000),
+			// Combined lease (§3.5): external + context + policy stages +
+			// grace — the same budget as one Temporal attempt (runLeaseMs).
+			timeoutAt: new Date(Date.now() + runLeaseMs(env)),
 		})
 		.returning();
 	return { run: row, inserted: true };
@@ -837,8 +838,36 @@ export function runLeaseMs(env: ResearchEnv): number {
 	return env.timeoutMs + env.contextTimeoutMs + env.policyCaseTimeoutMs + 30_000;
 }
 
-/** How long a never-started (still queued) row survives past its lease. */
+/** Grace past the whole retry horizon before the sweep fails a row. */
 export const OVERDUE_GRACE_MS = 5 * 60_000;
+
+/**
+ * Attempts agentRunWorkflow drives per run. Mirrors agent-kit's
+ * DEFAULT_MAX_ATTEMPTS (research inputs never override it) and its backoff
+ * (2s doubling, 30s cap) below.
+ */
+export const RUN_MAX_ATTEMPTS = 3;
+const RETRY_BACKOFF_INITIAL_MS = 2_000;
+const RETRY_BACKOFF_MAX_MS = 30_000;
+
+/**
+ * Longest a live workflow can keep a row active: every attempt's full
+ * start-to-close lease, the backoff between attempts, plus
+ * OVERDUE_GRACE_MS. The sweep never fails a row inside this horizon, so a
+ * live retry (or a start waiting on a backlogged worker) is never killed.
+ */
+export function activeHorizonMs(attemptLeaseMs: number, maxAttempts = RUN_MAX_ATTEMPTS): number {
+	let backoff = 0;
+	for (let attempt = 1; attempt < maxAttempts; attempt++) {
+		backoff += Math.min(RETRY_BACKOFF_MAX_MS, RETRY_BACKOFF_INITIAL_MS * 2 ** (attempt - 1));
+	}
+	return attemptLeaseMs * maxAttempts + backoff + OVERDUE_GRACE_MS;
+}
+
+/** Context-retry attempt lease: stage deadline + grace (one workflow attempt). */
+export function contextRetryLeaseMs(env: ResearchEnv): number {
+	return env.contextTimeoutMs + 30_000;
+}
 
 /**
  * Fence a retried attempt (attempt > 1) before it does any work. In one
@@ -1054,14 +1083,17 @@ export async function listUnstartedContextRetries(
 }
 
 /**
- * Last resort when Temporal stayed unreachable: queued rows more than
- * OVERDUE_GRACE_MS past their lease fail "timeout" so the UI always
- * reaches a terminal state. Returns the failed run ids.
+ * Last resort when Temporal stayed unreachable: never-started queued rows
+ * older than the whole retry horizon (activeHorizonMs) fail "timeout" so
+ * the UI always reaches a terminal state. A row whose start succeeded but
+ * is waiting on a backlogged worker stays inside the horizon and is never
+ * failed while its workflow could still run it. Returns the failed run ids.
  */
-export async function failOverdueQueuedRuns(db: Db): Promise<string[]> {
+export async function failOverdueQueuedRuns(db: Db, env: ResearchEnv): Promise<string[]> {
+	const horizonSecs = activeHorizonMs(runLeaseMs(env)) / 1000;
 	const rows = (await db.execute(sql`SELECT id FROM agent_runs
 		WHERE status = 'queued' AND heartbeat_at IS NULL
-		  AND timeout_at < now() - make_interval(secs => ${OVERDUE_GRACE_MS / 1000})`)) as unknown as Array<{
+		  AND created_at < now() - make_interval(secs => ${horizonSecs})`)) as unknown as Array<{
 		id: string;
 	}>;
 	const failed: string[] = [];
@@ -1074,11 +1106,12 @@ export async function failOverdueQueuedRuns(db: Db): Promise<string[]> {
 }
 
 /** Same last resort for a never-started context retry stage. */
-export async function failOverdueContextRetries(db: Db): Promise<string[]> {
+export async function failOverdueContextRetries(db: Db, env: ResearchEnv): Promise<string[]> {
+	const horizonSecs = activeHorizonMs(contextRetryLeaseMs(env)) / 1000;
 	const rows = (await db.execute(sql`SELECT id FROM agent_runs
 		WHERE status IN ('succeeded', 'failed') AND context_status = 'running'
 		  AND context_heartbeat_at IS NULL
-		  AND context_timeout_at < now() - make_interval(secs => ${OVERDUE_GRACE_MS / 1000})`)) as unknown as Array<{
+		  AND context_started_at < now() - make_interval(secs => ${horizonSecs})`)) as unknown as Array<{
 		id: string;
 	}>;
 	const failed: string[] = [];

@@ -31,6 +31,7 @@ import {
 import { ContextToolError, stubContextRunner } from "../../src/agents/context-analyst/index.js";
 import { loadEnv } from "../../src/env.js";
 import {
+	activeHorizonMs,
 	claimContextRetry,
 	claimContextStage,
 	claimRun,
@@ -427,16 +428,33 @@ describe("agent-worker sweep", () => {
 		}
 	});
 
-	it("fails queued rows 5 minutes past their lease instead of restarting them", async () => {
+	it("stamps the insert lease with the full per-attempt budget (policy included)", async () => {
 		const ctx = setupApp();
 		try {
+			const before = Date.now();
+			const { run } = await newRun(ctx);
+			expect(run.timeoutAt.getTime()).toBeGreaterThanOrEqual(before + runLeaseMs(env) - 1_000);
+			expect(run.timeoutAt.getTime()).toBeLessThanOrEqual(Date.now() + runLeaseMs(env) + 1_000);
+		} finally {
+			await teardown(ctx);
+		}
+	});
+
+	it("fails never-started queued rows only past the whole retry horizon", async () => {
+		const ctx = setupApp();
+		const horizonSecs = Math.ceil(activeHorizonMs(runLeaseMs(env)) / 1000);
+		try {
 			const overdue = await newRun(ctx);
-			const pastLease = await newRun(ctx);
+			const backlogged = await newRun(ctx);
 			await ctx.db.execute(
-				sql`UPDATE agent_runs SET created_at = now() - INTERVAL '1 hour', timeout_at = now() - INTERVAL '301 seconds' WHERE id = ${overdue.run.id}`,
+				sql`UPDATE agent_runs SET created_at = now() - make_interval(secs => ${horizonSecs + 5}) WHERE id = ${overdue.run.id}`,
 			);
+			// Started but waiting on a backlogged worker: past its lease plus
+			// the old 5-minute grace, yet inside lease x attempts + backoff +
+			// grace, so a live workflow could still run it.
+			const leaseSecs = runLeaseMs(env) / 1000;
 			await ctx.db.execute(
-				sql`UPDATE agent_runs SET created_at = now() - INTERVAL '1 hour', timeout_at = now() - INTERVAL '60 seconds' WHERE id = ${pastLease.run.id}`,
+				sql`UPDATE agent_runs SET created_at = now() - make_interval(secs => ${leaseSecs + 400}), timeout_at = now() - INTERVAL '400 seconds' WHERE id = ${backlogged.run.id}`,
 			);
 			const starter = fakeStarter();
 			const out = await sweepAgentRuns({ db: ctx.db, env, logger, starter });
@@ -444,11 +462,39 @@ describe("agent-worker sweep", () => {
 			expect(starter.starts.map((s) => s.runId)).not.toContain(overdue.run.id);
 			const row = await getRun(ctx.db, overdue.run.id);
 			expect(row).toMatchObject({ status: "failed", errorCode: "timeout", runToken: null });
-			// Past lease but inside the grace: started, not failed.
-			expect(out.failed).not.toContain(pastLease.run.id);
-			expect(starter.starts.map((s) => s.runId)).toContain(pastLease.run.id);
+			// Inside the horizon: re-started (idempotent), never failed.
+			expect(out.failed).not.toContain(backlogged.run.id);
+			expect(starter.starts.map((s) => s.runId)).toContain(backlogged.run.id);
+			expect((await getRun(ctx.db, backlogged.run.id))?.status).toBe("queued");
 			// Repeat sweep: nothing new to fail for the overdue row.
-			expect(await failOverdueQueuedRuns(ctx.db)).not.toContain(overdue.run.id);
+			expect(await failOverdueQueuedRuns(ctx.db, env)).not.toContain(overdue.run.id);
+		} finally {
+			await teardown(ctx);
+		}
+	});
+
+	it("counts only starts that created a workflow", async () => {
+		const ctx = setupApp();
+		try {
+			const old = await newRun(ctx);
+			await ctx.db.execute(
+				sql`UPDATE agent_runs SET created_at = now() - INTERVAL '30 seconds' WHERE id = ${old.run.id}`,
+			);
+			const attempted: string[] = [];
+			const out = await sweepAgentRuns({
+				db: ctx.db,
+				env,
+				logger,
+				starter: {
+					// Workflow already exists for this kind:runId:token.
+					start: async (i) => {
+						attempted.push(i.runId);
+						return { started: false };
+					},
+				},
+			});
+			expect(attempted).toContain(old.run.id);
+			expect(out.started).not.toContain(old.run.id);
 		} finally {
 			await teardown(ctx);
 		}
@@ -468,9 +514,9 @@ describe("agent-worker sweep", () => {
 			expect(await finalizeFailure(ctx.db, run.id, token, "tool_error", "x")).toBe(true);
 			expect(await claimContextRetry(ctx.db, env, run.id)).not.toBeNull();
 			await ctx.db.execute(
-				sql`UPDATE agent_runs SET context_started_at = now() - INTERVAL '1 hour', context_timeout_at = now() - INTERVAL '301 seconds' WHERE id = ${run.id}`,
+				sql`UPDATE agent_runs SET context_started_at = now() - make_interval(secs => ${Math.ceil(activeHorizonMs(contextRetryTimeoutMs(env)) / 1000) + 5}) WHERE id = ${run.id}`,
 			);
-			expect(await failOverdueContextRetries(ctx.db)).toContain(run.id);
+			expect(await failOverdueContextRetries(ctx.db, env)).toContain(run.id);
 			expect(await getRun(ctx.db, run.id)).toMatchObject({
 				status: "failed",
 				errorCode: "tool_error",

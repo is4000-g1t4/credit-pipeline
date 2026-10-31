@@ -1,7 +1,7 @@
 // Agent-worker sweep (replaces recoverQueuedRuns / the reapers). Closes the
 // gap between "API committed the row" and "Temporal accepted the start":
 // re-issues idempotent starts for rows nobody picked up, and fails rows
-// that stayed unstartable long past their lease so the UI always reaches a
+// still unstarted past the whole retry horizon so the UI always reaches a
 // terminal state.
 import type { AgentRunInput } from "@credit/agent-kit/temporal/types";
 import type { Db } from "@credit/db/research";
@@ -23,6 +23,7 @@ import {
 } from "./lifecycle.js";
 
 export interface SweepResult {
+	/** Runs whose workflow this sweep actually created (`started: true`). */
 	started: string[];
 	failed: string[];
 }
@@ -37,7 +38,10 @@ export async function sweepAgentRuns(deps: {
 	const started: string[] = [];
 	// Fail first: an overdue row must reach a terminal state, not be
 	// restarted just before it would be failed.
-	const failed = [...(await failOverdueQueuedRuns(db)), ...(await failOverdueContextRetries(db))];
+	const failed = [
+		...(await failOverdueQueuedRuns(db, env)),
+		...(await failOverdueContextRetries(db, env)),
+	];
 	const inputs: AgentRunInput[] = [
 		...(await listUnstartedRuns(db)).map((p) => ({
 			kind: RESEARCH_RUN_KIND,
@@ -55,8 +59,10 @@ export async function sweepAgentRuns(deps: {
 	for (const input of inputs) {
 		try {
 			// Idempotent: the workflow id is kind:runId:token.
-			await startWithDeadline(starter, input);
-			started.push(input.runId);
+			// Only a start that created a workflow counts; an already-running
+			// workflow (same kind:runId:token) is a no-op, not a restart.
+			const { started: created } = await startWithDeadline(starter, input);
+			if (created) started.push(input.runId);
 		} catch (err) {
 			logger.error(
 				{ kind: input.kind, runId: input.runId, err: err instanceof Error ? err.name : "unknown" },

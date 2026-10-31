@@ -6,6 +6,7 @@ import type { Db } from "@credit/db/research";
 import { executeContextRetry, type ContextExecDeps } from "./context-stage.js";
 import type { ResearchEnv } from "./env.js";
 import {
+	contextRetryLeaseMs,
 	failActiveRun,
 	failRunningContextStage,
 	rotateContextStageForRetry,
@@ -26,12 +27,13 @@ export function researchRunTimeoutMs(env: ResearchEnv): number {
 
 /** Per-attempt budget for a context-retry workflow (stage deadline + grace). */
 export function contextRetryTimeoutMs(env: ResearchEnv): number {
-	return env.contextTimeoutMs + 30_000;
+	return contextRetryLeaseMs(env);
 }
 
 /** Narrow starter surface routes/auto-trigger need (real or fake). */
 export interface RunStarter {
-	start(input: AgentRunInput): Promise<unknown>;
+	/** `started: false` when the workflow already existed (idempotent re-start). */
+	start(input: AgentRunInput): Promise<{ started: boolean }>;
 }
 
 /** Upper bound on a workflow start (lazy connect + start RPC) in a caller's path. */
@@ -54,8 +56,8 @@ export async function startWithDeadline(
 	starter: RunStarter,
 	input: AgentRunInput,
 	timeoutMs: number = START_TIMEOUT_MS,
-): Promise<unknown> {
-	type Outcome = { ok: true; value: unknown } | { ok: false; err: unknown };
+): Promise<{ started: boolean }> {
+	type Outcome = { ok: true; value: { started: boolean } } | { ok: false; err: unknown };
 	// Never rejects: a start that fails after the deadline already lost the
 	// race and must not surface as an unhandled rejection.
 	const pending = (async (): Promise<Outcome> => {

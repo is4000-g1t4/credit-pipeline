@@ -26,6 +26,7 @@ import {
 	initContextStage,
 	persistContextFailure,
 	persistContextSuccess,
+	runLeaseMs,
 	type CaseFactsPayload,
 } from "../../src/lifecycle.js";
 import { failResearchRun, RESEARCH_RUN_KIND, runAgentAttempt } from "../../src/agent-run.js";
@@ -644,11 +645,12 @@ describe("context stage lifecycle (DB)", () => {
 			});
 			const token = run.runToken as string;
 			expect(await claimRun(ctx.db, run.id, token)).toBe(true);
-			// Combined insert lease: external + context + grace (90+180+30s).
+			// Combined insert lease: external + context + policy + grace, the
+			// same budget as one Temporal attempt (runLeaseMs).
 			const inserted = await getRun(ctx.db, run.id);
 			const insertLease = inserted!.timeoutAt.getTime() - inserted!.createdAt.getTime();
-			expect(insertLease).toBeGreaterThan(295_000);
-			expect(insertLease).toBeLessThan(305_000);
+			expect(insertLease).toBeGreaterThan(runLeaseMs(env) - 5_000);
+			expect(insertLease).toBeLessThan(runLeaseMs(env) + 5_000);
 			expect(await initContextStage(ctx.db, env, run.id, token, "queued")).toBe(true);
 			const stageToken = await claimContextStage(ctx.db, env, run.id, token, {
 				promptVersion: "context-v1",

@@ -476,7 +476,7 @@ describe("run token + failAgentRun (lifecycle)", () => {
 			);
 			await heartbeatRun(ctx.db, run.id, token);
 			expect((await listUnstartedRuns(ctx.db)).map((p) => p.runId)).not.toContain(run.id);
-			expect(await failOverdueQueuedRuns(ctx.db)).not.toContain(run.id);
+			expect(await failOverdueQueuedRuns(ctx.db, env)).not.toContain(run.id);
 			expect((await getRun(ctx.db, run.id))?.status).toBe("running");
 		} finally {
 			await teardown(ctx);
@@ -506,7 +506,7 @@ describe("run token + failAgentRun (lifecycle)", () => {
 				sql`UPDATE agent_runs SET context_timeout_at = now() - INTERVAL '1 hour' WHERE id = ${run.id}`,
 			);
 			await heartbeatContextStage(ctx.db, run.id, stageToken as string);
-			expect(await failOverdueContextRetries(ctx.db)).not.toContain(run.id);
+			expect(await failOverdueContextRetries(ctx.db, env)).not.toContain(run.id);
 			expect((await getRun(ctx.db, run.id))?.contextStatus).toBe("running");
 		} finally {
 			await teardown(ctx);
