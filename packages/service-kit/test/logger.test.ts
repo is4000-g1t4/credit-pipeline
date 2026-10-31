@@ -161,3 +161,64 @@ describe("logger redaction", () => {
 		expect(last().req.headers.host).toBe("h");
 	});
 });
+
+describe("sensitive key matching", () => {
+	it.each([
+		"applicantEmail",
+		"contactPhone",
+		"dateOfBirth",
+		"date_of_birth",
+		"dob",
+		"dobIso",
+		"addressLine1",
+		"homeAddress",
+		"address",
+		"nationalIdLast4",
+		"national_id",
+		"apiKey",
+		"api_key",
+		"OPENROUTER_API_KEY",
+		"token",
+		"accessToken",
+		"runToken",
+		"leaseToken",
+		"lease_token",
+		"sessionToken",
+		"secret",
+		"internalSecret",
+		"Authorization",
+		"passwordHash",
+		"annualRevenueCents",
+		"monthlyIncomeCents",
+	])("redacts %s", (key) => {
+		const { logger, last } = capture();
+		logger.info({ [key]: "v" });
+		expect(last()[key]).toBe("[REDACTED]");
+	});
+
+	it.each([
+		"requestId",
+		"runId",
+		"tokenCount",
+		"inputTokens",
+		"outputTokens",
+		"maxTokens",
+		"maxOutputTokens",
+		"tokens",
+		"prompt_tokens",
+		"completion_tokens",
+		"ipAddress",
+		"remoteAddress",
+		"temporalAddress",
+		"applicationId",
+		"documentFileId",
+		"errorCode",
+		"amountCents",
+		"lastError",
+		"crosscheckId",
+	])("keeps %s", (key) => {
+		const { logger, last } = capture();
+		logger.info({ [key]: "v" });
+		expect(last()[key]).toBe("v");
+	});
+});

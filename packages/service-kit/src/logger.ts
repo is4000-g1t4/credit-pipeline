@@ -15,20 +15,11 @@ export type { Logger };
 const CENSOR = "[REDACTED]";
 const MAX_DEPTH = 12;
 
-// Matched case-insensitively at ANY depth, including inside arrays.
+// Exact keys, matched case-insensitively at ANY depth, including inside arrays.
 const SENSITIVE_KEYS = new Set(
 	[
-		"nationalId",
-		"national_id",
 		"registrationNumber",
 		"registration_number",
-		"dob",
-		"email",
-		"phone",
-		"address",
-		"password",
-		"passwordHash",
-		"password_hash",
 		"identity",
 		"financial",
 		"business",
@@ -45,17 +36,64 @@ const SENSITIVE_KEYS = new Set(
 		"expected",
 	].map((k) => k.toLowerCase()),
 );
-// Keys starting with income/revenue (incomeCents, revenueCents).
-const SENSITIVE_PREFIX = /^(income|revenue)/i;
-// Keys that merely contain "income" (annualIncomeCents, monthlyIncomeCents).
-const SENSITIVE_CONTAINS = /income/i;
+
+// Substrings of the key, lowercased with `_`/`-` removed: catches
+// applicantEmail, contactPhone, nationalIdLast4, api_key, internalSecret,
+// passwordHash, annualIncomeCents, revenueCents, dateOfBirth, ...
+const SENSITIVE_SUBSTRINGS = [
+	"email",
+	"phone",
+	"nationalid",
+	"password",
+	"secret",
+	"apikey",
+	"authorization",
+	"dateofbirth",
+	"income",
+	"revenue",
+];
+
+// Word-segment rules (camelCase/snake_case/kebab-case split), so short or
+// ambiguous words do not over-match:
+// - `token` only as the LAST segment: token, accessToken, runToken,
+//   lease_token are secrets; inputTokens, maxTokens, tokenCount are not.
+// - `dob` as any segment (dob, dobIso) but not inside another word.
+// - `address` as any segment (address, addressLine1, homeAddress) EXCEPT
+//   network endpoints (ipAddress, remoteAddress, temporalAddress, ...),
+//   which are infrastructure config, not applicant PII.
+const NETWORK_ADDRESS_QUALIFIERS = new Set([
+	"ip",
+	"mac",
+	"remote",
+	"local",
+	"server",
+	"host",
+	"temporal",
+]);
+
+function keySegments(key: string): string[] {
+	return key
+		.replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+		.replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+		.toLowerCase()
+		.split(/[^a-z0-9]+/)
+		.filter(Boolean);
+}
 
 function isSensitiveKey(key: string): boolean {
-	return (
-		SENSITIVE_KEYS.has(key.toLowerCase()) ||
-		SENSITIVE_PREFIX.test(key) ||
-		SENSITIVE_CONTAINS.test(key)
-	);
+	const lower = key.toLowerCase();
+	if (SENSITIVE_KEYS.has(lower)) return true;
+	const compact = lower.replace(/[_-]/g, "");
+	if (SENSITIVE_SUBSTRINGS.some((s) => compact.includes(s))) return true;
+	const segments = keySegments(key);
+	if (segments.at(-1) === "token") return true;
+	if (segments.includes("dob")) return true;
+	const addressAt = segments.indexOf("address");
+	if (addressAt !== -1) {
+		const qualifier = addressAt > 0 ? segments[addressAt - 1]! : "";
+		if (!NETWORK_ADDRESS_QUALIFIERS.has(qualifier)) return true;
+	}
+	return false;
 }
 
 /** Values JSON-serialized as-is: no keys to redact. */
