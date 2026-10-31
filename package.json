@@ -4,8 +4,8 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"dev": "pnpm -r --if-present --parallel run dev",
-		"dev:services": "pnpm --filter @credit/gateway --filter @credit/applications --filter @credit/review --filter @credit/loans --filter @credit/portfolio --parallel dev",
+		"dev": "pnpm -r --if-present --parallel run \"/^dev(:agent-worker)?$/\"",
+		"dev:services": "pnpm --filter @credit/gateway --filter @credit/applications --filter @credit/review --filter @credit/loans --filter @credit/portfolio --parallel run \"/^dev(:agent-worker)?$/\"",
 		"typecheck": "pnpm -r --if-present typecheck && tsc --noEmit -p e2e/tsconfig.json",
 		"lint": "oxlint",
 		"format": "oxfmt .",

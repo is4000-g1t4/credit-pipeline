@@ -114,6 +114,16 @@ export default async function globalSetup(): Promise<void> {
 	// the consumer group are idempotent).
 	const worker = start("worker", ["--filter", "@credit/worker", "dev"]);
 	procs.push({ name: "worker", pid: worker.pid, reused: false });
+	// Agent workers (research + integrity runs on Temporal) own no port
+	// either; extra copies just share the task queue, and their sweeps are
+	// SKIP LOCKED / idempotent-start safe.
+	for (const [name, filter] of [
+		["research-agent-worker", "@credit/research"],
+		["applications-agent-worker", "@credit/applications"],
+	] as const) {
+		const proc = start(name, ["--filter", filter, "dev:agent-worker"]);
+		procs.push({ name, pid: proc.pid, reused: false });
+	}
 	// The gateway owns :3001 but each service is probed individually, so a
 	// half-running stack is completed, not duplicated.
 	const gatewayHealthy = await apiHealthy();

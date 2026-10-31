@@ -59,7 +59,7 @@ services:
     working_dir: /app
     command: ["bun", "apps/applications/src/server.ts"]
     ports: ["4001:4001"]
-    environment:
+    environment: &applications-env
       APPLICATIONS_DATABASE_URL: postgres://credit:credit@postgres:5432/credit_applications
       TEMPORAL_ADDRESS: temporal:7233
       INTERNAL_SECRET: ${INTERNAL_SECRET}
@@ -402,7 +402,8 @@ services:
     # tsx resolves from the deps-populated /app/node_modules.
     command: ["node", "--import", "tsx", "apps/research/src/server.ts"]
     ports: ["4005:4005"]
-    environment:
+    environment: &research-env
+      TEMPORAL_ADDRESS: temporal:7233
       RESEARCH_DATABASE_URL: postgres://credit:credit@postgres:5432/credit_research
       INTERNAL_SECRET: ${INTERNAL_SECRET}
       POLICY_ASSIST_ENABLED: ${POLICY_ASSIST_ENABLED:-false}
@@ -480,6 +481,41 @@ services:
   # 3310 port. Best-effort in v1 — nothing depends on it (applications
   # stays healthy without it; uploads fail closed with 503 until D1), and
   # the gateway never routes here.
+
+  # Durable agent runs (docs/explanation/agent-layout.md): Node-only
+  # Temporal workers, one per owning service, own task queue, no ports.
+  research-agent-worker:
+    <<: *svc-base
+    image: node:26-slim
+    working_dir: /app
+    command: ["node", "--import", "tsx", "apps/research/src/agent-worker.ts"]
+    environment:
+      <<: *research-env
+    stop_grace_period: 30s
+    depends_on:
+      deps:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+
+  applications-agent-worker:
+    <<: *svc-base
+    image: node:26-slim
+    working_dir: /app
+    command: ["node", "--import", "tsx", "apps/applications/src/agent-worker.ts"]
+    environment:
+      <<: *applications-env
+    stop_grace_period: 30s
+    depends_on:
+      deps:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+
   clamav:
     image: clamav/clamav:latest
     restart: unless-stopped

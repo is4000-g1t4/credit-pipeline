@@ -100,6 +100,23 @@ Temporal workflows instead of in-process fire-and-forget jobs.
   marks a still-active run failed. This replaces the hand-rolled reapers
   and boot recovery. The run tables remain the read model the UI polls.
 - **Idempotent start:** the workflow id is `<kind>:<runId>:<token>`, so
-  re-issuing a start is a no-op. A short sweep in the agent worker
-  re-issues starts for rows committed but never started. That gap exists
-  because the API commits the row and then starts the workflow.
+  re-issuing a start is a no-op. The API commits the row and then starts
+  the workflow, so a crash in between can leave a row that was committed
+  but never started. A 15s sweep in each agent worker re-issues starts
+  for rows older than 10s that never heartbeated. It fails rows still
+  queued past their lease plus 5 minutes, so the UI always reaches a
+  terminal state even when Temporal is unreachable.
+- **Research retries** (`rotateRunForRetry`) rotate `run_token`, reset the
+  row to `queued`, and clear the dead attempt's evidence, findings and
+  context/policy stage state before rerunning. Context retries rotate
+  `context_stage_token`.
+- **Integrity retries** (`claimIntegrityRunById`) re-lease the row with a
+  fresh `lease_token` and still respect `max_attempts`.
+
+Run kinds: `research.run` and `research.context-retry` run on the
+`research-agents` queue, and `integrity.run` on `applications-agents`.
+
+Local dev: `pnpm dev` also starts each service's `dev:agent-worker`
+script. The compose overlay runs them as the `research-agent-worker` and
+`applications-agent-worker` services. Without a running agent worker,
+runs stay `queued` until the sweep fails them.
