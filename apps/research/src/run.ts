@@ -277,8 +277,18 @@ export async function executeRun(deps: ExecDeps, runId: string, token: string): 
 				"context stage errored unexpectedly",
 			);
 			try {
+				// Only the stage this attempt claimed: while our run token
+				// still owns the row, the live stage token is ours. A fenced
+				// attempt (token rotated) must never fail a newer attempt's
+				// live stage; the stage writer's token guard covers a race.
 				const live = await getRun(db, runId);
-				if (live && live.contextStatus === "running" && live.contextStageToken) {
+				if (
+					live &&
+					live.status === "running" &&
+					live.runToken === token &&
+					live.contextStatus === "running" &&
+					live.contextStageToken
+				) {
 					await persistContextFailure(db, runId, live.contextStageToken, "internal_error");
 				}
 			} catch {
