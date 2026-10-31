@@ -12,6 +12,36 @@ export const AGENT_RUN_WORKFLOW = "agentRunWorkflow";
 /** Error type an activity throws to stop Temporal retrying the run. */
 export const NON_RETRYABLE_AGENT_ERROR = "NonRetryableAgentError";
 
+/** agentRunWorkflow's retry schedule; sweeps derive their horizons from it. */
+export const AGENT_RUN_RETRY = Object.freeze({
+	maxAttempts: 3,
+	backoffInitialMs: 2_000,
+	backoffMaxMs: 30_000,
+});
+
+/** Backoff slept after failed attempt `attempt` (1-based). */
+export function agentRunBackoffMs(attempt: number): number {
+	return Math.min(
+		AGENT_RUN_RETRY.backoffMaxMs,
+		AGENT_RUN_RETRY.backoffInitialMs * 2 ** (attempt - 1),
+	);
+}
+
+/**
+ * Longest a live workflow can keep a run active: every attempt's full
+ * start-to-close lease plus the backoff between attempts. Sweeps add their
+ * own grace on top and never fail a row inside this window.
+ */
+export function agentRunHorizonMs(
+	attemptLeaseMs: number,
+	maxAttempts: number = AGENT_RUN_RETRY.maxAttempts,
+): number {
+	const attempts = Math.max(1, maxAttempts);
+	let backoff = 0;
+	for (let a = 1; a < attempts; a++) backoff += agentRunBackoffMs(a);
+	return attemptLeaseMs * attempts + backoff;
+}
+
 export interface AgentRunInput {
 	/** Dispatch key the service's activity switches on, e.g. "research.run". */
 	kind: string;

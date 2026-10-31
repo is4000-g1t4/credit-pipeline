@@ -2,6 +2,7 @@
 // execution, and conditional finalize. Crash recovery, retry fencing and
 // terminal cleanup live below (Temporal drives them). No partial writes:
 // evidence/findings persist in the same transaction as success.
+import { AGENT_RUN_RETRY, agentRunHorizonMs } from "@credit/agent-kit/temporal/types";
 import { randomUUID } from "node:crypto";
 import {
 	agentEvidence,
@@ -841,27 +842,17 @@ export function runLeaseMs(env: ResearchEnv): number {
 /** Grace past the whole retry horizon before the sweep fails a row. */
 export const OVERDUE_GRACE_MS = 5 * 60_000;
 
-/**
- * Attempts agentRunWorkflow drives per run. Mirrors agent-kit's
- * DEFAULT_MAX_ATTEMPTS (research inputs never override it) and its backoff
- * (2s doubling, 30s cap) below.
- */
-export const RUN_MAX_ATTEMPTS = 3;
-const RETRY_BACKOFF_INITIAL_MS = 2_000;
-const RETRY_BACKOFF_MAX_MS = 30_000;
+/** Attempts agentRunWorkflow drives per research run (inputs never override it). */
+export const RUN_MAX_ATTEMPTS = AGENT_RUN_RETRY.maxAttempts;
 
 /**
- * Longest a live workflow can keep a row active: every attempt's full
- * start-to-close lease, the backoff between attempts, plus
+ * Longest a live workflow can keep a row active (agent-kit's
+ * agentRunHorizonMs: every attempt's lease + backoff) plus
  * OVERDUE_GRACE_MS. The sweep never fails a row inside this horizon, so a
  * live retry (or a start waiting on a backlogged worker) is never killed.
  */
 export function activeHorizonMs(attemptLeaseMs: number, maxAttempts = RUN_MAX_ATTEMPTS): number {
-	let backoff = 0;
-	for (let attempt = 1; attempt < maxAttempts; attempt++) {
-		backoff += Math.min(RETRY_BACKOFF_MAX_MS, RETRY_BACKOFF_INITIAL_MS * 2 ** (attempt - 1));
-	}
-	return attemptLeaseMs * maxAttempts + backoff + OVERDUE_GRACE_MS;
+	return agentRunHorizonMs(attemptLeaseMs, maxAttempts) + OVERDUE_GRACE_MS;
 }
 
 /** Context-retry attempt lease: stage deadline + grace (one workflow attempt). */

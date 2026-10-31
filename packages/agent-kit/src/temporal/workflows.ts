@@ -20,16 +20,16 @@ import {
 	sleep,
 } from "@temporalio/workflow";
 import {
+	AGENT_RUN_RETRY,
 	NON_RETRYABLE_AGENT_ERROR,
+	agentRunBackoffMs,
 	type AgentRunActivities,
 	type AgentRunFailure,
 	type AgentRunInput,
 } from "./types.js";
 
-export const DEFAULT_MAX_ATTEMPTS = 3;
+export const DEFAULT_MAX_ATTEMPTS = AGENT_RUN_RETRY.maxAttempts;
 export const DEFAULT_HEARTBEAT_TIMEOUT_MS = 60_000;
-const BACKOFF_INITIAL_MS = 2_000;
-const BACKOFF_MAX_MS = 30_000;
 
 export async function agentRunWorkflow(input: AgentRunInput): Promise<void> {
 	const maxAttempts = Math.max(1, input.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
@@ -54,7 +54,7 @@ export async function agentRunWorkflow(input: AgentRunInput): Promise<void> {
 			return;
 		} catch (err) {
 			if (attempt < maxAttempts && isRetryableAttemptFailure(err)) {
-				await sleep(Math.min(BACKOFF_MAX_MS, BACKOFF_INITIAL_MS * 2 ** (attempt - 1)));
+				await sleep(agentRunBackoffMs(attempt));
 				continue;
 			}
 			const failure = describeFailure(err);

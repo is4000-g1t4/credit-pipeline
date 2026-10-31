@@ -10,6 +10,7 @@
 //   - a running row is failed only when its lease went stale beyond the
 //     whole-run horizon (the workflow and its cleanup were lost), fenced on
 //     the stale lease token so a re-lease wins.
+import { AGENT_RUN_RETRY } from "@credit/agent-kit/temporal/types";
 import { documentIntegrityRuns } from "@credit/db/applications";
 import { and, asc, eq, lt, sql } from "drizzle-orm";
 import {
@@ -24,8 +25,8 @@ export const SWEEP_RESTART_AFTER_MS = 10_000;
 export const SWEEP_OVERDUE_GRACE_MS = 5 * 60_000;
 /** Queued backlog whose workflow exists is still failed after this long. */
 export const SWEEP_ABANDON_AFTER_MS = 24 * 3_600_000;
-/** agentRunWorkflow's backoff cap between attempts (2s doubling to 30s). */
-const WORKFLOW_BACKOFF_CAP_MS = 30_000;
+/** agentRunWorkflow's backoff cap between attempts (an upper bound per attempt). */
+const WORKFLOW_BACKOFF_CAP_MS = AGENT_RUN_RETRY.backoffMaxMs;
 const SWEEP_BATCH = 50;
 
 export interface SweepResult {

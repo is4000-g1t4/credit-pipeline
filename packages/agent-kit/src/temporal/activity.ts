@@ -1,7 +1,7 @@
 // Helpers for the service-side agent activities (runs inside a Temporal
 // activity context only).
 import { ApplicationFailure, Context } from "@temporalio/activity";
-import { NON_RETRYABLE_AGENT_ERROR, type AgentRunInput } from "./types.js";
+import { AGENT_RUN_RETRY, NON_RETRYABLE_AGENT_ERROR, type AgentRunInput } from "./types.js";
 
 /**
  * 1-based attempt of the run. The workflow drives attempts itself (each
@@ -14,7 +14,7 @@ export function runAttempt(input: Pick<AgentRunInput, "attempt">): number {
 
 /** True on the final attempt: a failure now is terminal, not retried. */
 export function isLastAttempt(input: Pick<AgentRunInput, "attempt" | "maxAttempts">): boolean {
-	return runAttempt(input) >= (input.maxAttempts ?? 3);
+	return runAttempt(input) >= (input.maxAttempts ?? AGENT_RUN_RETRY.maxAttempts);
 }
 
 /**
