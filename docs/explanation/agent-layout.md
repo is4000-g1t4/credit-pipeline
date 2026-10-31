@@ -111,15 +111,20 @@ Temporal workflows instead of in-process fire-and-forget jobs.
   re-issuing a start is a no-op. The API commits the row and then starts
   the workflow, so a crash in between can leave a row that was committed
   but never started. A 15s sweep in each agent worker re-issues starts
-  for rows older than 10s that never heartbeated. It fails rows still
-  queued past their lease plus 5 minutes, so the UI always reaches a
-  terminal state even when Temporal is unreachable.
+  for rows older than 10s that never heartbeated. Past the run horizon
+  (lease x attempts + backoff + 5 minutes) it fails rows it cannot start,
+  so the UI always reaches a terminal state even when Temporal is
+  unreachable. The integrity sweep also leaves a startable backlog queued
+  (up to 24h) and fails `running` rows whose lease went stale past the
+  horizon.
 - **Research retries** (`rotateRunForRetry`) rotate `run_token`, reset the
   row to `queued`, and clear the dead attempt's evidence, findings and
   context/policy stage state before rerunning. Context retries rotate
   `context_stage_token`.
 - **Integrity retries** (`claimIntegrityRunById`) re-lease the row with a
-  fresh `lease_token` and still respect `max_attempts`.
+  fresh `lease_token` and still respect `max_attempts`, which the workflow
+  also receives. Transient model failures before the last attempt throw
+  so the workflow retries them; a cancelled attempt leaves the row as is.
 
 Run kinds: `research.run` and `research.context-retry` run on the
 `research-agents` queue, and `integrity.run` on `applications-agents`.

@@ -149,11 +149,23 @@ INTEGRITY_AGENT_UNAVAILABLE` when the agent is off or keyless. After the
 queued row commits, the API starts an `integrity.run` workflow on the
 `applications-agents` queue (workflow id `integrity.run:<runId>:<runId>`). The
 Node `agent-worker` claims that run by id, bumps `attempts` (`max_attempts` 2)
-and finalizes under a lease token. If the start fails the row stays `queued`;
-the worker sweep (every 15s) re-issues starts for rows older than 10s and fails
-rows queued longer than lease + 5 min (`LEASE_EXPIRED`). Business failures
-finalize the row as `failed` and are not retried; a crash or lost heartbeat
-makes Temporal retry, and attempt 2 re-leases the row with a new token.
+and finalizes under a lease token; the workflow runs the row's `max_attempts`.
+The API bounds the start at 2s. If the start fails or times out the row stays
+`queued`; the worker sweep (every 15s) re-issues starts for rows older than
+10s. Past the run horizon (lease x `max_attempts` + backoff + 5 min) it fails
+(`LEASE_EXPIRED`) a queued row whose start still fails, a queued row older
+than 24h, and a `running` row whose lease went stale (workflow lost).
+Transient failures (`MODEL_ERROR`, `TIMEOUT`, `INVALID_OUTPUT`, `NO_TOOL_USE`,
+`STEP_LIMIT`, `TOOL_CALL_LIMIT`, `INTERNAL_ERROR`) before the last attempt
+keep the row `running` with the error recorded and are retried with backoff;
+other failures, and any failure on the last attempt, finalize the row as
+`failed` with one `integrity.analysis_failed` audit. A crash or lost heartbeat
+also retries, and attempt 2 re-leases the row with a new token. A cancelled
+attempt (worker shutdown) leaves the row for the next attempt. Within an
+attempt, model calls also retry transient HTTP failures under the shared
+policy in [agent-layout.md](agent-layout.md#model-call-retries); a failed
+call returns no usage, so its tokens are not counted toward
+`DOCUMENT_INTEGRITY_MAX_COST_USD` or the run's usage.
 
 The agent starts with `list_documents` and `list_signals`; it can call
 `search_pages`/`get_page`, and—only when a brief is requested—also

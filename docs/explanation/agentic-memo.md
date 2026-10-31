@@ -51,6 +51,10 @@ The applications service is Bun, and the Agents SDK is Bun-compatible.
   (`ASSIST_MEMO_TIMEOUT_MS`, default 90s), token/cost budget
   (`ASSIST_MEMO_MAX_COST_USD`, default 0.25). The gateway proxy bound for
   `/api/assist/*` is 120s.
+- Model calls retry transient failures (429, 5xx, network) under the shared
+  policy in [agent-layout.md](agent-layout.md#model-call-retries), inside the
+  same wall-clock timeout. A failed call returns no usage, so its tokens are
+  not counted toward the cost budget or the trace.
 - Allowlisted evidence tools, all read-only over the passed bundle:
   `list_evidence` (refs, labels, types, counts), `search_evidence`
   (case-insensitive substring/token search, capped), `get_evidence` (exact

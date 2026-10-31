@@ -61,6 +61,11 @@ Config: `POLICY_EXCEPTION_*` (`MODEL`, `PROMPT_VERSION`, `AGENT_VERSION`,
 `VALIDATOR_VERSION`, `MAX_STEPS`, `MAX_TOOL_CALLS`, `TIMEOUT_MS`,
 `MAX_COST_USD`, `MAX_OUTPUT_TOKENS`).
 
+Model calls retry transient failures (429, 5xx, network) under the shared
+policy in [agent-layout.md](agent-layout.md#model-call-retries), inside
+`TIMEOUT_MS`. A failed call returns no usage, so its tokens are not counted
+toward `MAX_COST_USD` or the trace.
+
 Eval: `pnpm --filter @credit/applications eval:policy-exception --
 --split=dev --trials=3` (then `--split=heldout` once). 24 cases
 (17 dev / 7 held-out; 9 explain, 8 memo, 7 follow-up), fixture policy
