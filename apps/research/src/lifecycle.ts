@@ -975,14 +975,26 @@ export async function failActiveRun(
 	db: Db,
 	runId: string,
 	failure: { code: RunErrorCode; message: string },
+	opts: { staleForSecs?: number } = {},
 ): Promise<boolean> {
 	if (!isUuid(runId)) return false;
+	// Sweep backstop: re-check staleness under the row lock so a run that
+	// heartbeated since the sweep's select is never failed.
+	const staleSecs = opts.staleForSecs ?? 0;
 	return withTx(db, async (tx) => {
 		const rows = (await tx.execute(
-			sql`SELECT status, context_status, policy_status FROM agent_runs WHERE id = ${runId} FOR UPDATE`,
-		)) as unknown as Array<{ status: string; context_status: string; policy_status: string }>;
+			sql`SELECT status, context_status, policy_status,
+				coalesce(heartbeat_at, created_at) < now() - make_interval(secs => ${staleSecs}) AS stale
+				FROM agent_runs WHERE id = ${runId} FOR UPDATE`,
+		)) as unknown as Array<{
+			status: string;
+			context_status: string;
+			policy_status: string;
+			stale: boolean;
+		}>;
 		const row = rows[0];
 		if (!row || (row.status !== "queued" && row.status !== "running")) return false;
+		if (opts.staleForSecs !== undefined && !row.stale) return false;
 		const now = new Date();
 		const stageCode = failure.code === "timeout" ? "timeout" : "internal_error";
 		await tx
@@ -1025,6 +1037,7 @@ export async function failRunningContextStage(
 	db: Db,
 	runId: string,
 	code: string,
+	opts: { staleForSecs?: number } = {},
 ): Promise<boolean> {
 	if (!isUuid(runId)) return false;
 	const rows = await db
@@ -1040,6 +1053,9 @@ export async function failRunningContextStage(
 				eq(agentRuns.id, runId),
 				inArray(agentRuns.status, ["succeeded", "failed"]),
 				eq(agentRuns.contextStatus, "running"),
+				opts.staleForSecs === undefined
+					? undefined
+					: sql`coalesce(${agentRuns.contextHeartbeatAt}, ${agentRuns.contextStartedAt}) < now() - make_interval(secs => ${opts.staleForSecs})`,
 			),
 		)
 		.returning({ id: agentRuns.id });
@@ -1083,40 +1099,76 @@ export async function listUnstartedContextRetries(
 }
 
 /**
- * Last resort when Temporal stayed unreachable: never-started queued rows
- * older than the whole retry horizon (activeHorizonMs) fail "timeout" so
- * the UI always reaches a terminal state. A row whose start succeeded but
- * is waiting on a backlogged worker stays inside the horizon and is never
- * failed while its workflow could still run it. Returns the failed run ids.
+ * Sweep backstop for orphaned active runs: a queued or running row whose
+ * last sign of life (DB heartbeat, else creation) is older than the whole
+ * retry horizon (activeHorizonMs: lease x attempts + backoff + grace) has
+ * no live workflow — never started (Temporal unreachable), terminated,
+ * failAgentRun exhausted, history lost, or a pre-migration in-flight row.
+ * It fails "timeout" through failActiveRun (stages included), so the UI
+ * reaches a terminal state and ensureRunTx stops returning it as the
+ * active run. A live attempt heartbeats every 15s and a started run waiting
+ * on a backlogged worker stays inside the horizon, so neither is killed.
+ * Returns the failed run ids.
  */
-export async function failOverdueQueuedRuns(db: Db, env: ResearchEnv): Promise<string[]> {
-	const horizonSecs = activeHorizonMs(runLeaseMs(env)) / 1000;
+export async function failOrphanedRuns(db: Db, env: ResearchEnv): Promise<string[]> {
+	const staleForSecs = activeHorizonMs(runLeaseMs(env)) / 1000;
 	const rows = (await db.execute(sql`SELECT id FROM agent_runs
-		WHERE status = 'queued' AND heartbeat_at IS NULL
-		  AND created_at < now() - make_interval(secs => ${horizonSecs})`)) as unknown as Array<{
+		WHERE status IN ('queued', 'running')
+		  AND coalesce(heartbeat_at, created_at) < now() - make_interval(secs => ${staleForSecs})`)) as unknown as Array<{
 		id: string;
 	}>;
 	const failed: string[] = [];
 	for (const { id } of rows) {
-		if (await failActiveRun(db, id, { code: "timeout", message: "research run timed out" })) {
-			failed.push(id);
-		}
+		const done = await failActiveRun(
+			db,
+			id,
+			{ code: "timeout", message: "research run timed out" },
+			{ staleForSecs },
+		);
+		if (done) failed.push(id);
 	}
 	return failed;
 }
 
-/** Same last resort for a never-started context retry stage. */
-export async function failOverdueContextRetries(db: Db, env: ResearchEnv): Promise<string[]> {
-	const horizonSecs = activeHorizonMs(contextRetryLeaseMs(env)) / 1000;
-	const rows = (await db.execute(sql`SELECT id FROM agent_runs
+/**
+ * Same backstop for stages left running on a terminal run: a context
+ * stage (an unstarted or dead retry, or an initial stage whose failure
+ * never persisted) and a policy stage. Run status, brief and evidence are
+ * never touched. Returns the run ids whose stage this call failed.
+ */
+export async function failOrphanedStages(db: Db, env: ResearchEnv): Promise<string[]> {
+	const contextStaleSecs = activeHorizonMs(contextRetryLeaseMs(env)) / 1000;
+	const contextRows = (await db.execute(sql`SELECT id FROM agent_runs
 		WHERE status IN ('succeeded', 'failed') AND context_status = 'running'
-		  AND context_heartbeat_at IS NULL
-		  AND context_started_at < now() - make_interval(secs => ${horizonSecs})`)) as unknown as Array<{
+		  AND coalesce(context_heartbeat_at, context_started_at) < now() - make_interval(secs => ${contextStaleSecs})`)) as unknown as Array<{
 		id: string;
 	}>;
 	const failed: string[] = [];
-	for (const { id } of rows) {
-		if (await failRunningContextStage(db, id, "timeout")) failed.push(id);
+	for (const { id } of contextRows) {
+		const done = await failRunningContextStage(db, id, "timeout", {
+			staleForSecs: contextStaleSecs,
+		});
+		if (done) failed.push(id);
 	}
+	// Policy only runs inside a run attempt: once the run is terminal a
+	// running policy stage is orphaned (it would otherwise hold an auto
+	// budget reservation forever).
+	const policyStaleSecs = activeHorizonMs(runLeaseMs(env)) / 1000;
+	const policyRows = await db
+		.update(agentRuns)
+		.set({
+			policyStatus: "failed",
+			policyErrorCode: "timeout",
+			policyFinishedAt: new Date(),
+		})
+		.where(
+			and(
+				inArray(agentRuns.status, ["succeeded", "failed"]),
+				eq(agentRuns.policyStatus, "running"),
+				sql`coalesce(${agentRuns.policyHeartbeatAt}, ${agentRuns.policyStartedAt}, ${agentRuns.createdAt}) < now() - make_interval(secs => ${policyStaleSecs})`,
+			),
+		)
+		.returning({ id: agentRuns.id });
+	for (const { id } of policyRows) if (!failed.includes(id)) failed.push(id);
 	return failed;
 }

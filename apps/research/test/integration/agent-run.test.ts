@@ -36,8 +36,9 @@ import {
 	claimContextStage,
 	claimRun,
 	ensureRun,
-	failOverdueContextRetries,
-	failOverdueQueuedRuns,
+	failActiveRun,
+	failOrphanedStages,
+	failOrphanedRuns,
 	finalizeFailure,
 	getRun,
 	initContextStage,
@@ -467,7 +468,7 @@ describe("agent-worker sweep", () => {
 			expect(starter.starts.map((s) => s.runId)).toContain(backlogged.run.id);
 			expect((await getRun(ctx.db, backlogged.run.id))?.status).toBe("queued");
 			// Repeat sweep: nothing new to fail for the overdue row.
-			expect(await failOverdueQueuedRuns(ctx.db, env)).not.toContain(overdue.run.id);
+			expect(await failOrphanedRuns(ctx.db, env)).not.toContain(overdue.run.id);
 		} finally {
 			await teardown(ctx);
 		}
@@ -516,13 +517,154 @@ describe("agent-worker sweep", () => {
 			await ctx.db.execute(
 				sql`UPDATE agent_runs SET context_started_at = now() - make_interval(secs => ${Math.ceil(activeHorizonMs(contextRetryTimeoutMs(env)) / 1000) + 5}) WHERE id = ${run.id}`,
 			);
-			expect(await failOverdueContextRetries(ctx.db, env)).toContain(run.id);
+			expect(await failOrphanedStages(ctx.db, env)).toContain(run.id);
 			expect(await getRun(ctx.db, run.id)).toMatchObject({
 				status: "failed",
 				errorCode: "tool_error",
 				contextStatus: "failed",
 				contextErrorCode: "timeout",
 				contextStageToken: null,
+			});
+		} finally {
+			await teardown(ctx);
+		}
+	});
+
+	it("fails an orphaned running run past the retry horizon and unblocks a new run", async () => {
+		const ctx = setupApp();
+		const horizonSecs = Math.ceil(activeHorizonMs(runLeaseMs(env)) / 1000);
+		try {
+			const { run, token, facts } = await newRun(ctx);
+			expect(await claimRun(ctx.db, run.id, token)).toBe(true);
+			expect(await initContextStage(ctx.db, env, run.id, token, "queued")).toBe(true);
+			expect(
+				await claimContextStage(ctx.db, env, run.id, token, { promptVersion: "v1", model: "m" }),
+			).not.toBeNull();
+			// Its workflow is gone (terminated / history lost): no heartbeat
+			// for longer than every attempt + backoff + grace.
+			await ctx.db.execute(
+				sql`UPDATE agent_runs SET policy_status = 'running',
+					created_at = now() - make_interval(secs => ${horizonSecs + 60}),
+					heartbeat_at = now() - make_interval(secs => ${horizonSecs + 5})
+					WHERE id = ${run.id}`,
+			);
+			// Blocked: ensure keeps returning the orphan as the active run.
+			const blocked = await ensureRun(ctx.db, env, {
+				applicationId: facts.applicationId,
+				requestedBy: randomUUID(),
+				caseFacts: facts,
+				aiResearchConsent: true,
+			});
+			expect(blocked).toMatchObject({ inserted: false, run: { id: run.id } });
+
+			const out = await sweepAgentRuns({ db: ctx.db, env, logger, starter: fakeStarter() });
+			expect(out.failed).toContain(run.id);
+			expect(await getRun(ctx.db, run.id)).toMatchObject({
+				status: "failed",
+				errorCode: "timeout",
+				runToken: null,
+				contextStatus: "failed",
+				contextErrorCode: "timeout",
+				contextStageToken: null,
+				policyStatus: "failed",
+				policyErrorCode: "timeout",
+			});
+			const next = await ensureRun(ctx.db, env, {
+				applicationId: facts.applicationId,
+				requestedBy: randomUUID(),
+				caseFacts: facts,
+				aiResearchConsent: true,
+			});
+			expect(next.inserted).toBe(true);
+			expect(next.run.id).not.toBe(run.id);
+		} finally {
+			await teardown(ctx);
+		}
+	});
+
+	it("fails an orphaned rotated (queued, heartbeated) row but never a live retry inside the horizon", async () => {
+		const ctx = setupApp();
+		const horizonSecs = Math.ceil(activeHorizonMs(runLeaseMs(env)) / 1000);
+		const leaseSecs = Math.ceil(runLeaseMs(env) / 1000);
+		try {
+			const orphan = await newRun(ctx);
+			expect(await rotateRunForRetry(ctx.db, env, orphan.run.id)).not.toBeNull();
+			await ctx.db.execute(
+				sql`UPDATE agent_runs SET heartbeat_at = now() - make_interval(secs => ${horizonSecs + 5}) WHERE id = ${orphan.run.id}`,
+			);
+			// Live: attempt 2 of 3 after attempt 1 used its whole lease — well
+			// past one lease + grace, still inside the horizon.
+			const live = await newRun(ctx);
+			expect(await claimRun(ctx.db, live.run.id, live.token)).toBe(true);
+			await ctx.db.execute(
+				sql`UPDATE agent_runs SET created_at = now() - make_interval(secs => ${2 * leaseSecs}),
+					heartbeat_at = now() - make_interval(secs => ${2 * leaseSecs}) WHERE id = ${live.run.id}`,
+			);
+			const out = await sweepAgentRuns({ db: ctx.db, env, logger, starter: fakeStarter() });
+			expect(out.failed).toContain(orphan.run.id);
+			expect((await getRun(ctx.db, orphan.run.id))?.status).toBe("failed");
+			expect(out.failed).not.toContain(live.run.id);
+			expect(await getRun(ctx.db, live.run.id)).toMatchObject({
+				status: "running",
+				runToken: live.token,
+			});
+			// The in-lock recheck refuses a run that is not stale.
+			expect(
+				await failActiveRun(
+					ctx.db,
+					live.run.id,
+					{ code: "timeout", message: "x" },
+					{ staleForSecs: horizonSecs },
+				),
+			).toBe(false);
+		} finally {
+			await teardown(ctx);
+		}
+	});
+
+	it("fails context and policy stages left running on a terminal run, never the run", async () => {
+		const ctx = setupApp();
+		const ctxHorizon = Math.ceil(activeHorizonMs(contextRetryTimeoutMs(env)) / 1000);
+		const runHorizon = Math.ceil(activeHorizonMs(runLeaseMs(env)) / 1000);
+		try {
+			const stuck = await newRun(ctx);
+			const fresh = await newRun(ctx);
+			for (const r of [stuck, fresh]) {
+				expect(await claimRun(ctx.db, r.run.id, r.token)).toBe(true);
+				expect(await initContextStage(ctx.db, env, r.run.id, r.token, "queued")).toBe(true);
+				expect(
+					await claimContextStage(ctx.db, env, r.run.id, r.token, {
+						promptVersion: "v1",
+						model: "m",
+					}),
+				).not.toBeNull();
+				await ctx.db.execute(
+					sql`UPDATE agent_runs SET policy_status = 'running', policy_started_at = now(), policy_heartbeat_at = now() WHERE id = ${r.run.id}`,
+				);
+				// The stage failure never persisted; the run finalized anyway.
+				expect(await finalizeFailure(ctx.db, r.run.id, r.token, "tool_error", "x")).toBe(true);
+			}
+			await ctx.db.execute(
+				sql`UPDATE agent_runs SET
+					context_heartbeat_at = now() - make_interval(secs => ${ctxHorizon + 5}),
+					policy_heartbeat_at = now() - make_interval(secs => ${runHorizon + 5})
+					WHERE id = ${stuck.run.id}`,
+			);
+			const out = await sweepAgentRuns({ db: ctx.db, env, logger, starter: fakeStarter() });
+			expect(out.failed).toContain(stuck.run.id);
+			expect(await getRun(ctx.db, stuck.run.id)).toMatchObject({
+				status: "failed",
+				errorCode: "tool_error",
+				contextStatus: "failed",
+				contextErrorCode: "timeout",
+				contextStageToken: null,
+				policyStatus: "failed",
+				policyErrorCode: "timeout",
+			});
+			expect(out.failed).not.toContain(fresh.run.id);
+			expect(await getRun(ctx.db, fresh.run.id)).toMatchObject({
+				contextStatus: "running",
+				policyStatus: "running",
 			});
 		} finally {
 			await teardown(ctx);

@@ -1,8 +1,9 @@
 // Agent-worker sweep (replaces recoverQueuedRuns / the reapers). Closes the
 // gap between "API committed the row" and "Temporal accepted the start":
-// re-issues idempotent starts for rows nobody picked up, and fails rows
-// still unstarted past the whole retry horizon so the UI always reaches a
-// terminal state.
+// re-issues idempotent starts for rows nobody picked up, and is the backstop
+// for orphaned rows: any queued/running run (or stage left running on a
+// terminal run) with no sign of life past the whole retry horizon fails, so
+// the UI always reaches a terminal state and new runs are never blocked.
 import type { AgentRunInput } from "@credit/agent-kit/temporal/types";
 import type { Db } from "@credit/db/research";
 import type { Logger } from "@credit/service-kit";
@@ -16,8 +17,8 @@ import {
 } from "./agent-run.js";
 import type { ResearchEnv } from "./env.js";
 import {
-	failOverdueContextRetries,
-	failOverdueQueuedRuns,
+	failOrphanedRuns,
+	failOrphanedStages,
 	listUnstartedContextRetries,
 	listUnstartedRuns,
 } from "./lifecycle.js";
@@ -36,12 +37,9 @@ export async function sweepAgentRuns(deps: {
 }): Promise<SweepResult> {
 	const { db, env, logger, starter } = deps;
 	const started: string[] = [];
-	// Fail first: an overdue row must reach a terminal state, not be
+	// Fail first: an orphaned row must reach a terminal state, not be
 	// restarted just before it would be failed.
-	const failed = [
-		...(await failOverdueQueuedRuns(db, env)),
-		...(await failOverdueContextRetries(db, env)),
-	];
+	const failed = [...(await failOrphanedRuns(db, env)), ...(await failOrphanedStages(db, env))];
 	const inputs: AgentRunInput[] = [
 		...(await listUnstartedRuns(db)).map((p) => ({
 			kind: RESEARCH_RUN_KIND,

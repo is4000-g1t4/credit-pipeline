@@ -113,11 +113,15 @@ Temporal workflows instead of in-process fire-and-forget jobs.
   counts as a failed start. A crash or timeout in between can therefore
   leave a row that was committed but never started. A 15s sweep in each
   agent worker re-issues starts for rows older than 10s that never
-  heartbeated. Past the run horizon (lease x attempts + backoff + 5
-  minutes) it fails rows it cannot start, so the UI always reaches a
-  terminal state even when Temporal is unreachable. The integrity sweep
-  also leaves a startable backlog queued (up to 24h) and fails `running`
-  rows whose lease went stale past the horizon.
+  heartbeated.
+- **Backstop:** past the run horizon (lease x attempts + backoff + 5
+  minutes), each sweep fails active runs that show no sign of life:
+  never started, terminated, or orphaned. Research also fails stages left
+  running on a terminal run, and integrity fails `running` rows whose
+  lease went stale. Live retries inside the horizon are never killed, and
+  the integrity sweep leaves a startable backlog queued for up to 24h.
+  The UI always reaches a terminal state, even when Temporal is
+  unreachable.
 - **Research retries** (`rotateRunForRetry`) rotate `run_token`, reset the
   row to `queued`, and clear the dead attempt's evidence, findings and
   context/policy stage state before rerunning. Context retries rotate
