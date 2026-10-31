@@ -234,4 +234,44 @@ describe("policy OpenRouter retries (agent-kit DEFAULT_RETRY_POLICY)", () => {
 		expect(calls[0]!.body.provider).toEqual({ order: ["p1"] });
 		expect(calls[1]!.body.provider).toBeUndefined();
 	});
+
+	it("falls back without provider routing on 422", async () => {
+		const { config, calls } = setup(
+			[new Response("bad provider", { status: 422 }), okEmbedding()],
+			{ embeddingProviders: ["p1"] },
+		);
+		await expect(createOpenRouterEmbedder(config).embed(["hello"])).resolves.toEqual([
+			[0.1, 0.2, 0.3],
+		]);
+		expect(calls).toHaveLength(2);
+		expect(calls[1]!.body.provider).toBeUndefined();
+	});
+
+	it("does not fall back without provider routing after persistent 5xx", async () => {
+		const { config, calls } = setup(
+			[
+				new Response("down", { status: 503 }),
+				new Response("down", { status: 503 }),
+				new Response("down", { status: 503 }),
+				okEmbedding(),
+			],
+			{ embeddingProviders: ["p1"] },
+		);
+		await expect(createOpenRouterEmbedder(config).embed(["hello"])).rejects.toThrow(
+			"OpenRouter 503",
+		);
+		expect(calls).toHaveLength(DEFAULT_RETRY_POLICY.maxAttempts);
+		expect(calls.every((c) => c.body.provider !== undefined)).toBe(true);
+	});
+
+	it("does not fall back without provider routing on 401", async () => {
+		const { config, calls } = setup(
+			[new Response("unauthorized", { status: 401 }), okEmbedding()],
+			{ embeddingProviders: ["p1"] },
+		);
+		await expect(createOpenRouterEmbedder(config).embed(["hello"])).rejects.toThrow(
+			"OpenRouter 401",
+		);
+		expect(calls).toHaveLength(1);
+	});
 });

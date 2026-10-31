@@ -107,7 +107,23 @@ export async function postJson(
 	}
 	if (res.ok) return res.json();
 	const text = await res.text().catch(() => "");
-	throw new Error(`OpenRouter ${res.status}: ${text.slice(0, 300)}`);
+	throw new OpenRouterHttpError(res.status, `OpenRouter ${res.status}: ${text.slice(0, 300)}`);
+}
+
+/** Non-2xx from OpenRouter after retries; `status` drives caller fallbacks. */
+export class OpenRouterHttpError extends Error {
+	constructor(
+		readonly status: number,
+		message: string,
+	) {
+		super(message);
+		this.name = "OpenRouterHttpError";
+	}
+}
+
+/** A gateway refusing the `provider` routing params: a non-retryable 400/422. */
+function isProviderRoutingRejected(err: unknown): boolean {
+	return err instanceof OpenRouterHttpError && (err.status === 400 || err.status === 422);
 }
 
 export function createOpenRouterEmbedder(config: OpenRouterConfig): Embedder {
@@ -156,9 +172,10 @@ export function createOpenRouterEmbedder(config: OpenRouterConfig): Embedder {
 							AbortSignal.timeout(30_000),
 						);
 					} catch (err) {
-						// Some gateways reject provider routing on embeddings. Retry
-						// once without it; the eval records the same fallback.
-						if (!provider) throw err;
+						// Some gateways reject provider routing on embeddings (400/422).
+						// Retry once without it; the eval records the same fallback.
+						// Persistent 5xx, 401, timeouts etc. are not routing problems.
+						if (!provider || !isProviderRoutingRejected(err)) throw err;
 						response = await postJson(
 							fetchImpl,
 							`${config.baseUrl}/embeddings`,
