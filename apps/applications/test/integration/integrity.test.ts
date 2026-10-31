@@ -22,7 +22,7 @@ import { createAgentRunStarter, type AgentRunStarter } from "@credit/agent-kit/t
 import { createAgentWorker } from "@credit/agent-kit/temporal/worker";
 import type { AgentRunInput } from "@credit/agent-kit/temporal/types";
 import { createLogger } from "@credit/service-kit";
-import { and, eq } from "drizzle-orm";
+import { and, eq, lt } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ExtractionResult, OcrAdapter } from "../../src/documents/ocr.js";
 import type { ScannerAdapter } from "../../src/documents/scanner.js";
@@ -38,7 +38,11 @@ import {
 	IntegrityAttemptFailed,
 	startIntegrityRun,
 } from "../../src/integrity/runs.js";
-import { sweepQueuedIntegrityRuns } from "../../src/integrity/sweep.js";
+import {
+	integrityRunHorizonMs,
+	SWEEP_ABANDON_AFTER_MS,
+	sweepQueuedIntegrityRuns,
+} from "../../src/integrity/sweep.js";
 import type { IntegrityAgentRunner, IntegrityConfig } from "../../src/integrity/types.js";
 import {
 	createUser,
@@ -662,6 +666,35 @@ async function failedAudits(appId: string) {
 		);
 }
 
+async function queuedRun(appId: string, ageMs: number): Promise<string> {
+	const { run } = await createIntegrityRun(runDeps(ctx), {
+		applicationId: appId,
+		inputHash: randomUUID(),
+		documentSha256: [],
+		requestedBy: randomUUID(),
+		now: new Date(Date.now() - ageMs),
+	});
+	return run.id;
+}
+
+/**
+ * The sweep is global and batched oldest-first, and it leaves startable
+ * backlog queued, so queued rows earlier runs of this suite left behind would
+ * crowd out the rows a sweep test creates. Cancel this suite's leftovers.
+ */
+async function clearQueuedBacklog(): Promise<void> {
+	await ctx.db
+		.update(documentIntegrityRuns)
+		.set({ status: "cancelled", errorCode: "TEST_CLEANUP", finishedAt: new Date() })
+		.where(
+			and(
+				eq(documentIntegrityRuns.status, "queued"),
+				eq(documentIntegrityRuns.model, integrityConfig.model),
+				lt(documentIntegrityRuns.createdAt, new Date(Date.now() - 10_000)),
+			),
+		);
+}
+
 describe("integrity run dispatch", () => {
 	it("starts the workflow after insert, once, and tolerates Temporal being down", async () => {
 		startCalls.length = 0;
@@ -883,39 +916,122 @@ describe("integrity run dispatch", () => {
 		expect((await runRow(runId)).status).toBe("succeeded");
 	});
 
-	it("sweep restarts stale queued rows and fails overdue ones", async () => {
+	it("sweep restarts stale queued rows and never fails a backlog it can start", async () => {
+		await clearQueuedBacklog();
 		const { appId } = await newCase();
 		const deps = runDeps(ctx);
-		const make = async (ageMs: number) =>
-			(
-				await createIntegrityRun(deps, {
-					applicationId: appId,
-					inputHash: randomUUID(),
-					documentSha256: [],
-					requestedBy: randomUUID(),
-					now: new Date(Date.now() - ageMs),
-				})
-			).run.id;
-		const fresh = await make(1_000);
-		const stale = await make(20_000);
-		const overdue = await make(10 * 60_000);
+		const fresh = await queuedRun(appId, 1_000);
+		const stale = await queuedRun(appId, 20_000);
+		// Past the run horizon, but its workflow exists: waiting for a worker slot.
+		const backlogged = await queuedRun(appId, 10 * 60_000);
+		expect(10 * 60_000).toBeGreaterThan(integrityRunHorizonMs(integrityConfig, 2));
 		startCalls.length = 0;
-
-		const result = await sweepQueuedIntegrityRuns(deps, { dispatch: true });
-		expect(result.failed).toBeGreaterThanOrEqual(1);
+		const previous = startImpl;
+		startImpl = async (input) => {
+			startCalls.push(input);
+			return { started: false, workflowId: `${input.kind}:${input.runId}:${input.token}` };
+		};
+		try {
+			await sweepQueuedIntegrityRuns(deps, { dispatch: true });
+		} finally {
+			startImpl = previous;
+		}
 		const started = startCalls.map((call) => call.runId);
 		expect(started).toContain(stale);
+		expect(started).toContain(backlogged);
 		expect(started).not.toContain(fresh);
-		expect(started).not.toContain(overdue);
-		expect((await runRow(overdue)).errorCode).toBe("LEASE_EXPIRED");
-		expect((await runRow(overdue)).status).toBe("failed");
-		expect((await runRow(stale)).status).toBe("queued");
-		expect((await runRow(fresh)).status).toBe("queued");
+		for (const id of [fresh, stale, backlogged]) {
+			expect((await runRow(id)).status).toBe("queued");
+		}
 
 		// Re-issued starts are idempotent for the same row (same workflow id).
 		startCalls.length = 0;
 		await sweepQueuedIntegrityRuns(deps, { dispatch: true });
 		expect(startCalls.map((call) => call.runId)).toContain(stale);
+		await clearQueuedBacklog();
+	});
+
+	it("sweep fails overdue queued rows only when their workflow cannot be started", async () => {
+		await clearQueuedBacklog();
+		const { appId } = await newCase();
+		const deps = runDeps(ctx);
+		const stale = await queuedRun(appId, 20_000);
+		const overdue = await queuedRun(appId, 10 * 60_000);
+		const abandoned = await queuedRun(appId, SWEEP_ABANDON_AFTER_MS + 60_000);
+		const previous = startImpl;
+		startImpl = async () => {
+			throw new Error("temporal unavailable");
+		};
+		try {
+			const result = await sweepQueuedIntegrityRuns(deps, { dispatch: true });
+			expect(result.failed).toBeGreaterThanOrEqual(2);
+		} finally {
+			startImpl = previous;
+		}
+		expect(await runRow(overdue)).toMatchObject({ status: "failed", errorCode: "LEASE_EXPIRED" });
+		expect((await runRow(abandoned)).status).toBe("failed");
+		expect((await runRow(stale)).status).toBe("queued");
+
+		// A worker that does not dispatch cannot start it either.
+		const undispatched = await queuedRun(appId, 10 * 60_000);
+		await sweepQueuedIntegrityRuns(deps, { dispatch: false });
+		expect((await runRow(undispatched)).status).toBe("failed");
+
+		// A day-old backlog is failed even though its workflow exists.
+		const ancient = await queuedRun(appId, SWEEP_ABANDON_AFTER_MS + 60_000);
+		await sweepQueuedIntegrityRuns(deps, { dispatch: true });
+		expect((await runRow(ancient)).status).toBe("failed");
+		await clearQueuedBacklog();
+	});
+
+	it("the queued-overdue path never fails a row claimed after selection", async () => {
+		const { appId } = await newCase();
+		const deps = runDeps(ctx);
+		const runId = await queuedRun(appId, 10 * 60_000);
+		expect((await claimIntegrityRunById(deps, runId, 1)).kind).toBe("claimed");
+		expect(
+			await failIntegrityRun(deps, runId, "LEASE_EXPIRED", "queued too long", {
+				onlyStatus: "queued",
+			}),
+		).toBe(false);
+		expect((await runRow(runId)).status).toBe("running");
+	});
+
+	it("sweep fails running rows orphaned past the run horizon, fenced on the lease", async () => {
+		const { appId } = await newCase();
+		const deps = runDeps(ctx);
+		const horizonMs = integrityRunHorizonMs(integrityConfig, 2);
+		const claimRunning = async (leaseAgeMs: number) => {
+			const runId = await queuedRun(appId, 1_000);
+			const claim = await claimIntegrityRunById(deps, runId, 1);
+			if (claim.kind !== "claimed") throw new Error("expected claim");
+			await ctx.db
+				.update(documentIntegrityRuns)
+				.set({ leaseExpiresAt: new Date(Date.now() - leaseAgeMs) })
+				.where(eq(documentIntegrityRuns.id, runId));
+			return runId;
+		};
+		const orphan = await claimRunning(horizonMs + 60_000);
+		// Lease expired, but still within the workflow's retry window.
+		const retrying = await claimRunning(60_000);
+
+		await sweepQueuedIntegrityRuns(deps, { dispatch: false });
+		const failed = await runRow(orphan);
+		expect(failed).toMatchObject({ status: "failed", errorCode: "LEASE_EXPIRED" });
+		expect(failed.leaseToken).toBeNull();
+		expect((await runRow(retrying)).status).toBe("running");
+
+		// A stale lease that was re-leased meanwhile is not failed.
+		const releasedStale = await claimRunning(horizonMs + 60_000);
+		const stale = await runRow(releasedStale);
+		await claimIntegrityRunById(deps, releasedStale, 2);
+		expect(
+			await failIntegrityRun(deps, releasedStale, "LEASE_EXPIRED", "lease abandoned", {
+				onlyStatus: "running",
+				leaseToken: stale.leaseToken!,
+			}),
+		).toBe(false);
+		expect((await runRow(releasedStale)).status).toBe("running");
 	});
 });
 

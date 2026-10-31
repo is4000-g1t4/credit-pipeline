@@ -321,6 +321,13 @@ export async function claimIntegrityRunById(
 	return { kind: "skip", status: row.status };
 }
 
+export interface FailIntegrityRunOptions {
+	/** Only fail a row still in this status (default: queued or running). */
+	onlyStatus?: "queued" | "running";
+	/** Only fail a row still holding this lease, so a re-lease wins the race. */
+	leaseToken?: string;
+}
+
 /**
  * Marks a still-active (queued/running) run failed and clears its lease.
  * Idempotent; never touches a terminal row. Returns whether it changed one.
@@ -330,7 +337,11 @@ export async function failIntegrityRun(
 	runId: string,
 	errorCode: string,
 	detail: string,
+	opts: FailIntegrityRunOptions = {},
 ): Promise<boolean> {
+	const statusGuard = opts.onlyStatus
+		? eq(documentIntegrityRuns.status, opts.onlyStatus)
+		: sql`${documentIntegrityRuns.status} IN ('queued','running')`;
 	const [failed] = await deps.db
 		.update(documentIntegrityRuns)
 		.set({
@@ -345,7 +356,10 @@ export async function failIntegrityRun(
 			and(
 				eq(documentIntegrityRuns.id, runId),
 				eq(documentIntegrityRuns.feature, "document_analysis"),
-				sql`${documentIntegrityRuns.status} IN ('queued','running')`,
+				statusGuard,
+				opts.leaseToken === undefined
+					? undefined
+					: eq(documentIntegrityRuns.leaseToken, opts.leaseToken),
 			),
 		)
 		.returning({
