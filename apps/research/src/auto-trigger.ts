@@ -24,14 +24,14 @@ import type { AgentRunner, LanguageRepair, SupportJudge } from "./agents/case-br
 import type { ContextAgentRunner } from "./agents/context-analyst/index.js";
 import type { ResearchEnv } from "./env.js";
 import { isUuid } from "./ids.js";
-import {
-	ensureRunTx,
-	reapStaleRuns,
-	resumeQueuedRuns,
-	type CaseFactsPayload,
-} from "./lifecycle.js";
+import { ensureRunTx, type CaseFactsPayload } from "./lifecycle.js";
 import type { Observability } from "./observability.js";
-import { executeRun, type ExecDeps } from "./run.js";
+import {
+	RESEARCH_RUN_KIND,
+	researchRunTimeoutMs,
+	startAfterCommit,
+	type RunStarter,
+} from "./agent-run.js";
 import type { PolicyRunner } from "./agents/policy-review/index.js";
 
 export const AUTO_TRIGGER_GROUP_ID = "credit-research-auto";
@@ -48,6 +48,8 @@ export interface AutoTriggerDeps {
 	contextRunner?: ContextAgentRunner;
 	/** T03/T04 automatic case policy review; absent fails the policy stage only. */
 	policyRunner?: PolicyRunner;
+	/** Durable-run starter (Temporal). Absent starts nothing; the sweep picks rows up. */
+	starter?: RunStarter;
 	/** Test seam: fake applications context; default fetches over HMAC. */
 	fetchResearchContext?: (applicationId: string) => Promise<ResearchContextResult>;
 	/** Test seam: fresh context-consent probe; default reads research-context over HMAC. */
@@ -432,37 +434,15 @@ export async function handleReviewRequested(
 		};
 	});
 	if (decided.exec) {
-		// Exactly one background execution, only when this call inserted —
-		// the same fire-and-forget shape as the officer route. executeRun
-		// finalizes every failure path itself; the wrapper only guards
-		// against an escaped rejection (sanitized: run id only).
-		const { runId, token } = decided.exec;
-		const exec = async (): Promise<void> => {
-			try {
-				await executeRun(
-					{
-						db,
-						env,
-						logger,
-						runner: deps.runner,
-						judge: deps.judge,
-						repair: deps.repair,
-						observability: deps.observability,
-						contextRunner: deps.contextRunner,
-						fetchContextConsent: deps.fetchContextConsent,
-						policyRunner: deps.policyRunner,
-					},
-					runId,
-					token,
-				);
-			} catch (err) {
-				logger.error(
-					{ runId, err: err instanceof Error ? err.message : String(err) },
-					"auto-trigger background execution escaped",
-				);
-			}
-		};
-		void exec();
+		// Exactly one durable execution, only when this call inserted and
+		// only after the transaction above committed. A Temporal outage
+		// leaves the row queued for the agent-worker sweep (outcome unchanged).
+		await startAfterCommit(deps.starter, deps.logger, {
+			kind: RESEARCH_RUN_KIND,
+			runId: decided.exec.runId,
+			token: decided.exec.token,
+			timeoutMs: researchRunTimeoutMs(env),
+		});
 	}
 	return decided.outcome;
 }
@@ -502,32 +482,6 @@ async function skipAndRecord(
 	return { handled: "skipped", reason };
 }
 
-/**
- * T11 queued-run recovery: start every run that was committed but never
- * claimed (crash between insert and execution). Fire-and-forget per run —
- * the token-conditional claim makes concurrent starts safe; the reaper
- * stays the fallback. Returns the started run ids.
- */
-export async function recoverQueuedRuns(deps: ExecDeps): Promise<string[]> {
-	const pending = await resumeQueuedRuns(deps.db);
-	for (const p of pending) {
-		const runId = p.id;
-		const token = p.runToken;
-		const exec = async (): Promise<void> => {
-			try {
-				await executeRun(deps, runId, token);
-			} catch (err) {
-				deps.logger.error(
-					{ runId, err: err instanceof Error ? err.message : String(err) },
-					"queued-run recovery execution escaped",
-				);
-			}
-		};
-		void exec();
-	}
-	return pending.map((p) => p.id);
-}
-
 export interface ConsumerHandle {
 	stop(): Promise<void>;
 	/** True once subscribed; surfaces in /health so a stalled consumer is visible. */
@@ -555,20 +509,6 @@ export function classifyAutoMessage(
 	const result = eventEnvelopeSchema.safeParse(parsed);
 	if (!result.success || result.data.type !== "review.requested") return { kind: "skip" };
 	return { kind: "process", envelope: result.data };
-}
-
-/**
- * Boot/crash recovery ordering: queued-run recovery FIRST (start runs
- * that were committed but never claimed), the stale-run reaper SECOND.
- * Reversed, a crash-left queued run whose timeout already passed would be
- * failed by the reaper before recovery could start it.
- */
-export async function bootRecovery(
-	deps: ExecDeps,
-): Promise<{ recovered: string[]; reaped: string[] }> {
-	const recovered = await recoverQueuedRuns(deps);
-	const reaped = await reapStaleRuns(deps.db);
-	return { recovered, reaped };
 }
 
 /**

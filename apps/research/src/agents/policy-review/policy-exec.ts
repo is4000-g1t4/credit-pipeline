@@ -174,7 +174,7 @@ export async function runPolicyStage(
 			try {
 				await heartbeatPolicyStage(db, opts.runId, opts.runToken);
 			} catch {
-				// The reaper owns staleness.
+				// Temporal owns staleness.
 			}
 		})();
 	}, 15_000);

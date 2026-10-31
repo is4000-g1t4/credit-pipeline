@@ -43,7 +43,7 @@ describe("unexpected context error after external success", () => {
 			expect(res.status).toBe(202);
 
 			// Poll the RUN only: the context stage row is stuck (its failure
-			// persist blew up) until the reaper fails it on lease expiry.
+			// persist blew up) until failAgentRun fails it.
 			interface SettledRun {
 				run: { id: string; status: string; errorCode: string | null };
 				brief: { summary: string } | null;

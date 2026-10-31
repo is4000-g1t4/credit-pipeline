@@ -7,6 +7,7 @@ import {
 	type Logger,
 	type ServiceApp,
 } from "@credit/service-kit";
+import type { RunStarter } from "./agent-run.js";
 import type { AgentRunner, LanguageRepair, SupportJudge } from "./agents/case-brief/index.js";
 import type { CaseAssistantRunner } from "./agents/case-assistant/index.js";
 import { getAutoTriggerStatus } from "./auto-trigger.js";
@@ -30,6 +31,8 @@ export interface ResearchDeps {
 	fetchContextConsent?: (applicationId: string) => Promise<boolean>;
 	/** T03/T04 automatic case policy review; absent fails the policy stage only. */
 	policyRunner?: PolicyRunner;
+	/** Durable-run starter (Temporal client in prod, in-process fake in tests). */
+	starter?: RunStarter;
 	/** Case-scoped read-only assistant; absent fails the assistant route closed (503). */
 	caseAssistant?: CaseAssistantRunner;
 	/** Test seam: full research-context body; default reads it over HMAC. */
@@ -58,6 +61,7 @@ export function createApp(deps: ResearchDeps): ServiceApp {
 		contextRunner: deps.contextRunner,
 		fetchContextConsent: deps.fetchContextConsent,
 		policyRunner: deps.policyRunner,
+		starter: deps.starter,
 		caseAssistant: deps.caseAssistant,
 		fetchResearchContext: deps.fetchResearchContext,
 		checkAssistantCaseAccess: deps.checkAssistantCaseAccess,

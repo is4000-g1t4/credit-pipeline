@@ -33,12 +33,14 @@ import {
 	getRun,
 	heartbeatContextStage,
 	heartbeatRun,
-	reapContextStages,
-	reapStaleRuns,
+	failOverdueContextRetries,
+	failOverdueQueuedRuns,
+	listUnstartedRuns,
 	claimContextStage,
 	initContextStage,
 	type CaseFactsPayload,
 } from "../../src/lifecycle.js";
+import { failResearchRun, RESEARCH_RUN_KIND } from "../../src/agent-run.js";
 import { executeRun } from "../../src/run.js";
 import {
 	APPLICANT,
@@ -62,6 +64,11 @@ function ensurePayload(facts: CaseFactsPayload): Record<string, unknown> {
 		caseFacts: { ...facts },
 		aiResearchConsent: facts.aiResearchConsent,
 	};
+}
+
+/** The workflow input failAgentRun receives for a research run. */
+function runInput(runId: string, token: string) {
+	return { kind: RESEARCH_RUN_KIND, runId, token, timeoutMs: 300_000 };
 }
 
 /** Silent service logger for direct executeRun calls (routes wire the real one). */
@@ -335,7 +342,7 @@ describe("POST /internal/research/runs/ensure", () => {
 	});
 });
 
-describe("run token + reaper (lifecycle)", () => {
+describe("run token + failAgentRun (lifecycle)", () => {
 	it("claim/finalize are conditional on the token", async () => {
 		const ctx = setupApp();
 		try {
@@ -398,7 +405,7 @@ describe("run token + reaper (lifecycle)", () => {
 		}
 	});
 
-	it("reaps stale queued/running runs and leaves live runs alone", async () => {
+	it("failAgentRun fails queued/running runs (any token) and leaves terminal runs alone", async () => {
 		const ctx = setupApp();
 		try {
 			const env = { ...loadEnv(), agentsEnabled: true };
@@ -409,39 +416,49 @@ describe("run token + reaper (lifecycle)", () => {
 					caseFacts: f,
 					aiResearchConsent: true,
 				});
-			const staleQueued = (await mk(caseFacts())).run;
-			const staleRunning = (await mk(caseFacts())).run;
-			const live = (await mk(caseFacts())).run;
-			expect(await claimRun(ctx.db, live.id, live.runToken as string)).toBe(true);
-			expect(await claimRun(ctx.db, staleRunning.id, staleRunning.runToken as string)).toBe(true);
-			// Backdate: queued past its timeout, running silent 90s+, live fresh.
-			await ctx.db.execute(
-				sql`UPDATE agent_runs SET timeout_at = now() - INTERVAL '61 seconds' WHERE id = ${staleQueued.id}`,
-			);
-			await ctx.db.execute(
-				sql`UPDATE agent_runs SET heartbeat_at = now() - INTERVAL '91 seconds' WHERE id = ${staleRunning.id}`,
-			);
-			const reaped = await reapStaleRuns(ctx.db);
-			// Containment, not exact equality: rows accumulate in the shared
-			// dev DB across runs (repo convention), including other stale rows.
-			expect(reaped).toContain(staleQueued.id);
-			expect(reaped).toContain(staleRunning.id);
-			expect(reaped).not.toContain(live.id);
+			const queued = (await mk(caseFacts())).run;
+			const running = (await mk(caseFacts())).run;
+			const done = (await mk(caseFacts())).run;
+			expect(await claimRun(ctx.db, running.id, running.runToken as string)).toBe(true);
+			expect(await claimRun(ctx.db, done.id, done.runToken as string)).toBe(true);
+			expect(
+				await finalizeFailure(
+					ctx.db,
+					done.id,
+					done.runToken as string,
+					"tool_error",
+					"sources down",
+				),
+			).toBe(true);
+			// The workflow's input token is irrelevant: any active run fails.
+			for (const r of [queued, running, done]) {
+				await failResearchRun(ctx.db, runInput(r.id, randomUUID()), {
+					code: "timeout",
+					message: "activity timeout",
+				});
+			}
 			const rows = await ctx.db.select().from(agentRuns);
 			const byId = new Map(rows.map((r) => [r.id, r]));
-			for (const id of [staleQueued.id, staleRunning.id]) {
+			for (const id of [queued.id, running.id]) {
 				expect(byId.get(id)?.status).toBe("failed");
 				expect(byId.get(id)?.errorCode).toBe("timeout");
 				expect(byId.get(id)?.runToken).toBe(null);
+				expect(byId.get(id)?.finishedAt).not.toBe(null);
 			}
-			expect(byId.get(live.id)?.status).toBe("running");
-			expect(await reapStaleRuns(ctx.db)).toEqual([]);
+			// Terminal row untouched: original business failure retained.
+			expect(byId.get(done.id)?.errorCode).toBe("tool_error");
+			// Idempotent.
+			await failResearchRun(ctx.db, runInput(queued.id, randomUUID()), {
+				code: "timeout",
+				message: "again",
+			});
+			expect((await getRun(ctx.db, queued.id))?.error).toBe("research run timed out");
 		} finally {
 			await teardown(ctx);
 		}
 	});
 
-	it("a heartbeat run is not reaped: backdated then refreshed beats the reaper", async () => {
+	it("a claimed (heartbeating) run is invisible to the sweep even when backdated", async () => {
 		const ctx = setupApp();
 		try {
 			const env = { ...loadEnv(), agentsEnabled: true };
@@ -454,20 +471,19 @@ describe("run token + reaper (lifecycle)", () => {
 			});
 			const token = run.runToken as string;
 			expect(await claimRun(ctx.db, run.id, token)).toBe(true);
-			// Silence the heartbeat past the 90s reaper threshold, then let
-			// the live worker beat again: the reaper must not select it.
 			await ctx.db.execute(
-				sql`UPDATE agent_runs SET heartbeat_at = now() - INTERVAL '91 seconds' WHERE id = ${run.id}`,
+				sql`UPDATE agent_runs SET created_at = now() - INTERVAL '1 hour', timeout_at = now() - INTERVAL '1 hour' WHERE id = ${run.id}`,
 			);
 			await heartbeatRun(ctx.db, run.id, token);
-			expect(await reapStaleRuns(ctx.db)).not.toContain(run.id);
+			expect((await listUnstartedRuns(ctx.db)).map((p) => p.runId)).not.toContain(run.id);
+			expect(await failOverdueQueuedRuns(ctx.db)).not.toContain(run.id);
 			expect((await getRun(ctx.db, run.id))?.status).toBe("running");
 		} finally {
 			await teardown(ctx);
 		}
 	});
 
-	it("a heartbeat context stage is not reaped: backdated then refreshed beats the reaper", async () => {
+	it("a running initial context stage is invisible to the sweep (only retry stages are swept)", async () => {
 		const ctx = setupApp();
 		try {
 			const env = { ...loadEnv(), agentsEnabled: true, contextEnabled: true };
@@ -486,21 +502,17 @@ describe("run token + reaper (lifecycle)", () => {
 				model: "test-context-model",
 			});
 			expect(stageToken).not.toBe(null);
-			// Silence the stage heartbeat past the 90s reaper threshold,
-			// then let the live stage beat again.
 			await ctx.db.execute(
-				sql`UPDATE agent_runs SET context_heartbeat_at = now() - INTERVAL '91 seconds' WHERE id = ${run.id}`,
+				sql`UPDATE agent_runs SET context_timeout_at = now() - INTERVAL '1 hour' WHERE id = ${run.id}`,
 			);
 			await heartbeatContextStage(ctx.db, run.id, stageToken as string);
-			expect(await reapContextStages(ctx.db)).not.toContain(run.id);
+			expect(await failOverdueContextRetries(ctx.db)).not.toContain(run.id);
 			expect((await getRun(ctx.db, run.id))?.contextStatus).toBe("running");
 		} finally {
 			await teardown(ctx);
 		}
 	});
-});
 
-describe("app-scoped views, reviews, and bundle", () => {
 	it("latest 404s when no run exists; view dedupes within the minute", async () => {
 		const ctx = setupApp();
 		try {
@@ -688,7 +700,7 @@ describe("app-scoped views, reviews, and bundle", () => {
 			await teardown(ctx);
 		}
 	});
-	it("a reaped run's old token writes nothing (stale success cannot land)", async () => {
+	it("a failed-by-failAgentRun run's old token writes nothing (stale success cannot land)", async () => {
 		const ctx = setupApp();
 		try {
 			const env = { ...loadEnv(), agentsEnabled: true };
@@ -702,12 +714,12 @@ describe("app-scoped views, reviews, and bundle", () => {
 			});
 			const token = run.runToken as string;
 			expect(await claimRun(ctx.db, run.id, token)).toBe(true);
-			// Silence the heartbeat so the reaper takes the run; the token
-			// turns over (null) on reap.
-			await ctx.db.execute(
-				sql`UPDATE agent_runs SET heartbeat_at = now() - INTERVAL '91 seconds' WHERE id = ${run.id}`,
-			);
-			expect(await reapStaleRuns(ctx.db)).toContain(run.id);
+			// Temporal gave up on the run (heartbeat timeout): failAgentRun
+			// takes it and the token turns over (null).
+			await failResearchRun(ctx.db, runInput(run.id, token), {
+				code: "timeout",
+				message: "activity timeout",
+			});
 			// The background worker still holding the old token must not
 			// write: claim fails, zero evidence/finding rows land.
 			await executeRun(
@@ -743,7 +755,7 @@ describe("app-scoped views, reviews, and bundle", () => {
 		}
 	});
 
-	it("a run reaped mid-flight cannot finalize success with the old token", async () => {
+	it("a run failed by failAgentRun mid-flight cannot finalize success with the old token", async () => {
 		const ctx = setupApp();
 		try {
 			const env = { ...loadEnv(), agentsEnabled: true };
@@ -756,15 +768,15 @@ describe("app-scoped views, reviews, and bundle", () => {
 				aiResearchConsent: true,
 			});
 			const token = run.runToken as string;
-			// The runner reaps the run mid-flight (after executeRun claimed
+			// failAgentRun fails the run mid-flight (after executeRun claimed
 			// it): the token turns over before finalize, so the success
 			// guard must reject the write — no seam, just a slow agent.
-			const reapingRunner = {
+			const failingRunner = {
 				async runBrief(): Promise<AgentResult> {
-					await ctx.db.execute(
-						sql`UPDATE agent_runs SET heartbeat_at = now() - INTERVAL '91 seconds' WHERE id = ${run.id}`,
-					);
-					expect(await reapStaleRuns(ctx.db)).toContain(run.id);
+					await failResearchRun(ctx.db, runInput(run.id, token), {
+						code: "timeout",
+						message: "activity timeout",
+					});
 					return {
 						brief: use.brief,
 						fetched: use.fetched,
@@ -784,7 +796,7 @@ describe("app-scoped views, reviews, and bundle", () => {
 					db: ctx.db,
 					env,
 					logger: testLogger,
-					runner: reapingRunner,
+					runner: failingRunner,
 					judge: stubSupportJudge(),
 					repair: stubLanguageRepair(),
 					observability: degradedObservability,

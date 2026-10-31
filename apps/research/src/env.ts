@@ -34,6 +34,8 @@ export const researchServerSchema = {
 		.min(1)
 		.default("postgres://credit:credit@localhost:5432/credit_research"),
 	INTERNAL_SECRET: z.string().min(1),
+	// Temporal frontend for durable agent runs (API starts, agent-worker runs).
+	TEMPORAL_ADDRESS: z.string().min(1).default("localhost:7233"),
 	PORT: z.coerce.number().int().min(1).max(65_535).default(4005),
 	HOST: z.string().min(1).default("127.0.0.1"),
 	// Allowed model IDs; unknown fails startup. Default is the case-brief
@@ -146,6 +148,7 @@ if (!process.env.SKIP_ENV_VALIDATION) {
 export const env = {
 	databaseUrl: parsed.RESEARCH_DATABASE_URL,
 	internalSecret: parsed.INTERNAL_SECRET,
+	temporalAddress: parsed.TEMPORAL_ADDRESS,
 	port: parsed.PORT,
 	host: parsed.HOST,
 	agentModel: parsed.AGENT_MODEL as AllowedModel,

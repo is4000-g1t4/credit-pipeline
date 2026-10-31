@@ -11,11 +11,9 @@ import { eq, inArray, sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	classifyAutoMessage,
-	bootRecovery,
 	checkAutoCaps,
 	fetchResearchContextOverHttp,
 	handleReviewRequested,
-	recoverQueuedRuns,
 	type AutoTriggerDeps,
 	type ResearchContextResult,
 } from "../../src/auto-trigger.js";
@@ -26,7 +24,9 @@ import {
 	stubSupportJudge,
 } from "../../src/agents/case-brief/index.js";
 import { loadEnv } from "../../src/env.js";
-import { ensureRun, resumeQueuedRuns, type CaseFactsPayload } from "../../src/lifecycle.js";
+import { ensureRun, type CaseFactsPayload } from "../../src/lifecycle.js";
+import { runAgentAttempt } from "../../src/agent-run.js";
+import { sweepAgentRuns } from "../../src/agent-sweep.js";
 import {
 	caseFacts,
 	degradedObservability,
@@ -109,7 +109,7 @@ function depsFor(
 	envOverrides: Partial<ReturnType<typeof loadEnv>> = {},
 ): AutoTriggerDeps {
 	const use = successFixture();
-	return {
+	const deps: AutoTriggerDeps = {
 		db: ctx.db,
 		env: { ...autoEnv(), ...envOverrides },
 		logger: testLogger,
@@ -118,7 +118,15 @@ function depsFor(
 		repair: stubLanguageRepair(),
 		observability: degradedObservability,
 		fetchResearchContext,
+		// In-process stand-in for Temporal: attempt 1 of the real activity.
+		starter: {
+			start: async (input) => {
+				void runAgentAttempt(deps as never, input, 1).catch(() => undefined);
+				return { started: true };
+			},
+		},
 	};
+	return deps;
 }
 
 function contextFor(
@@ -373,12 +381,11 @@ describe("handleReviewRequested", () => {
 	});
 });
 
-describe("queued-run recovery (crash after insert)", () => {
+describe("queued-run sweep (crash after insert)", () => {
 	it("starts a stranded queued run instead of leaving it", async () => {
 		const ctx = setupApp();
 		try {
 			const env = autoEnv();
-			const use = successFixture();
 			const facts = caseFacts();
 			// Crash between queued insert and claim: row committed, never started.
 			const { run } = await ensureRun(ctx.db, env, {
@@ -391,38 +398,39 @@ describe("queued-run recovery (crash after insert)", () => {
 				caseFacts: facts,
 				aiResearchConsent: true,
 			});
-			// Fresh rows are left to their inserter; only ~10s-old rows qualify.
-			expect(await resumeQueuedRuns(ctx.db)).not.toContainEqual({
-				id: run.id,
-				runToken: run.runToken,
-			});
-			await ctx.db.execute(
-				sql`UPDATE agent_runs SET created_at = now() - INTERVAL '11 seconds' WHERE id = ${run.id}`,
-			);
-			const pending = await resumeQueuedRuns(ctx.db);
-			expect(pending).toContainEqual({ id: run.id, runToken: run.runToken });
-
-			const started = await recoverQueuedRuns({
+			const starts: Array<{ runId: string; token: string }> = [];
+			const sweepDeps = {
 				db: ctx.db,
 				env,
 				logger: testLogger,
-				runner: stubAgentRunner({ brief: use.brief, fetched: use.fetched }),
-				judge: stubSupportJudge(),
-				repair: stubLanguageRepair(),
-				observability: degradedObservability,
-			});
-			expect(started).toContain(run.id);
+				starter: {
+					start: async (input: { runId: string; token: string }) => {
+						starts.push(input);
+						void runAgentAttempt(depsFor(ctx) as never, input as never, 1).catch(() => undefined);
+						return { started: true };
+					},
+				},
+			};
+			// Fresh rows are left to their inserter; only ~10s-old rows qualify.
+			await sweepAgentRuns(sweepDeps);
+			expect(starts.map((s) => s.runId)).not.toContain(run.id);
+			await ctx.db.execute(
+				sql`UPDATE agent_runs SET created_at = now() - INTERVAL '11 seconds' WHERE id = ${run.id}`,
+			);
+			await sweepAgentRuns(sweepDeps);
+			expect(starts).toContainEqual(
+				expect.objectContaining({ runId: run.id, token: run.runToken }),
+			);
 			expect((await waitRun(ctx, run.id)).status).toBe("succeeded");
 		} finally {
 			await teardown(ctx);
 		}
 	});
 
-	it("boot recovery starts a stale queued run before the reaper can fail it", async () => {
+	it("the sweep starts a crash-left queued run even when it is past its lease", async () => {
 		const ctx = setupApp();
 		try {
 			const env = autoEnv();
-			const use = successFixture();
 			const facts = caseFacts();
 			const { run } = await ensureRun(ctx.db, env, {
 				applicationId: facts.applicationId,
@@ -434,23 +442,20 @@ describe("queued-run recovery (crash after insert)", () => {
 				caseFacts: facts,
 				aiResearchConsent: true,
 			});
-			// Crash-left AND already past its timeout: without the recovery
-			// lease refresh, the boot reaper (which runs right after
-			// recovery) would fail this row before recovery claims it.
+			// Crash-left AND past its lease (but not the 5 minute overdue
+			// grace): the sweep must start it, not fail it.
 			await ctx.db.execute(
 				sql`UPDATE agent_runs SET created_at = now() - INTERVAL '11 seconds', timeout_at = now() - INTERVAL '61 seconds' WHERE id = ${run.id}`,
 			);
-			const { recovered, reaped } = await bootRecovery({
+			const deps = depsFor(ctx);
+			const { started, failed } = await sweepAgentRuns({
 				db: ctx.db,
 				env,
 				logger: testLogger,
-				runner: stubAgentRunner({ brief: use.brief, fetched: use.fetched }),
-				judge: stubSupportJudge(),
-				repair: stubLanguageRepair(),
-				observability: degradedObservability,
+				starter: deps.starter!,
 			});
-			expect(recovered).toContain(run.id);
-			expect(reaped).not.toContain(run.id);
+			expect(started).toContain(run.id);
+			expect(failed).not.toContain(run.id);
 			expect((await waitRun(ctx, run.id)).status).toBe("succeeded");
 		} finally {
 			await teardown(ctx);

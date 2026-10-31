@@ -92,6 +92,8 @@ export interface ContextExecDeps {
 	fetchContextConsent?: (applicationId: string) => Promise<boolean>;
 	/** Optional: absent fails the context stage closed (never the external brief). */
 	contextRunner?: ContextAgentRunner;
+	/** Temporal activity cancellation; joins the stage deadline. */
+	cancelSignal?: AbortSignal;
 }
 
 export interface StageResult {
@@ -144,7 +146,7 @@ export function mapContextError(err: unknown): string {
  * repair) → budget → persist. Initial path passes `runToken`; the retry
  * path passes a pre-claimed `stageToken` and never re-runs external work.
  * External outcome is untouched either way; the run status is never set
- * here. Throws StaleRunError when the run was reaped mid-stage.
+ * here. Throws StaleRunError when the run was fenced mid-stage.
  */
 export async function runContextStage(
 	deps: ContextExecDeps,
@@ -171,7 +173,7 @@ export async function runContextStage(
 	}
 	// Initial path: mark the stage queued before the consent probe so the
 	// claim below (running + token + queued) can succeed. A miss means the
-	// run was reaped between external persist and stage start.
+	// run was failed or fenced between external persist and stage start.
 	if (opts.runToken && !opts.stageToken) {
 		const queued = await initContextStage(db, env, runId, opts.runToken, "queued");
 		if (!queued) throw new StaleRunError();
@@ -214,7 +216,7 @@ export async function runContextStage(
 			try {
 				await heartbeatContextStage(db, runId, token);
 			} catch {
-				// Best-effort; the stage reaper owns staleness.
+				// Best-effort; Temporal owns staleness.
 			}
 		})();
 	}, 15_000);
@@ -227,7 +229,8 @@ export async function runContextStage(
 			throw new ContextUnavailableError("context runner is not configured");
 		}
 		// Separate stage deadline: it never aborts the finalized external stage.
-		const signal = AbortSignal.timeout(env.contextTimeoutMs);
+		const deadline = AbortSignal.timeout(env.contextTimeoutMs);
+		const signal = deps.cancelSignal ? AbortSignal.any([deadline, deps.cancelSignal]) : deadline;
 		const base = {
 			applicationId,
 			caseFacts: opts.caseFacts,
@@ -370,7 +373,7 @@ export async function runContextStage(
 		);
 		if (!persisted) {
 			// The stage can be invalidated after the consent probe but before
-			// the transaction: a purge/reaper clears the token and marks the
+			// the transaction: a purge or failAgentRun clears the token and marks the
 			// context skipped/failed while the run still owns finalization.
 			// That must not strand a valid external brief as StaleRunError.
 			// Only a token handover to another live stage is whole-run stale.

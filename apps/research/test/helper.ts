@@ -20,6 +20,7 @@ import {
 	stubLanguageRepair,
 	stubSupportJudge,
 } from "../src/agents/case-brief/index.js";
+import { runAgentAttempt, type RunStarter } from "../src/agent-run.js";
 import { createApp } from "../src/app.js";
 import { stubCaseAssistantRunner } from "../src/agents/case-assistant/index.js";
 import { stubContextRunner } from "../src/agents/context-analyst/index.js";
@@ -37,6 +38,8 @@ export interface TestUser {
 
 export interface TestContext {
 	app: ReturnType<typeof createApp>;
+	/** Every start() the app issued (kind/runId/token/timeoutMs), in order. */
+	starts: Array<Parameters<RunStarter["start"]>[0]>;
 	db: ReturnType<typeof createDb>["db"];
 	sql: ReturnType<typeof createDb>["sql"];
 	secret: string;
@@ -217,6 +220,8 @@ export function setupApp(
 		contextRunner?: Parameters<typeof createApp>[0]["contextRunner"];
 		fetchContextConsent?: Parameters<typeof createApp>[0]["fetchContextConsent"];
 		caseAssistant?: Parameters<typeof createApp>[0]["caseAssistant"];
+		/** Replaces the default in-process starter (e.g. a Temporal-down fake). */
+		starter?: RunStarter;
 		fetchResearchContext?: Parameters<typeof createApp>[0]["fetchResearchContext"];
 		checkAssistantCaseAccess?: Parameters<typeof createApp>[0]["checkAssistantCaseAccess"];
 		env?: Partial<ReturnType<typeof loadEnv>>;
@@ -229,11 +234,11 @@ export function setupApp(
 	Object.assign(env, overrides.env);
 	const { db, sql } = createDb(env.databaseUrl);
 	const use = fixture ?? successFixture();
-	const app = createApp({
+	const logger = createLogger("research-test");
+	const execDeps = {
 		db,
-		sql,
 		env,
-		logger: createLogger("research-test"),
+		logger,
 		runner: overrides.runner ?? stubAgentRunner({ brief: use.brief, fetched: use.fetched }),
 		judge: overrides.judge ?? stubSupportJudge(),
 		repair: overrides.repair ?? stubLanguageRepair(),
@@ -244,6 +249,25 @@ export function setupApp(
 			overrides.contextRunner ??
 			stubContextRunner({ outputs: [], throw: new Error("context stage must not run") }),
 		fetchContextConsent: overrides.fetchContextConsent,
+	};
+	const starts: TestContext["starts"] = [];
+	// Stand-in for Temporal: runs attempt 1 of the real activity logic
+	// in-process, in the background, like the old fire-and-forget did.
+	const starter: RunStarter = overrides.starter ?? {
+		start: async (input) => {
+			void runAgentAttempt(execDeps, input, 1).catch(() => undefined);
+			return { started: true };
+		},
+	};
+	const app = createApp({
+		...execDeps,
+		sql,
+		starter: {
+			start: async (input) => {
+				starts.push(input);
+				return starter.start(input);
+			},
+		},
 		caseAssistant:
 			overrides.caseAssistant ??
 			stubCaseAssistantRunner({
@@ -253,7 +277,7 @@ export function setupApp(
 		// No applications call in tests unless the case proves the gate.
 		checkAssistantCaseAccess: overrides.checkAssistantCaseAccess ?? (async () => undefined),
 	});
-	return { app, db, sql, secret: env.internalSecret };
+	return { app, starts, db, sql, secret: env.internalSecret };
 }
 
 export function caseFacts(overrides: Partial<CaseFactsPayload> = {}): CaseFactsPayload {

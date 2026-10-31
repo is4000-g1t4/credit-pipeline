@@ -26,9 +26,9 @@ import {
 	initContextStage,
 	persistContextFailure,
 	persistContextSuccess,
-	reapContextStages,
 	type CaseFactsPayload,
 } from "../../src/lifecycle.js";
+import { failResearchRun, RESEARCH_RUN_KIND, runAgentAttempt } from "../../src/agent-run.js";
 import {
 	stubAgentRunner,
 	stubLanguageRepair,
@@ -631,7 +631,7 @@ describe("context stage lifecycle (DB)", () => {
 		}
 	});
 
-	it("guards stage writes by token and reaps stuck stages without touching the brief", async () => {
+	it("guards stage writes by token and failAgentRun fails stuck stages without touching the brief", async () => {
 		const ctx = setupContext();
 		try {
 			const env = { ...loadEnv(), agentsEnabled: true, contextEnabled: true };
@@ -666,19 +666,21 @@ describe("context stage lifecycle (DB)", () => {
 				}),
 			).toBe(false);
 
-			// Expire the lease: the reaper fails the stage and clears the token.
-			await ctx.db.execute(
-				sql`UPDATE agent_runs SET context_timeout_at = now() - INTERVAL '1 second' WHERE id = ${run.id}`,
+			// Temporal gave up (start-to-close timeout): failAgentRun fails the
+			// run AND its running stage and clears the stage token.
+			await failResearchRun(
+				ctx.db,
+				{ kind: RESEARCH_RUN_KIND, runId: run.id, token, timeoutMs: 300_000 },
+				{ code: "timeout", message: "activity timeout" },
 			);
-			expect(await reapContextStages(ctx.db)).toContain(run.id);
 			const reaped = await getRun(ctx.db, run.id);
+			expect(reaped?.status).toBe("failed");
 			expect(reaped?.contextStatus).toBe("failed");
 			expect(reaped?.contextErrorCode).toBe("timeout");
 			expect(reaped?.contextStageToken).toBe(null);
 			expect(reaped?.brief).toBe(null);
 
 			// Terminal run, failed stage: retry claims version 2 and persists.
-			expect(await finalizeFailure(ctx.db, run.id, token, "timeout", "timed out")).toBe(true);
 			const retry = await claimContextRetry(ctx.db, env, run.id);
 			expect(retry?.stageVersion).toBe(2);
 			const persisted = await persistContextSuccess(ctx.db, run.id, retry!.stageToken, {
@@ -1252,6 +1254,13 @@ describe("context in auto-trigger", () => {
 				contextRunner,
 				fetchResearchContext,
 				fetchContextConsent: async () => true,
+				// In-process stand-in for Temporal: attempt 1 of the real activity.
+				starter: {
+					start: async (input) => {
+						void runAgentAttempt(deps as never, input, 1).catch(() => undefined);
+						return { started: true };
+					},
+				},
 			};
 			const eventId = randomUUID();
 			const first = await handleReviewRequested(deps, envelope(facts.applicationId, eventId));

@@ -65,8 +65,15 @@ import {
 } from "./lifecycle.js";
 import type { Observability } from "./observability.js";
 import { aggregateRun, toContextSignalDto } from "./aggregate.js";
-import { executeRun } from "./run.js";
-import { contextConsentProbe, executeContextRetry } from "./context-stage.js";
+import {
+	contextRetryTimeoutMs,
+	RESEARCH_CONTEXT_RETRY_KIND,
+	RESEARCH_RUN_KIND,
+	researchRunTimeoutMs,
+	startAfterCommit,
+	type RunStarter,
+} from "./agent-run.js";
+import { contextConsentProbe } from "./context-stage.js";
 import type { PolicyRunner } from "./agents/policy-review/index.js";
 import { isUuid } from "./ids.js";
 
@@ -113,6 +120,8 @@ export interface ResearchRouteDeps {
 	fetchContextConsent?: (applicationId: string) => Promise<boolean>;
 	/** T03/T04 automatic case policy review; absent fails the policy stage only. */
 	policyRunner?: PolicyRunner;
+	/** Durable-run starter (Temporal). Absent starts nothing; the sweep picks rows up. */
+	starter?: RunStarter;
 	/** Case-scoped read-only assistant; absent fails the assistant route closed (503). */
 	caseAssistant?: CaseAssistantRunner;
 	/** Test seam: full research-context body; default reads it over HMAC. */
@@ -282,38 +291,16 @@ export function researchRoutes(deps: ResearchRouteDeps): ServiceApp {
 			return ensured;
 		});
 		if (inserted && run.runToken) {
-			// Exactly one background execution, only when this call inserted.
-			// executeRun finalizes every failure path itself; the async
-			// wrapper keeps the fire-and-forget rejection-free and logs the
-			// sanitized outcome (runId + error code, never case content).
-			const token: string = run.runToken;
-			const runId = run.id;
-			const exec = async (): Promise<void> => {
-				try {
-					await executeRun(
-						{
-							db,
-							env,
-							logger,
-							runner,
-							judge,
-							repair,
-							observability,
-							contextRunner,
-							fetchContextConsent: deps.fetchContextConsent,
-							policyRunner: deps.policyRunner,
-						},
-						runId,
-						token,
-					);
-				} catch (err) {
-					logger.error(
-						{ runId, err: err instanceof Error ? err.message : String(err) },
-						"research background execution escaped",
-					);
-				}
-			};
-			void exec();
+			// Exactly one durable execution, only when this call inserted and
+			// only after the row's transaction committed. A Temporal outage
+			// leaves the row queued for the agent-worker sweep; the response
+			// is the same either way.
+			await startAfterCommit(deps.starter, logger, {
+				kind: RESEARCH_RUN_KIND,
+				runId: run.id,
+				token: run.runToken,
+				timeoutMs: researchRunTimeoutMs(env),
+			});
 		}
 		return c.json({ run: summarizeRun(run), inserted }, 202);
 	});
@@ -837,29 +824,14 @@ export function researchRoutes(deps: ResearchRouteDeps): ServiceApp {
 				action: "context.retry",
 				metadata: { stageVersion: claimed.stageVersion },
 			});
-			const stageToken: string = claimed.stageToken;
-			const exec = async (): Promise<void> => {
-				try {
-					await executeContextRetry(
-						{
-							db,
-							env,
-							logger,
-							contextRunner,
-							observability,
-							fetchContextConsent: deps.fetchContextConsent,
-						},
-						runId,
-						stageToken,
-					);
-				} catch (err) {
-					logger.error(
-						{ runId, err: err instanceof Error ? err.message : String(err) },
-						"context retry execution escaped",
-					);
-				}
-			};
-			void exec();
+			// The stage is claimed (committed) above; start its workflow now.
+			// A failed start leaves it for the sweep, response unchanged.
+			await startAfterCommit(deps.starter, logger, {
+				kind: RESEARCH_CONTEXT_RETRY_KIND,
+				runId,
+				token: claimed.stageToken,
+				timeoutMs: contextRetryTimeoutMs(env),
+			});
 			return c.json(
 				{
 					runId: run.id,

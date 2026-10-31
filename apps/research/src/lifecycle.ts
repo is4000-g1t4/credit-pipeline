@@ -1,8 +1,17 @@
 // Run lifecycle (§4): idempotent ensure with advisory lock, token-claimed
-// execution, conditional finalize, and a SKIP LOCKED reaper. No partial
-// writes: evidence/findings persist in the same transaction as success.
+// execution, and conditional finalize. Crash recovery, retry fencing and
+// terminal cleanup live below (Temporal drives them). No partial writes:
+// evidence/findings persist in the same transaction as success.
 import { randomUUID } from "node:crypto";
-import { agentRuns, contextSignals, withTx, type Db, type Tx } from "@credit/db/research";
+import {
+	agentEvidence,
+	agentFindings,
+	agentRuns,
+	contextSignals,
+	withTx,
+	type Db,
+	type Tx,
+} from "@credit/db/research";
 import { HttpError } from "@credit/service-kit";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { ResearchEnv } from "./env.js";
@@ -277,35 +286,6 @@ export async function finalizeFailure(
 	return rows.length > 0;
 }
 
-/**
- * Reap abandoned runs (§4 predicates): queued past timeout+60s (via the
- * insert-time timeout_at, +30s grace), or running past timeout_at / silent
- * 90s. SKIP LOCKED so concurrent reapers never double-fail.
- */
-export async function reapStaleRuns(db: Db): Promise<string[]> {
-	return withTx(db, async (tx) => {
-		const stale = (await tx.execute(sql`SELECT id FROM agent_runs
-			WHERE (status = 'queued' AND timeout_at < now() - INTERVAL '30 seconds')
-			   OR (status = 'running' AND (timeout_at < now()
-			       OR heartbeat_at IS NULL
-			       OR heartbeat_at < now() - INTERVAL '90 seconds'))
-			FOR UPDATE SKIP LOCKED`)) as unknown as Array<{ id: string }>;
-		if (stale.length === 0) return [];
-		const ids = stale.map((r) => r.id);
-		await tx
-			.update(agentRuns)
-			.set({
-				status: "failed",
-				errorCode: "timeout",
-				error: "research run timed out",
-				finishedAt: new Date(),
-				runToken: null,
-			})
-			.where(inArray(agentRuns.id, ids));
-		return ids;
-	});
-}
-
 export async function latestRunForApplication(
 	db: Db,
 	applicationId: string,
@@ -323,45 +303,6 @@ export async function getRun(db: Db, runId: string): Promise<RunRow | null> {
 	const rows = await db.select().from(agentRuns).where(eq(agentRuns.id, runId)).limit(1);
 	return rows[0] ?? null;
 }
-
-/**
- * T11 crash recovery: runs still `queued` ~10s after insert were committed
- * but never claimed (crash between insert and execution start). Returns
- * their ids + tokens; the caller starts each via `executeRun`, whose
- * token-conditional claim makes concurrent starts safe. SKIP LOCKED so
- * concurrent recoverers never double-start. The reaper stays the fallback
- * for runs that never start.
- *
- * Recovery refreshes each row's lease (`timeout_at`/`heartbeat_at`) in the
- * same transaction: a crash-left row is usually already past its timeout,
- * and without the refresh the boot reaper — which runs right after
- * recovery — would fail it before `executeRun` claims it. The refreshed
- * lease only buys one grace window; the claim still requires
- * status+token, so a genuinely stuck run is reaped on the next sweep.
- */
-export async function resumeQueuedRuns(db: Db): Promise<Array<{ id: string; runToken: string }>> {
-	return withTx(db, async (tx) => {
-		const rows = (await tx.execute(sql`SELECT id, run_token FROM agent_runs
-			WHERE status = 'queued' AND run_token IS NOT NULL
-			  AND created_at < now() - INTERVAL '10 seconds'
-			FOR UPDATE SKIP LOCKED`)) as unknown as Array<{ id: string; run_token: string }>;
-		if (rows.length === 0) return [];
-		const freshTimeout = new Date(Date.now() + RECOVERY_LEASE_MS);
-		await tx
-			.update(agentRuns)
-			.set({ timeoutAt: freshTimeout, heartbeatAt: new Date() })
-			.where(
-				inArray(
-					agentRuns.id,
-					rows.map((r) => r.id),
-				),
-			);
-		return rows.map((r) => ({ id: r.id, runToken: r.run_token }));
-	});
-}
-
-/** Grace window a recovered queued run gets before the reaper may fail it. */
-const RECOVERY_LEASE_MS = 5 * 60_000;
 
 // --- T18 context stage lifecycle (SPEC-t17-t18 §3.1/§3.5, D3b). ---
 //
@@ -699,7 +640,9 @@ export async function claimContextRetryTx(
 			contextStageVersion: version,
 			contextStartedAt: new Date(),
 			contextFinishedAt: null,
-			contextHeartbeatAt: new Date(),
+			// Null until an agent attempt beats: the sweep reads "never
+			// heartbeated" as "workflow never started" (token still original).
+			contextHeartbeatAt: null,
 			contextTimeoutAt: new Date(Date.now() + env.contextTimeoutMs + 30_000),
 			contextErrorCode: null,
 		})
@@ -711,11 +654,6 @@ export async function claimContextRetryTx(
 	return { stageToken, stageVersion: version };
 }
 
-/**
- * Context-stage reaper: expired queued/running stages on running AND
- * terminal runs fail closed with the token cleared. Never rewrites a
- * succeeded external brief, evidence, or findings.
- */
 export interface PolicySignalRow {
 	type: string;
 	metric: string;
@@ -886,56 +824,266 @@ export async function persistPolicyFailure(
 	return rows.length > 0;
 }
 
-/** Policy-stage reaper: a crashed/timed-out stage is failed without changing
- * the run's external/context outcome. */
-export async function reapPolicyStages(db: Db): Promise<string[]> {
+// --- Temporal-driven durability (replaces the reapers + boot recovery). ---
+//
+// Temporal owns dispatch, crash retries and the terminal "mark failed"
+// step; these helpers are the DB half of that contract. Every fence is the
+// existing token guard: rotating a token makes the dead attempt's writes
+// fail with StaleRunError / a false return.
+
+/** Whole-run lease: external + context + policy stage budgets + grace. Also the
+ * per-attempt Temporal start-to-close budget. */
+export function runLeaseMs(env: ResearchEnv): number {
+	return env.timeoutMs + env.contextTimeoutMs + env.policyCaseTimeoutMs + 30_000;
+}
+
+/** How long a never-started (still queued) row survives past its lease. */
+export const OVERDUE_GRACE_MS = 5 * 60_000;
+
+/**
+ * Fence a retried attempt (attempt > 1) before it does any work. In one
+ * transaction, only while the run is non-terminal: rotate `run_token` to a
+ * fresh uuid, reset to `queued`, refresh the lease, and discard everything
+ * the dead attempt persisted (evidence, findings, context signals, stage
+ * state and the retained external outcome) so the rerun re-initializes the
+ * stages from scratch. The dead attempt's token-guarded writes then fail.
+ * Returns the new token, or null when the run is terminal/missing (no work).
+ *
+ * Spend already incurred by the dead attempt is not carried forward (the
+ * rerun's own ledger starts fresh).
+ */
+export async function rotateRunForRetry(
+	db: Db,
+	env: ResearchEnv,
+	runId: string,
+): Promise<string | null> {
+	if (!isUuid(runId)) return null;
 	return withTx(db, async (tx) => {
-		const stale = (await tx.execute(sql`SELECT id FROM agent_runs
-			WHERE policy_status = 'running'
-			  AND policy_timeout_at IS NOT NULL AND policy_timeout_at < now()
-			FOR UPDATE SKIP LOCKED`)) as unknown as Array<{ id: string }>;
-		const heartbeatStale = (await tx.execute(sql`SELECT id FROM agent_runs
-			WHERE policy_status = 'running'
-			  AND policy_heartbeat_at IS NOT NULL
-			  AND policy_heartbeat_at < now() - INTERVAL '90 seconds'
-			FOR UPDATE SKIP LOCKED`)) as unknown as Array<{ id: string }>;
-		const ids = [...new Set([...stale, ...heartbeatStale].map((row) => row.id))];
-		if (ids.length === 0) return [];
+		const rows = (await tx.execute(
+			sql`SELECT status FROM agent_runs WHERE id = ${runId} FOR UPDATE`,
+		)) as unknown as Array<{ status: string }>;
+		const row = rows[0];
+		if (!row || (row.status !== "queued" && row.status !== "running")) return null;
+		await tx.delete(agentEvidence).where(eq(agentEvidence.runId, runId));
+		await tx.delete(agentFindings).where(eq(agentFindings.runId, runId));
+		await tx.delete(contextSignals).where(eq(contextSignals.runId, runId));
+		const token = randomUUID();
+		const now = new Date();
 		await tx
 			.update(agentRuns)
 			.set({
-				policyStatus: "failed",
-				policyErrorCode: "timeout",
-				policyFinishedAt: new Date(),
-				policyHeartbeatAt: new Date(),
+				runToken: token,
+				status: "queued",
+				startedAt: null,
+				// Stamped so the sweep never mistakes the rotated token for a
+				// never-started row (it only restarts heartbeat-less rows).
+				heartbeatAt: now,
+				timeoutAt: new Date(now.getTime() + runLeaseMs(env)),
+				brief: null,
+				validation: null,
+				errorCode: null,
+				error: null,
+				contextStatus: "not_applicable",
+				contextBrief: null,
+				contextValidation: null,
+				contextUsage: null,
+				contextErrorCode: null,
+				contextStartedAt: null,
+				contextFinishedAt: null,
+				contextTimeoutAt: null,
+				contextHeartbeatAt: null,
+				contextPromptVersion: null,
+				contextModel: null,
+				contextStageToken: null,
+				contextDocumentFindings: null,
+				policyStatus: "not_applicable",
+				policyBrief: null,
+				policyValidation: null,
+				policyUsage: null,
+				policyErrorCode: null,
+				policyModel: null,
+				policyPromptVersion: null,
+				policyStartedAt: null,
+				policyFinishedAt: null,
+				policyTimeoutAt: null,
+				policyHeartbeatAt: null,
 			})
-			.where(inArray(agentRuns.id, ids));
-		return ids;
+			.where(eq(agentRuns.id, runId));
+		return token;
 	});
 }
 
-export async function reapContextStages(db: Db): Promise<string[]> {
+/**
+ * Fence a retried context-retry attempt: rotate the stage token of the
+ * running stage on a terminal run (the dead attempt's stage writes then
+ * fail). Null when no stage is running (it already finished or failed).
+ */
+export async function rotateContextStageForRetry(db: Db, runId: string): Promise<string | null> {
+	if (!isUuid(runId)) return null;
+	const token = randomUUID();
+	const rows = await db
+		.update(agentRuns)
+		.set({ contextStageToken: token, contextHeartbeatAt: new Date() })
+		.where(
+			and(
+				eq(agentRuns.id, runId),
+				inArray(agentRuns.status, ["succeeded", "failed"]),
+				eq(agentRuns.contextStatus, "running"),
+			),
+		)
+		.returning({ id: agentRuns.id });
+	return rows.length > 0 ? token : null;
+}
+
+/**
+ * Terminal cleanup for a run whose workflow failed or was cancelled (or
+ * whose start never happened): fail a still-active run (queued/running,
+ * any token) and the stages the dead attempt left queued/running, clearing
+ * the token. Idempotent; a terminal run (and its persisted brief/stages)
+ * is never touched. Returns whether this call failed the run.
+ */
+export async function failActiveRun(
+	db: Db,
+	runId: string,
+	failure: { code: RunErrorCode; message: string },
+): Promise<boolean> {
+	if (!isUuid(runId)) return false;
 	return withTx(db, async (tx) => {
-		const stale = (await tx.execute(sql`SELECT id FROM agent_runs
-			WHERE context_status IN ('queued', 'running')
-			  AND context_timeout_at IS NOT NULL AND context_timeout_at < now()
-			FOR UPDATE SKIP LOCKED`)) as unknown as Array<{ id: string }>;
-		const heartbeatStale = (await tx.execute(sql`SELECT id FROM agent_runs
-			WHERE context_status = 'running'
-			  AND context_heartbeat_at IS NOT NULL
-			  AND context_heartbeat_at < now() - INTERVAL '90 seconds'
-			FOR UPDATE SKIP LOCKED`)) as unknown as Array<{ id: string }>;
-		const ids = [...new Set([...stale, ...heartbeatStale].map((r) => r.id))];
-		if (ids.length === 0) return [];
+		const rows = (await tx.execute(
+			sql`SELECT status, context_status, policy_status FROM agent_runs WHERE id = ${runId} FOR UPDATE`,
+		)) as unknown as Array<{ status: string; context_status: string; policy_status: string }>;
+		const row = rows[0];
+		if (!row || (row.status !== "queued" && row.status !== "running")) return false;
+		const now = new Date();
+		const stageCode = failure.code === "timeout" ? "timeout" : "internal_error";
 		await tx
 			.update(agentRuns)
 			.set({
-				contextStatus: "failed",
-				contextErrorCode: "timeout",
-				contextFinishedAt: new Date(),
-				contextStageToken: null,
+				status: "failed",
+				errorCode: failure.code,
+				error: failure.message,
+				finishedAt: now,
+				runToken: null,
+				...(row.context_status === "queued" || row.context_status === "running"
+					? {
+							contextStatus: "failed" as const,
+							contextErrorCode: stageCode,
+							contextFinishedAt: now,
+							contextStageToken: null,
+						}
+					: {}),
+				...(row.policy_status === "running"
+					? {
+							policyStatus: "failed" as const,
+							policyErrorCode: stageCode,
+							policyFinishedAt: now,
+							policyHeartbeatAt: now,
+						}
+					: {}),
 			})
-			.where(inArray(agentRuns.id, ids));
-		return ids;
+			.where(eq(agentRuns.id, runId));
+		return true;
 	});
+}
+
+/**
+ * Terminal cleanup for a context-retry workflow: fail the stage still
+ * running on the (terminal) run. The stage token may have rotated across
+ * attempts, so the match is the running stage itself; run status, brief
+ * and evidence are never touched.
+ */
+export async function failRunningContextStage(
+	db: Db,
+	runId: string,
+	code: string,
+): Promise<boolean> {
+	if (!isUuid(runId)) return false;
+	const rows = await db
+		.update(agentRuns)
+		.set({
+			contextStatus: "failed",
+			contextErrorCode: code,
+			contextFinishedAt: new Date(),
+			contextStageToken: null,
+		})
+		.where(
+			and(
+				eq(agentRuns.id, runId),
+				inArray(agentRuns.status, ["succeeded", "failed"]),
+				eq(agentRuns.contextStatus, "running"),
+			),
+		)
+		.returning({ id: agentRuns.id });
+	return rows.length > 0;
+}
+
+export interface PendingStart {
+	runId: string;
+	token: string;
+}
+
+/**
+ * Queued runs committed but never picked up (API crashed or Temporal was
+ * down between commit and start). Only rows that never heartbeated: a
+ * rotated/claimed row always has a heartbeat, so its token is no longer
+ * the workflow's original and must not be restarted.
+ */
+export async function listUnstartedRuns(db: Db, olderThanSeconds = 10): Promise<PendingStart[]> {
+	const rows = (await db.execute(sql`SELECT id, run_token FROM agent_runs
+		WHERE status = 'queued' AND run_token IS NOT NULL AND heartbeat_at IS NULL
+		  AND created_at < now() - make_interval(secs => ${olderThanSeconds})`)) as unknown as Array<{
+		id: string;
+		run_token: string;
+	}>;
+	return rows.map((r) => ({ runId: r.id, token: r.run_token }));
+}
+
+/** Context retries claimed but never started (same heartbeat-null rule). */
+export async function listUnstartedContextRetries(
+	db: Db,
+	olderThanSeconds = 10,
+): Promise<PendingStart[]> {
+	const rows = (await db.execute(sql`SELECT id, context_stage_token FROM agent_runs
+		WHERE status IN ('succeeded', 'failed') AND context_status = 'running'
+		  AND context_stage_token IS NOT NULL AND context_heartbeat_at IS NULL
+		  AND context_started_at < now() - make_interval(secs => ${olderThanSeconds})`)) as unknown as Array<{
+		id: string;
+		context_stage_token: string;
+	}>;
+	return rows.map((r) => ({ runId: r.id, token: r.context_stage_token }));
+}
+
+/**
+ * Last resort when Temporal stayed unreachable: queued rows more than
+ * OVERDUE_GRACE_MS past their lease fail "timeout" so the UI always
+ * reaches a terminal state. Returns the failed run ids.
+ */
+export async function failOverdueQueuedRuns(db: Db): Promise<string[]> {
+	const rows = (await db.execute(sql`SELECT id FROM agent_runs
+		WHERE status = 'queued' AND heartbeat_at IS NULL
+		  AND timeout_at < now() - make_interval(secs => ${OVERDUE_GRACE_MS / 1000})`)) as unknown as Array<{
+		id: string;
+	}>;
+	const failed: string[] = [];
+	for (const { id } of rows) {
+		if (await failActiveRun(db, id, { code: "timeout", message: "research run timed out" })) {
+			failed.push(id);
+		}
+	}
+	return failed;
+}
+
+/** Same last resort for a never-started context retry stage. */
+export async function failOverdueContextRetries(db: Db): Promise<string[]> {
+	const rows = (await db.execute(sql`SELECT id FROM agent_runs
+		WHERE status IN ('succeeded', 'failed') AND context_status = 'running'
+		  AND context_heartbeat_at IS NULL
+		  AND context_timeout_at < now() - make_interval(secs => ${OVERDUE_GRACE_MS / 1000})`)) as unknown as Array<{
+		id: string;
+	}>;
+	const failed: string[] = [];
+	for (const { id } of rows) {
+		if (await failRunningContextStage(db, id, "timeout")) failed.push(id);
+	}
+	return failed;
 }

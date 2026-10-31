@@ -78,6 +78,24 @@ export interface ExecDeps {
 	fetchContextConsent?: (applicationId: string) => Promise<boolean>;
 	/** T03/T04 case policy review; absent fails the policy stage only. */
 	policyRunner?: PolicyRunner;
+	/**
+	 * Aborts when the Temporal activity is cancelled (lost heartbeat, worker
+	 * shutdown). The run then stops spending model budget and throws
+	 * RunCancelledError WITHOUT finalizing: Temporal's fenced retry (or
+	 * failAgentRun) owns the row, so a zombie never races it to terminal.
+	 */
+	cancelSignal?: AbortSignal;
+}
+
+/** Thrown out of executeRun when the activity was cancelled mid-run. */
+export class RunCancelledError extends Error {
+	constructor() {
+		super("research run cancelled");
+	}
+}
+
+function throwIfCancelled(deps: { cancelSignal?: AbortSignal }): void {
+	if (deps.cancelSignal?.aborted) throw new RunCancelledError();
 }
 
 export async function executeRun(deps: ExecDeps, runId: string, token: string): Promise<void> {
@@ -111,7 +129,7 @@ export async function executeRun(deps: ExecDeps, runId: string, token: string): 
 	}
 	// Every failure path below finalizes the run: claim, fetch, agent,
 	// judge, stage, and finalize errors all land in `catch`, so the
-	// fire-and-forget caller in routes.ts never sees an unhandled rejection.
+	// activity wrapper never sees an unhandled rejection (cancel excepted).
 	let timer: ReturnType<typeof setInterval> | undefined;
 	const startedAt = Date.now();
 	// Partial spend accumulated for the failure row: failed runs keep
@@ -162,7 +180,7 @@ export async function executeRun(deps: ExecDeps, runId: string, token: string): 
 				try {
 					await heartbeatRun(db, runId, token);
 				} catch {
-					// Heartbeats are best-effort; the reaper owns staleness.
+					// Heartbeats are best-effort; Temporal owns staleness.
 				}
 			})();
 		}, 15_000);
@@ -176,7 +194,8 @@ export async function executeRun(deps: ExecDeps, runId: string, token: string): 
 		// context stage still runs while the row is `running`.
 		let external: ExternalOutcome;
 		// One deadline signal for the agent and the judge: abort ends both.
-		const signal = AbortSignal.timeout(env.timeoutMs);
+		const deadline = AbortSignal.timeout(env.timeoutMs);
+		const signal = deps.cancelSignal ? AbortSignal.any([deadline, deps.cancelSignal]) : deadline;
 		try {
 			const result = await deps.runner.runBrief({
 				caseFacts: facts.prompt,
@@ -227,6 +246,7 @@ export async function executeRun(deps: ExecDeps, runId: string, token: string): 
 			external = { ok: true as const, usage, brief: validated.brief, findings: validated.findings };
 		} catch (err) {
 			if (err instanceof StaleRunError) throw err;
+			throwIfCancelled(deps);
 			const [code, message] = mapError(err);
 			await persistExternalFailure(db, runId, token, code, message);
 			external = { ok: false as const, code, message };
@@ -244,9 +264,10 @@ export async function executeRun(deps: ExecDeps, runId: string, token: string): 
 				externalSummary: external.ok ? externalSummaryOf(external) : null,
 			});
 		} catch (err) {
-			// Reaped mid-stage: the run is already terminal (the reaper or
-			// a retry owns it now) — nothing left to finalize.
+			// Fenced mid-stage: the run is already terminal or re-tokened
+			// (failAgentRun or a retry owns it now) — nothing to finalize.
 			if (err instanceof StaleRunError) return;
+			throwIfCancelled(deps);
 			// Unexpected stage error (DB/auth/audit blew up outside the
 			// stage's own fail-closed paths): fail the stage best-effort and
 			// finalize from the external outcome only. A valid external
@@ -261,11 +282,12 @@ export async function executeRun(deps: ExecDeps, runId: string, token: string): 
 					await persistContextFailure(db, runId, live.contextStageToken, "internal_error");
 				}
 			} catch {
-				// Best-effort: the stage reaper fails stuck stages on lease
-				// expiry. Finalization below still follows external only.
+				// Best-effort: failAgentRun fails stuck stages if the run is
+				// lost. Finalization below still follows external only.
 			}
 			contextResult = { ...ZERO_STAGE, status: "failed", attempted: true };
 		}
+		throwIfCancelled(deps);
 		// POLICY stage: independent of the external outcome, after context.
 		// It extends the lease before the synchronous call; a policy failure
 		// is visible but never rewrites external/context results.
@@ -291,6 +313,7 @@ export async function executeRun(deps: ExecDeps, runId: string, token: string): 
 			);
 		} catch (err) {
 			if (err instanceof StaleRunError) return;
+			throwIfCancelled(deps);
 			deps.logger.error(
 				{ runId, err: err instanceof Error ? err.message : String(err) },
 				"policy stage errored unexpectedly",
@@ -306,6 +329,7 @@ export async function executeRun(deps: ExecDeps, runId: string, token: string): 
 				attempted: true,
 			};
 		}
+		throwIfCancelled(deps);
 		if (external.ok) {
 			const usage = {
 				inputTokens:
@@ -362,6 +386,7 @@ export async function executeRun(deps: ExecDeps, runId: string, token: string): 
 		}
 	} catch (err) {
 		if (err instanceof StaleRunError) return;
+		if (err instanceof RunCancelledError) throw err;
 		const [code, message] = mapError(err);
 		// The failure row carries the real observability status, not the
 		// insert default: Grafana hooks ran before the failure. The log
@@ -563,8 +588,8 @@ function readStoredFacts(stored: unknown): StoredFacts {
 
 /**
  * Persist a validated external result while the run stays `running` for the
- * context stage. Stale token (reaped mid-flight) throws StaleRunError with
- * zero writes — the outer catch returns without touching the reaped row.
+ * context stage. Stale token (fenced mid-flight) throws StaleRunError with
+ * zero writes — the outer catch returns without touching the fenced row.
  */
 async function persistExternalSuccess(
 	db: Db,
