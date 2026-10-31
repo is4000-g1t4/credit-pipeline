@@ -1,9 +1,11 @@
 // Temporal activities for kind "integrity.run" (Node agent worker only: this
-// module imports the worker-side activity helpers). Business failures are
-// finalized on the run row and the activity returns normally; only crashes,
-// lost heartbeats and unexpected throws reach Temporal's retry.
+// module imports the worker-side activity helpers). Final business failures
+// are finalized on the run row and the activity returns normally. Transient
+// failures before the last attempt (IntegrityAttemptFailed), crashes, lost
+// heartbeats and cancelled attempts throw and reach the workflow's retry.
 import {
 	runAttempt,
+	isLastAttempt,
 	activityCancellationSignal,
 	nonRetryableAgentError,
 	startHeartbeat,
@@ -52,7 +54,10 @@ export function createIntegrityActivities(
 				if (claim.kind === "missing") throw nonRetryableAgentError("integrity run row is missing");
 				if (claim.kind !== "claimed") return;
 				await hooks.afterClaim?.(claim.row, attempt);
-				await executeIntegrityRun(deps, claim.row, { signal: activityCancellationSignal() });
+				await executeIntegrityRun(deps, claim.row, {
+					signal: activityCancellationSignal(),
+					finalAttempt: isLastAttempt(input),
+				});
 			} finally {
 				stopHeartbeat();
 			}

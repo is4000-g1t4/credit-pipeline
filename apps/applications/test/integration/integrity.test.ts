@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	applications,
+	auditLog,
 	documentFieldCandidates,
 	documentFiles,
 	documentFingerprints,
@@ -33,6 +34,7 @@ import {
 	executeIntegrityRun,
 	failIntegrityRun,
 	INTEGRITY_RUN_KIND,
+	IntegrityAttemptFailed,
 } from "../../src/integrity/runs.js";
 import { sweepQueuedIntegrityRuns } from "../../src/integrity/sweep.js";
 import type { IntegrityAgentRunner, IntegrityConfig } from "../../src/integrity/types.js";
@@ -635,6 +637,29 @@ async function waitTerminal(runId: string, timeoutMs = 30_000) {
 	}
 }
 
+/** Wraps a runner so its first call fails like a transient model error. */
+function failingOnce(inner: IntegrityAgentRunner): IntegrityAgentRunner {
+	let failed = false;
+	return {
+		async run(input) {
+			if (!failed) {
+				failed = true;
+				throw new Error("upstream 503");
+			}
+			return inner.run(input);
+		},
+	};
+}
+
+async function failedAudits(appId: string) {
+	return ctx.db
+		.select()
+		.from(auditLog)
+		.where(
+			and(eq(auditLog.applicationId, appId), eq(auditLog.action, "integrity.analysis_failed")),
+		);
+}
+
 describe("integrity run dispatch", () => {
 	it("starts the workflow after insert, once, and tolerates Temporal being down", async () => {
 		startCalls.length = 0;
@@ -761,6 +786,82 @@ describe("integrity run dispatch", () => {
 		expect((await runRow(done.runId)).status).toBe("succeeded");
 	});
 
+	it("retries a transient failure: keeps the row running, then succeeds without a failed audit", async () => {
+		const { appId, runId } = await analysisCase();
+		const deps = { ...runDeps(ctx), runner: failingOnce(runner) };
+		const first = await claimIntegrityRunById(deps, runId, 1);
+		if (first.kind !== "claimed") throw new Error("expected claim");
+		await expect(executeIntegrityRun(deps, first.row)).rejects.toBeInstanceOf(
+			IntegrityAttemptFailed,
+		);
+		const between = await runRow(runId);
+		expect(between).toMatchObject({ status: "running", errorCode: "MODEL_ERROR", attempts: 1 });
+		expect(between.finishedAt).toBeNull();
+
+		const second = await claimIntegrityRunById(deps, runId, 2);
+		if (second.kind !== "claimed") throw new Error("expected re-lease");
+		await executeIntegrityRun(deps, second.row);
+		expect(await runRow(runId)).toMatchObject({
+			status: "succeeded",
+			attempts: 2,
+			errorCode: null,
+		});
+		expect(await failedAudits(appId)).toHaveLength(0);
+	});
+
+	it("finalizes AGENT_UNAVAILABLE on the first attempt", async () => {
+		const { appId, runId } = await analysisCase();
+		const deps = { ...runDeps(ctx), runner: null };
+		const claim = await claimIntegrityRunById(deps, runId, 1);
+		if (claim.kind !== "claimed") throw new Error("expected claim");
+		await executeIntegrityRun(deps, claim.row);
+		expect(await runRow(runId)).toMatchObject({
+			status: "failed",
+			errorCode: "AGENT_UNAVAILABLE",
+			attempts: 1,
+		});
+		expect(await failedAudits(appId)).toHaveLength(1);
+	});
+
+	it("finalizes a transient failure on the workflow's last attempt", async () => {
+		const { appId, runId } = await analysisCase();
+		const deps = { ...runDeps(ctx), runner: failingOnce(runner) };
+		const claim = await claimIntegrityRunById(deps, runId, 1);
+		if (claim.kind !== "claimed") throw new Error("expected claim");
+		await executeIntegrityRun(deps, claim.row, { finalAttempt: true });
+		expect(await runRow(runId)).toMatchObject({ status: "failed", errorCode: "MODEL_ERROR" });
+		expect(await failedAudits(appId)).toHaveLength(1);
+	});
+
+	it("leaves the row to the next attempt when the attempt is cancelled", async () => {
+		const { appId, runId } = await analysisCase();
+		const cancel = new AbortController();
+		const deps = {
+			...runDeps(ctx),
+			runner: {
+				async run() {
+					// Worker shutdown / heartbeat-timeout cancel mid model call.
+					cancel.abort();
+					throw new Error("aborted");
+				},
+			} satisfies IntegrityAgentRunner,
+		};
+		const claim = await claimIntegrityRunById(deps, runId, 1);
+		if (claim.kind !== "claimed") throw new Error("expected claim");
+		await expect(
+			executeIntegrityRun(deps, claim.row, { signal: cancel.signal, finalAttempt: true }),
+		).rejects.toThrow();
+		const after = await runRow(runId);
+		expect(after).toMatchObject({ status: "running", errorCode: null, attempts: 1 });
+		expect(after.leaseToken).toBe(claim.row.lease_token);
+		expect(await failedAudits(appId)).toHaveLength(0);
+
+		const next = await claimIntegrityRunById(runDeps(ctx), runId, 2);
+		if (next.kind !== "claimed") throw new Error("expected re-lease");
+		await executeIntegrityRun(runDeps(ctx), next.row);
+		expect((await runRow(runId)).status).toBe("succeeded");
+	});
+
 	it("sweep restarts stale queued rows and fails overdue ones", async () => {
 		const { appId } = await newCase();
 		const deps = runDeps(ctx);
@@ -803,16 +904,21 @@ describe("integrity runs on Temporal", () => {
 	const address = process.env.TEMPORAL_ADDRESS ?? "localhost:7233";
 	const taskQueue = `applications-agents-test-${randomUUID()}`;
 	let crashUntilAttempt = 0;
+	let workerRunner: IntegrityAgentRunner = runner;
 	let shutdown: (() => Promise<void>) | null = null;
 	let previousStart: AgentRunStarter["start"];
 	const realStarter = createAgentRunStarter({ address, taskQueue });
 
 	beforeAll(async () => {
-		const activities = createIntegrityActivities(runDeps(ctx), {
-			afterClaim(_claimed, attempt) {
-				if (attempt <= crashUntilAttempt) throw new Error("worker crashed after claim");
+		const delegating: IntegrityAgentRunner = { run: (input) => workerRunner.run(input) };
+		const activities = createIntegrityActivities(
+			{ ...runDeps(ctx), runner: delegating },
+			{
+				afterClaim(_claimed, attempt) {
+					if (attempt <= crashUntilAttempt) throw new Error("worker crashed after claim");
+				},
 			},
-		});
+		);
 		const { worker, connection } = await createAgentWorker({ address, taskQueue, activities });
 		const running = worker.run();
 		shutdown = async () => {
@@ -845,6 +951,18 @@ describe("integrity runs on Temporal", () => {
 			expect(row).toMatchObject({ status: "succeeded", attempts: 2 });
 		} finally {
 			crashUntilAttempt = 0;
+		}
+	});
+
+	it("retries a transient model failure and succeeds on attempt 2", async () => {
+		workerRunner = failingOnce(runner);
+		try {
+			const { appId, runId } = await analysisCase();
+			const row = await waitTerminal(runId);
+			expect(row).toMatchObject({ status: "succeeded", attempts: 2, errorCode: null });
+			expect(await failedAudits(appId)).toHaveLength(0);
+		} finally {
+			workerRunner = runner;
 		}
 	});
 

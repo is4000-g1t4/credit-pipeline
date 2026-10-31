@@ -7,7 +7,8 @@
 // UPDATE that mints a lease token), runs the model outside any transaction,
 // and finalizes under the lease token. Attempts increment at every claim, so a
 // crash cannot buy unbounded retries, and a re-lease on retry rotates the
-// token so a zombie attempt's writes are fenced out.
+// token so a zombie attempt's writes are fenced out. Transient failures before
+// the last attempt are retried by the workflow; the rest finalize at once.
 
 import { randomUUID } from "node:crypto";
 import { documentIntegrityRuns, fraudReviews, type Db } from "@credit/db/applications";
@@ -42,6 +43,34 @@ export const INTEGRITY_RUN_KIND = "integrity.run";
 /** One attempt's lease: the model deadline plus headroom (min 30s). */
 export function integrityLeaseSeconds(config: Pick<IntegrityConfig, "timeoutMs">): number {
 	return Math.max(30, Math.ceil((config.timeoutMs * 1.5) / 1000));
+}
+
+/**
+ * Failure codes a later attempt can plausibly clear (model, transport or
+ * output flakiness, unexpected errors). Everything else (no runner, budget,
+ * consent, flags, evidence or review changes) is final on the first attempt.
+ */
+export const RETRYABLE_INTEGRITY_ERROR_CODES: ReadonlySet<string> = new Set([
+	"MODEL_ERROR",
+	"TIMEOUT",
+	"INVALID_OUTPUT",
+	"NO_TOOL_USE",
+	"STEP_LIMIT",
+	"TOOL_CALL_LIMIT",
+	"INTERNAL_ERROR",
+]);
+
+/**
+ * Thrown out of the activity when a retryable failure happened before the
+ * final attempt: the row stays `running` with the error recorded and the
+ * workflow retries with backoff. A plain Error so this module stays
+ * importable by the Bun API (no @temporalio/activity here).
+ */
+export class IntegrityAttemptFailed extends Error {
+	constructor(readonly errorCode: string) {
+		super(`integrity attempt failed: ${errorCode}`);
+		this.name = "IntegrityAttemptFailed";
+	}
 }
 
 type RunRow = typeof documentIntegrityRuns.$inferSelect;
@@ -463,11 +492,23 @@ async function persistBrief(
 	});
 }
 
-/** Runs one claimed row to a terminal state (business failures finalize here). */
+export interface ExecuteIntegrityRunOptions {
+	/** The attempt's cancel signal (worker shutdown, heartbeat-timeout cancel). */
+	signal?: AbortSignal;
+	/** The workflow runs no further attempt: every failure is final. */
+	finalAttempt?: boolean;
+}
+
+/**
+ * Runs one claimed row. Success and final failures reach a terminal state
+ * here. A retryable failure before the last attempt records the error on the
+ * still-running row and throws `IntegrityAttemptFailed` so the workflow
+ * retries; a cancelled attempt rethrows without touching the row.
+ */
 export async function executeIntegrityRun(
 	deps: IntegrityRunDeps,
 	claimed: ClaimedRow,
-	opts: { signal?: AbortSignal } = {},
+	opts: ExecuteIntegrityRunOptions = {},
 ): Promise<void> {
 	if (!deps.config.enabled) {
 		await deps.db
@@ -621,6 +662,9 @@ export async function executeIntegrityRun(
 		}
 		outcome = "succeeded";
 	} catch (err) {
+		// A cancelled attempt is not a business failure (the runner reports the
+		// abort as TIMEOUT): leave the row to the next attempt or to cleanup.
+		if (opts.signal?.aborted) throw err;
 		if (err instanceof ReviewClosed) {
 			await deps.db
 				.update(documentIntegrityRuns)
@@ -640,13 +684,44 @@ export async function executeIntegrityRun(
 				: err instanceof HttpError
 					? err.code
 					: "INTERNAL_ERROR";
-		// Business failure: finalize. Temporal retries only crashes, never this.
+		const errorDetail = `${errorCode}: ${Date.now() - started}ms`.slice(0, 200);
+		const retryable =
+			!(err instanceof HttpError) &&
+			RETRYABLE_INTEGRITY_ERROR_CODES.has(errorCode) &&
+			opts.finalAttempt !== true &&
+			claimed.attempts < claimed.max_attempts;
+		if (retryable) {
+			// Keep the row running under this lease; the next attempt re-leases it.
+			const kept = await deps.db
+				.update(documentIntegrityRuns)
+				.set({ errorCode, errorDetail })
+				.where(
+					and(
+						eq(documentIntegrityRuns.id, claimed.id),
+						eq(documentIntegrityRuns.status, "running"),
+						eq(documentIntegrityRuns.leaseToken, claimed.lease_token),
+					),
+				)
+				.returning({ id: documentIntegrityRuns.id });
+			if (kept.length === 0) return;
+			deps.logger.warn(
+				{
+					runId: claimed.id,
+					applicationId: claimed.application_id,
+					errorCode,
+					attempts: claimed.attempts,
+				},
+				"integrity attempt failed; retrying",
+			);
+			throw new IntegrityAttemptFailed(errorCode);
+		}
+		// Final failure: finalize, audit, and record the run on the review.
 		const fenced = await deps.db
 			.update(documentIntegrityRuns)
 			.set({
 				status: "failed",
 				errorCode,
-				errorDetail: `${errorCode}: ${Date.now() - started}ms`.slice(0, 200),
+				errorDetail,
 				finishedAt: new Date(),
 			})
 			.where(
