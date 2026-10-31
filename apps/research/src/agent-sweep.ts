@@ -11,6 +11,7 @@ import {
 	RESEARCH_CONTEXT_RETRY_KIND,
 	RESEARCH_RUN_KIND,
 	researchRunTimeoutMs,
+	startWithDeadline,
 	type RunStarter,
 } from "./agent-run.js";
 import type { ResearchEnv } from "./env.js";
@@ -54,7 +55,7 @@ export async function sweepAgentRuns(deps: {
 	for (const input of inputs) {
 		try {
 			// Idempotent: the workflow id is kind:runId:token.
-			await starter.start(input);
+			await startWithDeadline(starter, input);
 			started.push(input.runId);
 		} catch (err) {
 			logger.error(

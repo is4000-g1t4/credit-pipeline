@@ -109,14 +109,15 @@ Temporal workflows instead of in-process fire-and-forget jobs.
   and boot recovery. The run tables remain the read model the UI polls.
 - **Idempotent start:** the workflow id is `<kind>:<runId>:<token>`, so
   re-issuing a start is a no-op. The API commits the row and then starts
-  the workflow, so a crash in between can leave a row that was committed
-  but never started. A 15s sweep in each agent worker re-issues starts
-  for rows older than 10s that never heartbeated. Past the run horizon
-  (lease x attempts + backoff + 5 minutes) it fails rows it cannot start,
-  so the UI always reaches a terminal state even when Temporal is
-  unreachable. The integrity sweep also leaves a startable backlog queued
-  (up to 24h) and fails `running` rows whose lease went stale past the
-  horizon.
+  the workflow. Both services bound that start to 2s, and a hung start
+  counts as a failed start. A crash or timeout in between can therefore
+  leave a row that was committed but never started. A 15s sweep in each
+  agent worker re-issues starts for rows older than 10s that never
+  heartbeated. Past the run horizon (lease x attempts + backoff + 5
+  minutes) it fails rows it cannot start, so the UI always reaches a
+  terminal state even when Temporal is unreachable. The integrity sweep
+  also leaves a startable backlog queued (up to 24h) and fails `running`
+  rows whose lease went stale past the horizon.
 - **Research retries** (`rotateRunForRetry`) rotate `run_token`, reset the
   row to `queued`, and clear the dead attempt's evidence, findings and
   context/policy stage state before rerunning. Context retries rotate

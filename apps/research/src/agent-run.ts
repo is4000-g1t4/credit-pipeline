@@ -34,19 +34,69 @@ export interface RunStarter {
 	start(input: AgentRunInput): Promise<unknown>;
 }
 
+/** Upper bound on a workflow start (lazy connect + start RPC) in a caller's path. */
+export const START_TIMEOUT_MS = 2_000;
+
+export class StartTimeoutError extends Error {
+	override readonly name = "StartTimeoutError";
+	constructor(timeoutMs: number) {
+		super(`agent run start exceeded ${timeoutMs}ms`);
+	}
+}
+
 /**
- * Start the workflow AFTER the row's transaction committed. A Temporal
- * outage never changes the caller's response: the row stays queued and the
- * agent-worker sweep starts it. Logs metadata only.
+ * `starter.start` bounded by a deadline: a hung Temporal connect/start
+ * rejects with StartTimeoutError instead of stalling the caller. The start
+ * itself is not cancelled; it is idempotent (workflow id = kind:runId:token),
+ * so a late success and a later sweep start are the same workflow.
+ */
+export async function startWithDeadline(
+	starter: RunStarter,
+	input: AgentRunInput,
+	timeoutMs: number = START_TIMEOUT_MS,
+): Promise<unknown> {
+	type Outcome = { ok: true; value: unknown } | { ok: false; err: unknown };
+	// Never rejects: a start that fails after the deadline already lost the
+	// race and must not surface as an unhandled rejection.
+	const pending = (async (): Promise<Outcome> => {
+		try {
+			return { ok: true, value: await starter.start(input) };
+		} catch (err) {
+			return { ok: false, err };
+		}
+	})();
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const deadline = new Promise<Outcome>((resolve) => {
+		timer = setTimeout(
+			() => resolve({ ok: false, err: new StartTimeoutError(timeoutMs) }),
+			timeoutMs,
+		);
+		timer.unref?.();
+	});
+	try {
+		const outcome = await Promise.race([pending, deadline]);
+		if (!outcome.ok) throw outcome.err;
+		return outcome.value;
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+/**
+ * Start the workflow AFTER the row's transaction committed, bounded by
+ * START_TIMEOUT_MS. A Temporal outage or a hung start never changes (or
+ * stalls) the caller's response: the row stays queued and the agent-worker
+ * sweep starts it. Logs metadata only.
  */
 export async function startAfterCommit(
 	starter: RunStarter | undefined,
 	logger: { error(obj: object, msg: string): void },
 	input: AgentRunInput,
+	timeoutMs: number = START_TIMEOUT_MS,
 ): Promise<void> {
 	if (!starter) return;
 	try {
-		await starter.start(input);
+		await startWithDeadline(starter, input, timeoutMs);
 	} catch (err) {
 		logger.error(
 			{

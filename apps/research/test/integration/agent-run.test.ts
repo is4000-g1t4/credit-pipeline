@@ -18,6 +18,8 @@ import {
 	RESEARCH_CONTEXT_RETRY_KIND,
 	RESEARCH_RUN_KIND,
 	researchRunTimeoutMs,
+	START_TIMEOUT_MS,
+	startAfterCommit,
 } from "../../src/agent-run.js";
 import { sweepAgentRuns } from "../../src/agent-sweep.js";
 import { executeContextRetry } from "../../src/context-stage.js";
@@ -583,6 +585,44 @@ describe("API starts the workflow after the row commits", () => {
 		} finally {
 			await teardown(ctx);
 		}
+	});
+
+	it("bounds a hung Temporal start: the 202 returns at the start deadline, row left queued", async () => {
+		const ctx = setupApp(undefined, {
+			starter: {
+				// Connect/start that never answers (Temporal wedged).
+				start: () => new Promise(() => undefined),
+			},
+		});
+		try {
+			const t0 = Date.now();
+			const { res } = await ensureViaApi(ctx);
+			const elapsed = Date.now() - t0;
+			expect(res.status).toBe(202);
+			expect(elapsed).toBeLessThan(START_TIMEOUT_MS + 2_000);
+			const body = (await res.json()) as { run: { id: string }; inserted: boolean };
+			expect(body.inserted).toBe(true);
+			expect(ctx.starts).toHaveLength(1);
+			// Treated as a start failure: the sweep picks the row up later.
+			expect((await getRun(ctx.db, body.run.id))?.status).toBe("queued");
+		} finally {
+			await teardown(ctx);
+		}
+	});
+
+	it("startAfterCommit logs a hung start as a start failure and resolves", async () => {
+		const errors: string[] = [];
+		const t0 = Date.now();
+		await startAfterCommit(
+			{ start: () => new Promise(() => undefined) },
+			{
+				error: (obj: object, msg: string) => errors.push(`${(obj as { err: string }).err}:${msg}`),
+			},
+			input(randomUUID(), randomUUID()),
+			50,
+		);
+		expect(Date.now() - t0).toBeLessThan(1_000);
+		expect(errors).toEqual(["StartTimeoutError:agent run start failed; the sweep will retry"]);
 	});
 
 	it("context retry: claims the stage, starts after commit, and survives Temporal being down", async () => {
