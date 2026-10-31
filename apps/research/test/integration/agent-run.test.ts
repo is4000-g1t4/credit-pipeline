@@ -3,7 +3,12 @@
 // and API start-after-commit. Real credit_research Postgres; the Temporal
 // starter is a fake (the real-Temporal path is agent-worker.test.ts).
 import { randomUUID } from "node:crypto";
-import { agentEvidence, agentFindings, contextSignals } from "@credit/db/research";
+import {
+	agentEvidence,
+	agentFindings,
+	contextSignals,
+	researchAuditLog,
+} from "@credit/db/research";
 import { createLogger } from "@credit/service-kit";
 import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
@@ -15,12 +20,13 @@ import {
 	researchRunTimeoutMs,
 } from "../../src/agent-run.js";
 import { sweepAgentRuns } from "../../src/agent-sweep.js";
+import { executeContextRetry } from "../../src/context-stage.js";
 import {
 	stubAgentRunner,
 	stubLanguageRepair,
 	stubSupportJudge,
 } from "../../src/agents/case-brief/index.js";
-import { stubContextRunner } from "../../src/agents/context-analyst/index.js";
+import { ContextToolError, stubContextRunner } from "../../src/agents/context-analyst/index.js";
 import { loadEnv } from "../../src/env.js";
 import {
 	claimContextRetry,
@@ -666,3 +672,99 @@ describe("API starts the workflow after the row commits", () => {
 function apiEnv() {
 	return { ...loadEnv(), agentsEnabled: true, contextEnabled: false };
 }
+
+/** A terminal run whose failed stage was re-claimed for a context retry. */
+async function claimedRetry(ctx: TestContext) {
+	const { run, token } = await newRun(ctx);
+	expect(await claimRun(ctx.db, run.id, token)).toBe(true);
+	expect(await initContextStage(ctx.db, env, run.id, token, "queued")).toBe(true);
+	const s1 = await claimContextStage(ctx.db, env, run.id, token, {
+		promptVersion: "v1",
+		model: "m",
+	});
+	await persistContextFailure(ctx.db, run.id, s1 as string, "tool_error");
+	expect(await finalizeFailure(ctx.db, run.id, token, "tool_error", "x")).toBe(true);
+	const retry = await claimContextRetry(ctx.db, env, run.id);
+	expect(retry).not.toBeNull();
+	return { run, stageToken: retry!.stageToken };
+}
+
+async function auditActions(ctx: TestContext, runId: string): Promise<string[]> {
+	const rows = await ctx.db
+		.select({ action: researchAuditLog.action })
+		.from(researchAuditLog)
+		.where(eq(researchAuditLog.runId, runId));
+	return rows.map((r) => r.action);
+}
+
+function retryDeps(
+	ctx: TestContext,
+	contextRunner: Parameters<typeof executeContextRetry>[0]["contextRunner"],
+	cancelSignal?: AbortSignal,
+) {
+	return {
+		db: ctx.db,
+		env,
+		logger,
+		observability: degradedObservability,
+		contextRunner,
+		fetchContextConsent: async () => true,
+		cancelSignal,
+	};
+}
+
+describe("context retry attempt fencing", () => {
+	it("a cancelled retry attempt leaves the stage running for the next attempt (no failure, no audit)", async () => {
+		const ctx = setupApp();
+		try {
+			const { run, stageToken } = await claimedRetry(ctx);
+			const cancel = new AbortController();
+			const runner = {
+				...stubContextRunner({ outputs: [{}] }),
+				async runContext() {
+					// Temporal cancels the activity mid-call (worker shutdown).
+					cancel.abort();
+					throw new ContextToolError("aborted");
+				},
+			};
+			await expect(
+				executeContextRetry(retryDeps(ctx, runner, cancel.signal), run.id, stageToken),
+			).rejects.toThrow();
+			const row = await getRun(ctx.db, run.id);
+			expect(row).toMatchObject({
+				contextStatus: "running",
+				contextStageToken: stageToken,
+				contextErrorCode: null,
+			});
+			expect(await auditActions(ctx, run.id)).not.toContain("context.failed");
+			// Attempt 2 can still fence and run the one allowed retry stage.
+			expect(await rotateContextStageForRetry(ctx.db, run.id)).not.toBeNull();
+		} finally {
+			await teardown(ctx);
+		}
+	});
+
+	it("a fenced retry attempt writes no context.failed audit when its failure persist is stale", async () => {
+		const ctx = setupApp();
+		try {
+			const { run, stageToken } = await claimedRetry(ctx);
+			let rotated: string | null = null;
+			const runner = {
+				...stubContextRunner({ outputs: [{}] }),
+				async runContext() {
+					// Attempt 2 fences this attempt mid-call.
+					rotated = await rotateContextStageForRetry(ctx.db, run.id);
+					throw new ContextToolError("late failure");
+				},
+			};
+			await executeContextRetry(retryDeps(ctx, runner), run.id, stageToken);
+			expect(rotated).not.toBeNull();
+			const row = await getRun(ctx.db, run.id);
+			// The live (rotated) stage is untouched by the zombie.
+			expect(row).toMatchObject({ contextStatus: "running", contextStageToken: rotated });
+			expect(await auditActions(ctx, run.id)).not.toContain("context.failed");
+		} finally {
+			await teardown(ctx);
+		}
+	});
+});

@@ -188,8 +188,12 @@ export async function runContextStage(
 	)(applicationId);
 	if (!consent) {
 		if (opts.runToken) await skipContextStage(db, runId, opts.runToken);
-		if (opts.stageToken) {
-			await persistContextFailure(db, runId, opts.stageToken, "consent_required");
+		// Audit only a failure this attempt actually wrote: a fenced attempt
+		// (stale stage token) leaves no context.failed row behind.
+		if (
+			opts.stageToken &&
+			(await persistContextFailure(db, runId, opts.stageToken, "consent_required"))
+		) {
 			await auditResearch(db, {
 				applicationId,
 				runId,
@@ -324,21 +328,23 @@ export async function runContextStage(
 		)(applicationId);
 		if (!persistConsent) {
 			const measured = projectCostUsd(inputTokens, outputTokens);
-			await persistContextFailure(db, runId, token, "consent_required", {
+			const wrote = await persistContextFailure(db, runId, token, "consent_required", {
 				inputTokens,
 				outputTokens,
 				toolCalls,
 				costUsd: measured,
 				durationMs: Date.now() - stageStart,
 			});
-			await auditResearch(db, {
-				applicationId,
-				runId,
-				actorId: env.autoTriggerServiceUserId,
-				actorRole: "service",
-				action: "context.failed",
-				metadata: { code: "consent_required" },
-			});
+			if (wrote) {
+				await auditResearch(db, {
+					applicationId,
+					runId,
+					actorId: env.autoTriggerServiceUserId,
+					actorRole: "service",
+					action: "context.failed",
+					metadata: { code: "consent_required" },
+				});
+			}
 			deps.logger.error({ runId, code: "consent_required" }, "context stage failed");
 			return { status: "failed", inputTokens, outputTokens, toolCalls, costUsd, attempted: true };
 		}
@@ -395,25 +401,34 @@ export async function runContextStage(
 		return { status: "succeeded", inputTokens, outputTokens, toolCalls, costUsd, attempted: true };
 	} catch (err) {
 		if (err instanceof StaleRunError) throw err;
+		// Activity cancelled (lost heartbeat, worker shutdown): this attempt
+		// must not write a terminal stage failure. The stage stays running so
+		// the fenced retry (or failAgentRun) owns it; persisting here would
+		// burn a context retry's single allowed stage.
+		if (deps.cancelSignal?.aborted) throw err;
 		const code = mapContextError(err);
 		// Attempted work counts even in failure (floor when unmeasured).
 		const measured = projectCostUsd(inputTokens, outputTokens);
 		const costUsd = inputTokens + outputTokens === 0 ? env.contextMaxCostUsd : measured;
-		await persistContextFailure(db, runId, token, code, {
+		const wrote = await persistContextFailure(db, runId, token, code, {
 			inputTokens,
 			outputTokens,
 			toolCalls,
 			costUsd,
 			durationMs: Date.now() - stageStart,
 		});
-		await auditResearch(db, {
-			applicationId,
-			runId,
-			actorId: env.autoTriggerServiceUserId,
-			actorRole: "service",
-			action: "context.failed",
-			metadata: { code },
-		});
+		// A fenced attempt's persist is stale (false): no audit for a
+		// failure that never landed.
+		if (wrote) {
+			await auditResearch(db, {
+				applicationId,
+				runId,
+				actorId: env.autoTriggerServiceUserId,
+				actorRole: "service",
+				action: "context.failed",
+				metadata: { code },
+			});
+		}
 		deps.logger.error(
 			{ runId, code, err: err instanceof Error ? err.message : String(err) },
 			"context stage failed",
