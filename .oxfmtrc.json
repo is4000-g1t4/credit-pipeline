@@ -9,6 +9,7 @@
 		"packages/db/drizzle/**",
 		"apps/web/src/routeTree.gen.ts",
 		"e2e/test-results/**",
-		"e2e/logs/**"
+		"e2e/logs/**",
+		"apps/*/src/agents/**/instructions.md"
 	]
 }

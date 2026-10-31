@@ -1,0 +1,32 @@
+{
+	"name": "@credit/agent-kit",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts",
+		"./temporal/client": "./src/temporal/client.ts",
+		"./temporal/activity": "./src/temporal/activity.ts",
+		"./temporal/worker": "./src/temporal/worker.ts",
+		"./temporal/workflows": "./src/temporal/workflows.ts",
+		"./temporal/types": "./src/temporal/types.ts"
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit",
+		"build": "tsc --noEmit",
+		"test": "vitest run",
+		"test:integration": "vitest run --config vitest.integration.config.ts"
+	},
+	"dependencies": {
+		"@temporalio/activity": "catalog:",
+		"@temporalio/client": "catalog:",
+		"@temporalio/worker": "catalog:",
+		"@temporalio/workflow": "catalog:",
+		"openai": "catalog:"
+	},
+	"devDependencies": {
+		"@types/node": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
+	}
+}
