@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import { assertProductionSecrets } from "@credit/service-kit";
 import { createEnv } from "@t3-oss/env-core";
 import dotenv from "dotenv";
 import { z } from "zod";
@@ -36,6 +37,17 @@ const parsed = createEnv({
 	emptyStringAsUndefined: true,
 	skipValidation: !!process.env.SKIP_ENV_VALIDATION,
 });
+
+// Production refuses weak/default secrets (names only in the error).
+if (!process.env.SKIP_ENV_VALIDATION) {
+	assertProductionSecrets(
+		{
+			SESSION_SECRET: parsed.SESSION_SECRET,
+			INTERNAL_SECRET: parsed.INTERNAL_SECRET,
+		},
+		{ nodeEnv: parsed.NODE_ENV },
+	);
+}
 
 /** Validated gateway config in the shape the app already consumes. */
 export const env = {

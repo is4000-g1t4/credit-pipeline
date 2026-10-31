@@ -11,6 +11,7 @@ Every environment variable, its consumers, and its default. Audience: developer 
 5. `SKIP_ENV_VALIDATION` bypasses validation. Use it for development and tests only.
 6. Empty strings count as missing (`emptyStringAsUndefined: true`).
 7. `NODE_ENV=production` enables the gateway origin allow-list and the `Secure` cookie flag.
+8. With `NODE_ENV=production`, gateway, applications, review, loans, portfolio, research and policy refuse to start if any HMAC/session secret (`SESSION_SECRET`, `INTERNAL_SECRET`, `POLICY_*_SECRET`, `CONTEXT_CURSOR_SECRET`) is missing, shorter than 32 characters, a known dev default (for example `dev-policy-internal-secret`), or starts with `change-me`. Optional secrets may be unset but are checked when set. The error names the variable, never the value. Outside production the dev defaults still apply. `SKIP_ENV_VALIDATION` skips this check.
 
 ## Variables
 

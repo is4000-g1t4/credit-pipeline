@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { resolveWorkspacePath } from "@credit/service-kit";
-import { MAX_UPLOAD_BYTES } from "@credit/service-kit";
+import { assertProductionSecrets, MAX_UPLOAD_BYTES } from "@credit/service-kit";
 import { createEnv } from "@t3-oss/env-core";
 import dotenv from "dotenv";
 import { z } from "zod";
@@ -180,6 +180,28 @@ const parsed = createEnv({
 	emptyStringAsUndefined: true,
 	skipValidation: !!process.env.SKIP_ENV_VALIDATION,
 });
+
+// Production refuses weak/default secrets (names only in the error).
+if (!process.env.SKIP_ENV_VALIDATION) {
+	assertProductionSecrets(
+		{
+			INTERNAL_SECRET: parsed.INTERNAL_SECRET,
+			CONTEXT_CURSOR_SECRET: parsed.CONTEXT_CURSOR_SECRET,
+			POLICY_INTERNAL_SECRET: parsed.POLICY_INTERNAL_SECRET,
+			POLICY_RULE_CONTEXT_SECRET: parsed.POLICY_RULE_CONTEXT_SECRET,
+			POLICY_AUDIT_HASH_SECRET: parsed.POLICY_AUDIT_HASH_SECRET,
+		},
+		{
+			nodeEnv: parsed.NODE_ENV,
+			optional: [
+				"CONTEXT_CURSOR_SECRET",
+				"POLICY_INTERNAL_SECRET",
+				"POLICY_RULE_CONTEXT_SECRET",
+				"POLICY_AUDIT_HASH_SECRET",
+			],
+		},
+	);
+}
 
 export const env = {
 	databaseUrl: parsed.APPLICATIONS_DATABASE_URL,

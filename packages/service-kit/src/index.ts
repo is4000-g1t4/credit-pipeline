@@ -12,3 +12,4 @@ export * from "./http.js";
 export * from "./internal.js";
 export * from "./logger.js";
 export * from "./service.js";
+export * from "./secrets.js";

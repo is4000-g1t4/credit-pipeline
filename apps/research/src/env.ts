@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import { assertProductionSecrets } from "@credit/service-kit";
 import { createEnv } from "@t3-oss/env-core";
 import dotenv from "dotenv";
 import { z } from "zod";
@@ -129,6 +130,18 @@ const parsed = createEnv({
 	emptyStringAsUndefined: true,
 	skipValidation: !!process.env.SKIP_ENV_VALIDATION,
 });
+
+// Production refuses weak/default secrets (names only in the error).
+if (!process.env.SKIP_ENV_VALIDATION) {
+	assertProductionSecrets(
+		{
+			INTERNAL_SECRET: parsed.INTERNAL_SECRET,
+			POLICY_INTERNAL_SECRET: parsed.POLICY_INTERNAL_SECRET,
+			POLICY_CASE_TOKEN_SECRET: parsed.POLICY_CASE_TOKEN_SECRET,
+		},
+		{ nodeEnv: process.env.NODE_ENV },
+	);
+}
 
 export const env = {
 	databaseUrl: parsed.RESEARCH_DATABASE_URL,
