@@ -58,6 +58,16 @@ The reconciler runs every 30 seconds under advisory lock 4243. Source: `apps/wor
 
 A describe error skips the tick. It never fails the case.
 
+## Research runs
+
+Advisory research runs (case brief, context stage, policy stage) are durable Temporal workflows, not in-process jobs. The `agent_runs` row stays the read model the UI polls. Source: `apps/research/src/agent-run.ts`, `agent-activities.ts`, `agent-sweep.ts`, `agent-worker.ts`, `lifecycle.ts`.
+
+1. The API inserts the `queued` row (with its audit) and, only after that transaction commits, starts workflow `research.run:<runId>:<token>` on the `research-agents` queue. If Temporal is unreachable the response is unchanged and the row stays `queued`. A context retry is the same shape: the claimed stage starts `research.context-retry:<runId>:<stageToken>`.
+2. The `agent-worker` process runs the activity with a Temporal heartbeat for the whole run (the run's own DB heartbeat continues for the UI). Attempt 1 claims with the input token. Business failures (validation, model unavailable, budget) are finalized on the row and the activity returns, so Temporal never retries or re-spends them.
+3. A crash, lost heartbeat or unexpected throw retries the activity (3 attempts). Attempt > 1 first calls `rotateRunForRetry`: in one transaction, only while the run is non-terminal, it rotates `run_token`, resets the row to `queued`, refreshes the lease, and discards what the dead attempt persisted (evidence, findings, context signals, stage state). The zombie's token-guarded writes then fail with `StaleRunError`. A terminal run does no work. A context retry rotates the stage token the same way (`rotateContextStageForRetry`).
+4. When every attempt fails, or the workflow is cancelled, `failAgentRun` fails a still-active run: `timeout` for a timeout, otherwise `internal_error`, token cleared, `finished_at` set. Context and policy stages it left `queued` or `running` fail with the same code. For a retry it fails only the running stage. It is idempotent and never touches a terminal run or a persisted brief.
+5. The worker sweep (every 15s) re-issues idempotent starts for queued runs and claimed context retries that never heartbeated and are older than 10s. Rows still unstarted 5 minutes past their lease fail `timeout`, so the UI always reaches a terminal state.
+
 ## Idempotency and replay
 
 - Submit: `Idempotency-Key` plus user id is the key. Same key with the same body replays `{id, reference}` with 201. Same key with a different body returns 409 `IDEMPOTENCY_CONFLICT`.
